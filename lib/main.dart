@@ -4,12 +4,15 @@
 /// 对局界面：顶栏为降难度 / 当前难度 / 升难度 / 返回；底栏为悔棋 / 提示 / 结束。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'engine/pikafish.dart';
 import 'engine/rules.dart';
 import 'game/game_controller.dart';
+import 'game/sounds.dart';
 import 'ui/board_view.dart';
 import 'ui/review_screen.dart';
 
@@ -59,6 +62,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _checkSaved();
+    // 初始化音效（读取开关设置）
+    Sounds.instance.load(widget.prefs);
   }
 
   void _checkSaved() {
@@ -67,10 +72,53 @@ class _HomePageState extends State<HomePage> {
     if (has != _hasSavedGame) setState(() => _hasSavedGame = has);
   }
 
+  /// 公告：作者声明对话框
+  void _showAnnouncement() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('作者声明'),
+        content: const Text('此游戏为 tst 自用象棋，自我学习使用。'),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('中国象棋'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('中国象棋'),
+        centerTitle: true,
+        actions: [
+          // 音效开关（全游戏唯一声音开关）
+          ListenableBuilder(
+            listenable: Sounds.instance,
+            builder: (context, _) {
+              final on = Sounds.instance.enabled;
+              return IconButton(
+                icon: Icon(on ? Icons.volume_up : Icons.volume_off),
+                tooltip: on ? '关闭音效' : '开启音效',
+                onPressed: () {
+                  Sounds.instance.setEnabled(!on);
+                },
+              );
+            },
+          ),
+          // 公告按钮
+          IconButton(
+            icon: const Icon(Icons.campaign_outlined),
+            tooltip: '公告',
+            onPressed: _showAnnouncement,
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -238,7 +286,7 @@ class GamePage extends StatefulWidget {
 }
 
 class _GamePageState extends State<GamePage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   GameController? _controller;
   (int, int)? _selected;
   List<Move> _legalTargets = [];
@@ -251,10 +299,30 @@ class _GamePageState extends State<GamePage>
   /// 已对最后一步播放过动画的标记（避免恢复对局时重播）
   int _animatedHistoryLength = -1;
 
+  /// 结束遮罩：展示结果，未到时间前不可交互
+  bool _showEndOverlay = false;
+  /// 是否已到可交互时间（点击或 3 秒后）
+  bool _endActionsReady = false;
+  Timer? _endTimer;
+  /// 结果标题与文案
+  (String, String) _endInfo = ('', '');
+
   @override
   void initState() {
     super.initState();
+    // 监听 App 生命周期：切后台/进程将被终止前强制保存对局
+    WidgetsBinding.instance.addObserver(this);
     _init();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 切后台（inactive/hidden/paused）：系统随时可能回收进程，
+    // 立刻同步内存状态到 SharedPreferences 持久化。
+    // detached：进程即将被终止（iOS 划掉、系统回收），做最后的落盘。
+    if (state != AppLifecycleState.resumed) {
+      _controller?.saveNow();
+    }
   }
 
   Future<void> _init() async {
@@ -283,6 +351,10 @@ class _GamePageState extends State<GamePage>
 
   @override
   void dispose() {
+    // 页面销毁（返回主界面）前兜底保存，防止有未落盘的状态
+    _controller?.saveNow();
+    WidgetsBinding.instance.removeObserver(this);
+    _endTimer?.cancel();
     _animController?.dispose();
     _controller?.dispose();
     super.dispose();
@@ -292,6 +364,15 @@ class _GamePageState extends State<GamePage>
   void _animateMove(Move m, Piece? captured) {
     _animMove = m;
     _animCaptured = captured;
+    // 音效：将军/吃子/落子；终局音效由 _showGameEnd 播放
+    final snd = Sounds.instance;
+    if (c.status == GameStatus.playing && c.checkPos != null) {
+      snd.check();
+    } else if (captured != null) {
+      snd.capture();
+    } else {
+      snd.place();
+    }
     _animController?.dispose();
     _animController = AnimationController(
       vsync: this,
@@ -374,10 +455,11 @@ class _GamePageState extends State<GamePage>
     }
   }
 
-  /// 对局结束对话框：复盘此局 / 重新开始
+  /// 对局结束：展示结果遮罩，点击或 3 秒后出现操作按钮
   void _showGameEnd() {
     final s = c.status;
     if (s == GameStatus.playing) return;
+    final snd = Sounds.instance;
     final (title, msg) = switch (s) {
       GameStatus.redWin => (
           c.userPlaysRed ? '胜利！' : '惜败',
@@ -390,44 +472,47 @@ class _GamePageState extends State<GamePage>
       GameStatus.draw => ('和棋', '双方局面相当，握手言和。'),
       _ => ('', ''),
     };
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(msg),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              setState(() {
-                _selected = null;
-                _legalTargets = [];
-              });
-            },
-            child: const Text('查看棋盘'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              openReviewLastGame(context, game: c);
-            },
-            child: const Text('复盘此局'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              setState(() {
-                _selected = null;
-                _legalTargets = [];
-              });
-              c.newGame();
-            },
-            child: const Text('重新开始'),
-          ),
-        ],
-      ),
-    );
+    // 终局音效
+    switch (s) {
+      case GameStatus.redWin:
+        c.userPlaysRed ? snd.win() : snd.lose();
+      case GameStatus.blackWin:
+        c.userPlaysRed ? snd.lose() : snd.win();
+      case GameStatus.draw:
+        snd.draw();
+      default:
+        break;
+    }
+    _endTimer?.cancel();
+    setState(() {
+      _endInfo = (title, msg);
+      _showEndOverlay = true;
+      _endActionsReady = false;
+    });
+    // 3 秒后自动出现操作按钮
+    _endTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _showEndOverlay && !_endActionsReady) {
+        setState(() => _endActionsReady = true);
+      }
+    });
+  }
+
+  /// 点击结果遮罩：立即出现操作按钮
+  void _onEndOverlayTap() {
+    if (!_endActionsReady) {
+      _endTimer?.cancel();
+      setState(() => _endActionsReady = true);
+    }
+  }
+
+  /// 返回主界面（关闭结束遮罩）
+  void _quitToHome() {
+    _endTimer?.cancel();
+    setState(() {
+      _showEndOverlay = false;
+      _endActionsReady = false;
+    });
+    Navigator.of(context).maybePop();
   }
 
   @override
@@ -441,13 +526,20 @@ class _GamePageState extends State<GamePage>
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        // 对局自然结束（将死/困毙/重复）时弹对话框
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (c.status != GameStatus.playing &&
-              !c.thinking && !c.ending && mounted) {
-            _showGameEnd();
-          }
-        });
+        // 对局自然结束（将死/困毙/重复）时展示结果遮罩
+        // （条件不满足时直接短路，避免每帧注册回调）
+        if (c.status != GameStatus.playing &&
+            !c.thinking && !c.ending && !_showEndOverlay && mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted &&
+                c.status != GameStatus.playing &&
+                !c.thinking &&
+                !c.ending &&
+                !_showEndOverlay) {
+              _showGameEnd();
+            }
+          });
+        }
 
         // AI 落子后自动播放动画
         if (c.history.isNotEmpty &&
@@ -511,8 +603,10 @@ class _GamePageState extends State<GamePage>
             ],
           ),
           body: SafeArea(
-            child: Column(
+            child: Stack(
               children: [
+                Column(
+                  children: [
                 // 状态栏
                 Padding(
                   padding:
@@ -699,9 +793,110 @@ class _GamePageState extends State<GamePage>
                 ),
               ],
             ),
+            // 对局结束遮罩：结果展示 + 操作按钮（点击或 3 秒后出现）
+            if (_showEndOverlay) _buildEndOverlay(),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  /// 对局结束遮罩
+  Widget _buildEndOverlay() {
+    final (title, msg) = _endInfo;
+    return Positioned.fill(
+      child: GestureDetector(
+        // 未到时间前点击：立即出现操作按钮；已出现则不拦截
+        onTap: _onEndOverlayTap,
+        child: Container(
+          color: Colors.black.withValues(alpha: 0.55),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 结果标题
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 40,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  msg,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
+                ),
+                const SizedBox(height: 36),
+                // 操作按钮：点击或 3 秒后出现
+                AnimatedOpacity(
+                  opacity: _endActionsReady ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 250),
+                  child: IgnorePointer(
+                    ignoring: !_endActionsReady,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FilledButton.tonalIcon(
+                          onPressed: () async {
+                            setState(() => _showEndOverlay = false);
+                            await openReviewLastGame(context, game: c);
+                            // 复盘返回后重新展示遮罩，按钮立即可用
+                            if (mounted) {
+                              setState(() {
+                                _showEndOverlay = true;
+                                _endActionsReady = true;
+                              });
+                            }
+                          },
+                          icon: const Icon(Icons.history, size: 18),
+                          label: const Text('复盘此局'),
+                        ),
+                        const SizedBox(width: 12),
+                        FilledButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _showEndOverlay = false;
+                              _selected = null;
+                              _legalTargets = [];
+                            });
+                            c.newGame();
+                          },
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('再来一局'),
+                        ),
+                        const SizedBox(width: 12),
+                        FilledButton.tonalIcon(
+                          onPressed: _quitToHome,
+                          icon: const Icon(Icons.home_outlined, size: 18),
+                          label: const Text('返回主界面'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (!_endActionsReady)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 20),
+                    child: Text(
+                      '点击任意处继续',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

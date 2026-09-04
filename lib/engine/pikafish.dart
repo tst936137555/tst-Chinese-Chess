@@ -2,6 +2,9 @@
 ///
 /// 使用 Dart Isolate 中运行 Process 的方式与引擎通信，
 /// 通过 SendPort 将结果回传到主 isolate。
+///
+/// 所有走棋/分析请求在主 isolate 侧串行排队，
+/// 同一时刻只向引擎发送一个搜索指令，避免请求被丢弃。
 library;
 
 import 'dart:async';
@@ -97,6 +100,25 @@ class PikafishEngine {
   SendPort? _engineSendPort;
   final _readyCompleter = Completer<void>();
 
+  /// 请求串行队列：主 isolate 侧保证同一时刻只有一个搜索在跑。
+  /// 引擎 isolate 是单进程单线程，并发请求会被丢弃导致 UI 挂起，
+  /// 故 think/analyze 统一在此排队。
+  Future<void> _queue = Future.value();
+
+  Future<T> _enqueue<T>(Future<T> Function() task) {
+    final completer = Completer<void>();
+    final prev = _queue;
+    _queue = completer.future;
+    return () async {
+      await prev;
+      try {
+        return await task();
+      } finally {
+        completer.complete();
+      }
+    }();
+  }
+
   /// 初始化引擎进程
   Future<void> start() async {
     if (_isolate != null) return;
@@ -126,15 +148,19 @@ class PikafishEngine {
       return 'pikafish';
     }
     if (Platform.isWindows) {
-      // Windows 桌面调试用（可选放置引擎 exe）
-      const candidates = [
+      // Windows：优先在 exe 同目录找引擎（打包发布布局），
+      // 其次工作目录（调试布局：项目根或 engine/ 子目录）。
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      final candidates = [
+        '$exeDir\\pikafish.exe',
+        '$exeDir\\engine\\pikafish.exe',
         'pikafish.exe',
         'engine/pikafish.exe',
       ];
       for (final c in candidates) {
         if (File(c).existsSync()) return c;
       }
-      throw StateError('未找到 Windows 调试引擎，请将 pikafish-*.exe 放到项目根目录并重命名为 pikafish.exe');
+      throw StateError('未找到 Windows 引擎，请将 pikafish-*.exe 放到应用目录（或项目根目录）并重命名为 pikafish.exe');
     }
     throw UnsupportedError('不支持的平台');
   }
@@ -150,26 +176,31 @@ class PikafishEngine {
     return nnue.path;
   }
 
-  /// 请求引擎走棋
-  Future<EngineResult> think(Board board, DifficultyLevel level) async {
-    await start();
-    final response = ReceivePort();
-    _engineSendPort!.send(_GoRequest(
-      sendPort: response.sendPort,
-      fen: board.fen,
-      level: level,
-    ));
-    final result = await response.first as List;
-    response.close();
-    final uci = result[0] as String;
-    final score = result[1] as int;
-    final m = Move(
-      uci.codeUnitAt(0) - 'a'.codeUnitAt(0),
-      9 - int.parse(uci[1]),
-      uci.codeUnitAt(2) - 'a'.codeUnitAt(0),
-      9 - int.parse(uci[3]),
-    );
-    return EngineResult(move: m, scoreCp: score);
+  /// 请求引擎走棋（排队串行执行）
+  Future<EngineResult> think(Board board, DifficultyLevel level) {
+    return _enqueue(() async {
+      await start();
+      final response = ReceivePort();
+      _engineSendPort!.send(_GoRequest(
+        sendPort: response.sendPort,
+        fen: board.fen,
+        level: level,
+      ));
+      final result = await response.first
+          .timeout(const Duration(seconds: 30), onTimeout: () {
+        throw TimeoutException('引擎思考超时');
+      }) as List;
+      response.close();
+      final uci = result[0] as String;
+      final score = result[1] as int;
+      final m = Move(
+        uci.codeUnitAt(0) - 'a'.codeUnitAt(0),
+        9 - int.parse(uci[1]),
+        uci.codeUnitAt(2) - 'a'.codeUnitAt(0),
+        9 - int.parse(uci[3]),
+      );
+      return EngineResult(move: m, scoreCp: score);
+    });
   }
 
   /// 请求引擎分析（复盘用，满强度）。请求会排队串行执行。
@@ -178,14 +209,9 @@ class PikafishEngine {
     Board board, {
     int depth = 12,
     int multiPv = 1,
-  }) async {
-    await start();
-    // 串行化：同一时刻只允许一个搜索
-    final prev = _analysisQueue;
-    final completer = Completer<void>();
-    _analysisQueue = completer.future;
-    await prev;
-    try {
+  }) {
+    return _enqueue(() async {
+      await start();
       final response = ReceivePort();
       _engineSendPort!.send(_GoRequest(
         sendPort: response.sendPort,
@@ -195,7 +221,10 @@ class PikafishEngine {
         analysisDepth: depth,
         multiPv: multiPv,
       ));
-      final result = await response.first as List;
+      final result = await response.first
+          .timeout(const Duration(seconds: 60), onTimeout: () {
+        throw TimeoutException('引擎分析超时');
+      }) as List;
       response.close();
       return AnalysisResult(
         scoreCp: result[0] as int,
@@ -209,12 +238,8 @@ class PikafishEngine {
                 ))
             .toList(),
       );
-    } finally {
-      completer.complete();
-    }
+    });
   }
-
-  Future<void> _analysisQueue = Future.value();
 
   void dispose() {
     _engineSendPort?.send('quit');
@@ -240,6 +265,28 @@ void _engineIsolateEntry(List args) {
     _RequestContext? current;
 
     void send(String s) => proc.stdin.writeln(s);
+
+    /// 完成当前请求（bestmove 缺失时以兜底结果完成，避免主侧挂起）
+    void failCurrent() {
+      final ctx = current;
+      if (ctx == null || ctx.done) return;
+      final req = ctx.req;
+      // 无有效搜索结果时给出空/默认结果
+      final board = Board.fromFen(req.fen);
+      final moves = board.legalMoves();
+      final uci = moves.isEmpty
+          ? '0000'
+          : moves[DateTime.now().millisecondsSinceEpoch % moves.length].uci;
+      if (req.analysis) {
+        req.sendPort.send([0, uci, <String>[], [
+          if (uci != '0000') [uci, 0, <String>[]]
+        ]]);
+      } else {
+        req.sendPort.send([uci, 0]);
+      }
+      ctx.complete();
+      current = null;
+    }
 
     // 统一的 stdout 监听（只建一次）
     proc.stdout
@@ -277,6 +324,12 @@ void _engineIsolateEntry(List args) {
         ctx.bestmove = parts.length > 1 ? parts[1] : '0000';
         ctx.complete();
       }
+    });
+
+    // 进程退出/崩溃：完成等待中的请求，避免主 isolate 挂起
+    proc.exitCode.then((_) {
+      requests.close();
+      failCurrent();
     });
 
     // 初始化
