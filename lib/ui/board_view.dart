@@ -292,7 +292,7 @@ class _BoardPainter extends CustomPainter {
 
     // 纵线号：红方一~九（右侧）、黑方 1~9（左侧）
     const redDigits = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
-    final tpHelper = (String s, Color c, double size) => TextPainter(
+    TextPainter tpHelper(String s, Color c, double size) => TextPainter(
           text: TextSpan(text: s, style: TextStyle(color: c, fontSize: size)),
           textDirection: TextDirection.ltr,
         )..layout();
