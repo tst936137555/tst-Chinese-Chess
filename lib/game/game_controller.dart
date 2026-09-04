@@ -130,9 +130,10 @@ class GameController extends ChangeNotifier {
     _hints = const [];
     notifyListeners();
     try {
+      // 提示用较低深度：满深度双路搜索易使手机过热，10 层已足够给出建议
       final result = await engine.analyze(
         Board.cloneFrom(_board),
-        depth: 12,
+        depth: 10,
         multiPv: 2,
       );
       final moves = <Move>[];
@@ -345,6 +346,13 @@ class GameController extends ChangeNotifier {
             'fen': e.fenAfter,
           }).toList(),
     ));
+  }
+
+  /// 立即保存当前对局状态（生命周期兜底：切后台/进程终止前调用）
+  Future<void> saveNow() async {
+    // 页面已销毁时状态不再有效，跳过
+    if (disposed) return;
+    await _saveState();
   }
 
   /// 保存当前局面（自动保存）

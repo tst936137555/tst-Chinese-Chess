@@ -157,19 +157,28 @@ class ReviewController extends ChangeNotifier {
         posBoards.add(Board.fromFen(h.fenAfter));
       }
 
+      /// 已评估局面缓存（fen → 分析 Future）：
+      /// after[i] 与 before[i+1] 是同一局面，复用可省一半搜索量；
+      /// 缓存 Future 本身可同时合并进行中的重复请求。
+      final cache = <String, Future<AnalysisResult>>{};
+
+      Future<AnalysisResult> eval(Board b) {
+        return cache.putIfAbsent(b.fen, () => engine.analyze(b, depth: depth));
+      }
+
       for (int i = 0; i < entries.length; i++) {
         if (_cancelled) break;
         final e = entries[i];
 
         // 评估走这步之前的局面（得到引擎最佳走法与评分）
-        final before = await engine.analyze(posBoards[i], depth: depth);
+        final before = await eval(posBoards[i]);
         if (_cancelled) break;
         e.scoreBefore = before.scoreCp;
         e.bestMoveUci = before.bestMove;
         e.pv = before.pvMoves;
 
         // 评估走这步之后的局面
-        final after = await engine.analyze(posBoards[i + 1], depth: depth);
+        final after = await eval(posBoards[i + 1]);
         if (_cancelled) break;
         e.scoreAfter = after.scoreCp;
 
