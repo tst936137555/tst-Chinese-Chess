@@ -98,7 +98,6 @@ class PikafishEngine {
 
   Isolate? _isolate;
   SendPort? _engineSendPort;
-  final _readyCompleter = Completer<void>();
 
   /// 请求串行队列：主 isolate 侧保证同一时刻只有一个搜索在跑。
   /// 引擎 isolate 是单进程单线程，并发请求会被丢弃导致 UI 挂起，
@@ -130,8 +129,8 @@ class PikafishEngine {
       [receivePort.sendPort, exePath, nnuePath],
       debugName: 'pikafish',
     );
+    // isolate 发回请求端口即视为就绪（此时 UCI 初始化命令已发出）
     _engineSendPort = await receivePort.first as SendPort;
-    await _readyCompleter.future;
   }
 
   /// 解析平台对应的引擎可执行文件路径
@@ -376,8 +375,10 @@ void _engineIsolateEntry(List args) {
         send('go movetime ${req.level.movetimeMs}');
       }
 
-      current!.future.then((_) {
-        final ctx = current!;
+      // 捕获当前 ctx（完成回调触发时 current 可能已被 failCurrent 置空）
+      final ctxRef = current!;
+      ctxRef.future.then((_) {
+        final ctx = ctxRef;
         // 评分是“行棋方视角”，统一转为红方视角
         final board = Board.fromFen(req.fen);
         final flip = board.redToMove != true;
