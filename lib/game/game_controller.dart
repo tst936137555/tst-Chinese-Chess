@@ -43,12 +43,14 @@ class HistoryEntry {
 class GameController extends ChangeNotifier {
   GameController({
     required this.engine,
-    required SharedPreferences prefs,
+    required this._prefs,
     DifficultyLevel? initialLevel,
-  })  : _prefs = prefs,
-        _level = initialLevel ?? DifficultyLevel.medium {
-    if (initialLevel == null) _loadSettings();
-    else _saveSettings();
+  })  : _level = initialLevel ?? DifficultyLevel.medium {
+    if (initialLevel == null) {
+      _loadSettings();
+    } else {
+      _saveSettings();
+    }
   }
 
   final PikafishEngine engine;

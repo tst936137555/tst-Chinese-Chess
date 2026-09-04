@@ -129,7 +129,7 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
               ? const Center(child: Text('暂无历史棋谱\n完成一局对战后自动保存', textAlign: TextAlign.center))
               : ListView.separated(
                   itemCount: _games.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (ctx, i) {
                     final g = _games[i];
                     final isWin = g.resultLabel == '胜';
