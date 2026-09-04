@@ -147,21 +147,18 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                               color: Colors.white, fontWeight: FontWeight.w700),
                         ),
                       ),
+                      // 标题：【对局时间-执红/执黑-胜负】
                       title: Text(
-                        '第${i + 1}局 · ${g.history.length} 回合 · ${g.levelName}',
+                        g.title,
+                        style: const TextStyle(fontSize: 14),
                       ),
-                      subtitle: Text(_formatTime(g.time)),
+                      subtitle: Text('${g.history.length} 回合 · ${g.levelName}'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => Navigator.pop(context, g),
                     );
                   },
                 ),
     );
-  }
-
-  String _formatTime(DateTime t) {
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${t.year}-${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}';
   }
 }
 
