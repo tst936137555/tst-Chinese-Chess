@@ -41,13 +41,27 @@ class HistoryEntry {
 
 /// 对局控制器（ChangeNotifier）
 class GameController extends ChangeNotifier {
-  GameController({required this.engine, required SharedPreferences prefs})
-      : _prefs = prefs {
-    _loadSettings();
+  GameController({
+    required this.engine,
+    required SharedPreferences prefs,
+    DifficultyLevel? initialLevel,
+  })  : _prefs = prefs,
+        _level = initialLevel ?? DifficultyLevel.medium {
+    if (initialLevel == null) _loadSettings();
+    else _saveSettings();
   }
 
   final PikafishEngine engine;
   final SharedPreferences _prefs;
+
+  /// 页面销毁后不再处理异步结果
+  bool disposed = false;
+
+  @override
+  void dispose() {
+    disposed = true;
+    super.dispose();
+  }
 
   Board _board = Board();
   List<HistoryEntry> _history = [];
@@ -213,12 +227,28 @@ class GameController extends ChangeNotifier {
   Future<void> _maybeEngineMove() async {
     if (_status != GameStatus.playing) return;
     if (_board.redToMove == userPlaysRed) return;
+    // 若已有一次引擎思考在跑（如恢复对局 + 新开局连续触发），复用等待
+    if (_thinkToken case final token) {
+      await token;
+      if (disposed || _status != GameStatus.playing) return;
+      if (_board.redToMove == userPlaysRed) return;
+    }
+    final future = _doThink();
+    _thinkToken = future;
+    await future;
+    _thinkToken = null;
+  }
+
+  Future<void>? _thinkToken;
+
+  Future<void> _doThink() async {
     thinking = true;
     notifyListeners();
     try {
       final result = await engine.think(Board.cloneFrom(_board), _level);
       engineScore = result.scoreCp;
-      if (_status == GameStatus.playing &&
+      if (!disposed &&
+          _status == GameStatus.playing &&
           _board.redToMove != userPlaysRed &&
           _board.isLegal(result.move)) {
         _applyMove(result.move);
@@ -227,7 +257,7 @@ class GameController extends ChangeNotifier {
       debugPrint('引擎错误: $e');
     } finally {
       thinking = false;
-      notifyListeners();
+      if (!disposed) notifyListeners();
     }
   }
 
