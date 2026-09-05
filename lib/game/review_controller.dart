@@ -11,16 +11,16 @@ import 'game_controller.dart';
 
 /// 走法质量分级
 enum MoveQuality {
-  brilliant('妙手', '🟣', Color(0xFF7C4DFF)),
-  best('最佳', '🟢', Color(0xFF2E7D32)),
-  good('好棋', '🔵', Color(0xFF1565C0)),
-  inaccuracy('失误', '🟡', Color(0xFFF9A825)),
-  mistake('漏着', '🟠', Color(0xFFEF6C00)),
-  blunder('败着', '🔴', Color(0xFFC62828));
+  excellent('优秀', '优', Color(0xFF2E7D32)),
+  good('良好', '良', Color(0xFF1565C0)),
+  common('平庸', '平', Color(0xFF8D6E63)),
+  poor('较差', '差', Color(0xFFEF6C00)),
+  mistake('错招', '错', Color(0xFFC62828));
 
-  const MoveQuality(this.label, this.dot, this.color);
+  const MoveQuality(this.label, this.badge, this.color);
   final String label;
-  final String dot;
+  /// 棋子角标用的单字
+  final String badge;
   final Color color;
 }
 
@@ -74,6 +74,9 @@ class ReviewController extends ChangeNotifier {
   /// 分析取消标记
   bool _cancelled = false;
 
+  /// 控制器已销毁（销毁后不再通知监听者）
+  bool _disposed = false;
+
   /// 当前位置的局面
   Board get board {
     if (cursor == 0) return Board();
@@ -103,13 +106,25 @@ class ReviewController extends ChangeNotifier {
 
   /// 折线图评分序列（红方视角）：
   /// 索引 0 = 初始局面，i = 走完第 i 步后。
-  /// 未分析的步不包含（分析过程中折线逐步生长）。
+  /// 全长序列（含未分析步，未分析时用已分析的最近评分），
+  /// 保证整局 x 轴刻度稳定，折线随分析进度逐步生长。
   List<int> get scoreSeries {
-    if (entries.isEmpty) return [0];
-    final list = <int>[entries.first.scoreBefore];
-    for (final e in entries) {
-      if (e.quality == null) break;
-      list.add(e.scoreAfter);
+    final n = history.length;
+    if (n == 0) return [0];
+    final list = List<int>.filled(n + 1, 0);
+    var last = 0;
+    for (var i = 0; i < n; i++) {
+      if (i == 0) {
+        // 初始局面：首步 before（未分析时为 0）
+        last = entries.first.scoreBefore;
+        list[0] = last;
+      }
+      final e = entries[i];
+      if (e.quality != null) {
+        // 已分析：该步之后用真实评分
+        last = e.scoreAfter;
+      }
+      list[i + 1] = last;
     }
     return list;
   }
@@ -199,18 +214,17 @@ class ReviewController extends ChangeNotifier {
       debugPrint('复盘分析出错: $err');
     } finally {
       analyzing = false;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
   }
 
   /// 分级标准
   MoveQuality _classify(int loss, bool isBest) {
-    if (isBest && loss < 20) return MoveQuality.brilliant;
-    if (loss < 30) return MoveQuality.best;
+    if (isBest || loss < 30) return MoveQuality.excellent;
     if (loss < 100) return MoveQuality.good;
-    if (loss < 250) return MoveQuality.inaccuracy;
-    if (loss < 600) return MoveQuality.mistake;
-    return MoveQuality.blunder;
+    if (loss < 250) return MoveQuality.common;
+    if (loss < 600) return MoveQuality.poor;
+    return MoveQuality.mistake;
   }
 
   void cancelAnalysis() {
@@ -219,6 +233,7 @@ class ReviewController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _cancelled = true;
     super.dispose();
   }

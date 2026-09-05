@@ -247,11 +247,11 @@ class Board {
 
     // 兵：红兵向上（rank-1），黑卒向下（rank+1），过河后可横走
     if (red) {
-      // 黑卒攻击红帅
-      final p1 = kr + 1 <= 9 ? board.pieceAt(kf, kr + 1) : null;
+      // 黑卒向下走，正面攻击红帅的卒位于 kr-1
+      final p1 = kr - 1 >= 0 ? board.pieceAt(kf, kr - 1) : null;
       if (p1 != null && !p1.isRed && p1.type == PieceType.pawn) return true;
       if (kr >= 5) {
-        // 帅在黑方半场，黑卒可横吃
+        // 卒位于 kr 行，过河（rank>=5）后可横吃
         for (final df in const [-1, 1]) {
           final f = kf + df;
           if (f < 0 || f > 8) continue;
@@ -260,10 +260,11 @@ class Board {
         }
       }
     } else {
-      // 红兵攻击黑将
-      final p1 = kr - 1 >= 0 ? board.pieceAt(kf, kr - 1) : null;
+      // 红兵向上走，正面攻击黑将的兵位于 kr+1
+      final p1 = kr + 1 <= 9 ? board.pieceAt(kf, kr + 1) : null;
       if (p1 != null && p1.isRed && p1.type == PieceType.pawn) return true;
       if (kr <= 4) {
+        // 兵位于 kr 行，过河（rank<=4）后可横吃
         for (final df in const [-1, 1]) {
           final f = kf + df;
           if (f < 0 || f > 8) continue;
@@ -438,7 +439,9 @@ class Board {
   /// 简单长将检测：检查最近 24 步内是否出现同一局面 3 次
   static GameStatus repetitionStatus(List<String> historyFens) {
     if (historyFens.length < 12) return GameStatus.playing;
-    final recent = historyFens.sublist(historyFens.length - 24);
+    // 历史不足 24 步时从头取，避免负数下标越界
+    final start = historyFens.length > 24 ? historyFens.length - 24 : 0;
+    final recent = historyFens.sublist(start);
     final last = recent.last;
     final count = recent.where((f) => f == last).length;
     if (count >= 3) return GameStatus.draw;

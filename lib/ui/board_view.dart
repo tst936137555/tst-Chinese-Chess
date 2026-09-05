@@ -4,6 +4,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../engine/rules.dart';
+import '../game/review_controller.dart';
 
 /// 棋子显示名（红/黑）
 const _redNames = {
@@ -48,7 +49,6 @@ class BoardView extends StatelessWidget {
     this.suggestedMoves = const [],
     this.quality,
   });
-
   final Board board;
   final void Function(int file, int rank) onTapSquare;
   final bool flipBoard;
@@ -61,10 +61,10 @@ class BoardView extends StatelessWidget {
   final Piece? capturedPiece;
   /// 引擎建议走法（复盘时绘制绿色箭头）
   final Move? suggestedMove;
-  /// 多个建议走法（提示功能：第一个绿色，第二个蓝色）
+  /// 多个建议走法（提示功能：最优①绿色、次优②蓝色，编号标于箭杆中点）
   final List<Move> suggestedMoves;
-  /// 走法质量（复盘时标注在目标点）
-  final Color? quality;
+  /// 走法质量（复盘时在目标棋子右上角绘制角标）
+  final MoveQuality? quality;
 
   @override
   Widget build(BuildContext context) {
@@ -76,11 +76,9 @@ class BoardView extends StatelessWidget {
       return GestureDetector(
         onTapUp: (details) {
           final pos = details.localPosition;
-          // 反算网格坐标
-          final gridDx = pos.dx / cell - 0.5;
-          final gridDy = pos.dy / cell - 0.5;
-          int file = (gridDx + 0.5).round();
-          int rank = (gridDy + 0.5).round();
+          // 反算网格坐标：交点 (f, r) 绘制于 ((f+1)*cell, (r+1)*cell)
+          int file = (pos.dx / cell - 1).round();
+          int rank = (pos.dy / cell - 1).round();
           if (file < 0 || file > 8 || rank < 0 || rank > 9) return;
           if (flipBoard) {
             file = 8 - file;
@@ -130,7 +128,6 @@ class _BoardPainter extends CustomPainter {
     required this.quality,
     required this.cell,
   });
-
   final Board board;
   final bool flip;
   final (int, int)? selected;
@@ -142,7 +139,7 @@ class _BoardPainter extends CustomPainter {
   final Piece? capturedPiece;
   final Move? suggestedMove;
   final List<Move> suggestedMoves;
-  final Color? quality;
+  final MoveQuality? quality;
   final double cell;
 
   /// 屏幕坐标（file/rank -> 像素中心点）
@@ -158,23 +155,22 @@ class _BoardPainter extends CustomPainter {
     _drawGrid(canvas);
     _drawMarkings(canvas);
     _drawHighlights(canvas);
-    _drawSuggestion(canvas);
     _drawPieces(canvas);
+    _drawSuggestion(canvas);
     _drawQualityBadge(canvas);
   }
 
-  /// 引擎建议走法箭头（复盘单箭头 / 提示双箭头）
+  /// 引擎建议走法箭头（复盘单箭头 / 提示双箭头，绘制于棋子上层）
   void _drawSuggestion(Canvas canvas) {
     if (suggestedMoves.isNotEmpty) {
-      // 提示：第一建议绿色、第二建议蓝色
+      // 提示：最优①（绿色）、次优②（蓝色），编号标在箭杆中点
       for (var i = 0; i < suggestedMoves.length && i < 2; i++) {
-        _drawArrow(
-          canvas,
-          suggestedMoves[i],
-          i == 0
-              ? const Color(0xFF2E7D32) // 绿
-              : const Color(0xFF1565C0), // 蓝
-        );
+        final color = i == 0
+            ? const Color(0xFF2E7D32) // 绿
+            : const Color(0xFF1565C0); // 蓝
+        final m = suggestedMoves[i];
+        _drawArrow(canvas, m, color);
+        _drawHintBadge(canvas, m, '${i + 1}', color);
       }
       return;
     }
@@ -192,7 +188,7 @@ class _BoardPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     // 缩短箭头避免覆盖棋子圆心
     final dir = (to - from) / (to - from).distance;
-    final start = from + dir * cell * 0.38;
+    final start = from + dir * cell * 0.46;
     final end = to - dir * cell * 0.30;
     canvas.drawLine(start, end, paint);
     // 箭头头部
@@ -211,27 +207,70 @@ class _BoardPainter extends CustomPainter {
     canvas.drawPath(headPath, arrowPaint);
   }
 
-  /// 走法质量角标（复盘：目标点右上角小圆点）
+  /// 提示编号角标（①/②）：绘制于箭杆中点，白边彩底圆牌
+  void _drawHintBadge(Canvas canvas, Move m, String label, Color color) {
+    final from = point(m.fromFile, m.fromRank);
+    final to = point(m.toFile, m.toRank);
+    final dir = (to - from) / (to - from).distance;
+    final start = from + dir * cell * 0.46;
+    final end = to - dir * cell * 0.30;
+    final center = Offset.lerp(start, end, 0.45)!;
+
+    final radius = cell * 0.19;
+    // 白色描边 + 彩色底，确保在棋盘/棋子上都清晰
+    canvas.drawCircle(center, radius + 1.5, Paint()..color = Colors.white);
+    canvas.drawCircle(center, radius, Paint()..color = color);
+
+    final tp = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: radius * 1.3,
+          fontWeight: FontWeight.w700,
+          height: 1.0,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+  }
+
+  /// 走法质量角标（复盘：目标棋子右上角单字角标）
   void _drawQualityBadge(Canvas canvas) {
     final q = quality;
     final m = lastMove;
     if (q == null || m == null) return;
     final to = point(m.toFile, m.toRank);
+
+    // 角标圆形背景：明显大于普通落点标记
+    final radius = cell * 0.26;
     final center = to + Offset(cell * 0.34, -cell * 0.34);
+    // 白色描边 + 彩色底，确保在棋盘/棋子上都清晰
     canvas.drawCircle(
       center,
-      cell * 0.12,
-      Paint()..color = q,
+      radius + 1.5,
+      Paint()..color = Colors.white,
     );
-    // 白色描边让角标更清晰
     canvas.drawCircle(
       center,
-      cell * 0.12,
-      Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
+      radius,
+      Paint()..color = q.color,
     );
+
+    // 角标单字（优/良/平/差/错）
+    final tp = TextPainter(
+      text: TextSpan(
+        text: q.badge,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: radius * 1.35,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
   }
 
   void _drawBackground(Canvas canvas, Size size) {

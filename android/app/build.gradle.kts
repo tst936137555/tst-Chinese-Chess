@@ -40,6 +40,15 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    packaging {
+        jniLibs {
+            // 解压引擎 so 到 nativeLibraryDir：
+            // AGP 默认不解压（useLegacyPackaging=false），导致
+            // nativeLibraryDir 下无真实文件，Process.start 执行引擎会失败
+            useLegacyPackaging = true
+        }
+    }
 }
 
 kotlin {
