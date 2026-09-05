@@ -16,29 +16,28 @@ import 'package:flutter/services.dart';
 
 import 'rules.dart';
 
-/// 难度等级定义（映射到皮卡鱼 UCI_Elo / Skill Level）
+/// 难度等级定义（映射到皮卡鱼 UCI_LimitStrength / UCI_Elo）
 class DifficultyLevel {
   const DifficultyLevel({
     required this.name,
     required this.elo,
-    required this.depth,
     required this.movetimeMs,
-    required this.skill,
   });
 
   final String name;
+  /// 皮卡鱼标定棋力区间为 UCI_Elo 1280-3133（引擎官方削弱机制）。
+  /// elo = 0 表示不限棋力（满强度，Skill Level 20），仅用于"大师"。
   final int elo;
-  final int depth;
+  /// 每步思考时间（毫秒）。
   final int movetimeMs;
-  final int skill;
 
-  /// Skill Level 0-20 削弱棋力（20 = 满强度）；movetime 控制每步思考时间。
-  /// 注：UCI_LimitStrength=true 时引擎忽略手动 Skill Level，故 skill 体系下 elo 置 0。
-  static const beginner = DifficultyLevel(name: '入门', elo: 0, depth: 0, movetimeMs: 1000, skill: 4);
-  static const easy = DifficultyLevel(name: '简单', elo: 0, depth: 0, movetimeMs: 1250, skill: 8);
-  static const medium = DifficultyLevel(name: '中等', elo: 0, depth: 0, movetimeMs: 1500, skill: 12);
-  static const hard = DifficultyLevel(name: '困难', elo: 0, depth: 0, movetimeMs: 1750, skill: 16);
-  static const master = DifficultyLevel(name: '大师', elo: 0, depth: 0, movetimeMs: 2000, skill: 20);
+  /// 低档位用低 Elo 削弱棋力；大师档不限棋力并给足思考时间，
+  /// 以完整发挥皮卡鱼实力。
+  static const beginner = DifficultyLevel(name: '入门', elo: 1500, movetimeMs: 1000);
+  static const easy = DifficultyLevel(name: '简单', elo: 1800, movetimeMs: 1000);
+  static const medium = DifficultyLevel(name: '中等', elo: 2100, movetimeMs: 1000);
+  static const hard = DifficultyLevel(name: '困难', elo: 2400, movetimeMs: 1000);
+  static const master = DifficultyLevel(name: '大师', elo: 0, movetimeMs: 3000);
 
   static const all = [beginner, easy, medium, hard, master];
 }
@@ -168,10 +167,9 @@ class PikafishEngine {
   Future<String> _copyNnueToTmp() async {
     final dir = Directory.systemTemp;
     final nnue = File('${dir.path}${Platform.pathSeparator}pikafish.nnue');
-    if (!nnue.existsSync()) {
-      final data = await rootBundle.load('assets/engine/pikafish.nnue');
-      await nnue.writeAsBytes(data.buffer.asUint8List(), flush: true);
-    }
+    // 每次启动重写，确保 App 升级携带的新权重生效
+    final data = await rootBundle.load('assets/engine/pikafish.nnue');
+    await nnue.writeAsBytes(data.buffer.asUint8List(), flush: true);
     return nnue.path;
   }
 
@@ -298,9 +296,10 @@ void _engineIsolateEntry(List args) {
         final m = RegExp(r'score (cp|mate) (-?\d+)').firstMatch(line);
         if (m != null) {
           final v = int.parse(m.group(2)!);
-          // mate 转换：1 步绝杀 = ±9999，2 步 = ±9998，以此类推
+          // mate 转换：1 步绝杀 = ±9999，2 步 = ±9998，以此类推；
+          // mate 0 表示当前行棋方已被绝杀（无棋可走），记为最深败势 -10000
           final score = m.group(1) == 'mate'
-              ? (v > 0 ? 10000 - v : -10000 - v)
+              ? (v == 0 ? -10000 : (v > 0 ? 10000 - v : -10000 - v))
               : v;
           // MultiPV 行号（无该字段 = 1）
           final pvIdx = int.tryParse(
@@ -353,24 +352,20 @@ void _engineIsolateEntry(List args) {
       // 发送局面与搜索指令
       send('stop');
       send('position fen ${req.fen}');
-      if (req.analysis) {
+      if (req.analysis || req.level.elo <= 0) {
+        // 复盘分析 / 大师：不限棋力，满强度
         send('setoption name UCI_LimitStrength value false');
         send('setoption name Skill Level value 20');
         send('setoption name MultiPV value ${req.multiPv}');
-      } else if (req.level.elo > 0) {
+      } else {
+        // 对局难度：使用皮卡鱼官方标定的 UCI_Elo 削弱机制
         send('setoption name UCI_LimitStrength value true');
         send('setoption name UCI_Elo value ${req.level.elo}');
-        send('setoption name MultiPV value 1');
-      } else {
-        send('setoption name UCI_LimitStrength value false');
-        send('setoption name Skill Level value ${req.level.skill}');
         send('setoption name MultiPV value 1');
       }
       send('isready');
       if (req.analysis) {
         send('go depth ${req.analysisDepth}');
-      } else if (req.level.depth > 0) {
-        send('go depth ${req.level.depth}');
       } else {
         send('go movetime ${req.level.movetimeMs}');
       }

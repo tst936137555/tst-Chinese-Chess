@@ -1,8 +1,11 @@
 // 主界面冒烟测试：验证应用可启动并显示入口选择界面。
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:xiangqi/engine/rules.dart';
 import 'package:xiangqi/main.dart';
+import 'package:xiangqi/ui/board_view.dart';
 
 void main() {
   testWidgets('应用启动显示入口选择', (WidgetTester tester) async {
@@ -43,5 +46,31 @@ void main() {
 
     // 进入对局界面（棋盘加载）
     expect(find.text('对局'), findsOneWidget);
+  });
+
+  testWidgets('棋盘点击命中正确交点', (WidgetTester tester) async {
+    final taps = <(int, int)>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: 500,
+            height: 550,
+            child: BoardView(
+              board: Board(),
+              onTapSquare: (f, r) => taps.add((f, r)),
+              flipBoard: false,
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+    // cell = 500/10 = 50，交点 (f, r) 画在 ((f+1)*50, (r+1)*50)
+    final origin = tester.getTopLeft(find.byType(BoardView));
+    await tester.tapAt(origin + const Offset(50, 50)); // 交点 (0,0)
+    await tester.tapAt(origin + const Offset(300, 250)); // 交点 (5,4)
+    await tester.tapAt(origin + const Offset(450, 500)); // 交点 (8,9)
+    expect(taps, [(0, 0), (5, 4), (8, 9)]);
   });
 }

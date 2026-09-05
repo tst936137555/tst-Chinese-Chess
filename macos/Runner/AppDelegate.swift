@@ -23,10 +23,12 @@ class AppDelegate: FlutterAppDelegate {
       if !fm.fileExists(atPath: appDir.path) {
         try fm.createDirectory(at: appDir, withIntermediateDirectories: true)
       }
-      if !fm.fileExists(atPath: dst.path) {
-        try fm.copyItem(at: URL(fileURLWithPath: src), to: dst)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dst.path)
+      // 每次启动重新拷贝，确保 bundle 内引擎升级后同步更新
+      if fm.fileExists(atPath: dst.path) {
+        try fm.removeItem(at: dst)
       }
+      try fm.copyItem(at: URL(fileURLWithPath: src), to: dst)
+      try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dst.path)
       return dst.path
     } catch {
       NSLog("prepareEngine error: \(error)")

@@ -12,6 +12,7 @@ import '../game/game_controller.dart';
 import '../game/review_controller.dart';
 import 'board_view.dart';
 import 'eval_chart.dart';
+import 'theme.dart';
 
 /// 复盘上局：使用当前 GameController 的历史
 Future<void> openReviewLastGame(
@@ -28,39 +29,27 @@ Future<void> openReviewLastGame(
 }
 
 /// 复盘棋谱：打开存档列表选择一局
-Future<void> openReviewArchive(BuildContext context) async {
-  final game = await Navigator.of(context).push(MaterialPageRoute(
+Future<void> openReviewArchive(BuildContext context) {
+  return Navigator.of(context).push(MaterialPageRoute(
     fullscreenDialog: true,
     builder: (_) => const ArchivePickerScreen(),
   ));
-  if (game is ArchivedGame && context.mounted) {
-    // 从存档重建历史
-    final history = <HistoryEntry>[];
-    for (final e in game.history) {
-      final uci = e['uci'] as String? ?? '';
-      if (uci.length < 4) break;
-      history.add(HistoryEntry(
-        move: Move.fromUci(uci),
-        capturedPiece: e['captured'] as String?,
-        notation: e['notation'] as String? ?? uci,
-        fenAfter: e['fen'] as String? ?? '',
-      ));
-    }
-    if (!context.mounted) return;
-    if (history.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('该棋谱数据异常')),
-      );
-      return;
-    }
-    await Navigator.of(context).push(MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => ReviewScreen(
-        history: history,
-        userPlaysRed: game.userRed,
-      ),
+}
+
+/// 从存档重建历史，数据异常时返回空列表
+List<HistoryEntry> _historyFromArchive(ArchivedGame game) {
+  final history = <HistoryEntry>[];
+  for (final e in game.history) {
+    final uci = e['uci'] as String? ?? '';
+    if (uci.length < 4) break;
+    history.add(HistoryEntry(
+      move: Move.fromUci(uci),
+      capturedPiece: e['captured'] as String?,
+      notation: e['notation'] as String? ?? uci,
+      fenAfter: e['fen'] as String? ?? '',
     ));
   }
+  return history;
 }
 
 /// 存档选择页
@@ -88,6 +77,24 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
     if (mounted) setState(() {});
   }
 
+  /// 选中一局后，在棋谱列表之上打开复盘分析页；退出复盘时返回本列表
+  Future<void> _openReview(BuildContext context, ArchivedGame game) async {
+    final history = _historyFromArchive(game);
+    if (history.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该棋谱数据异常')),
+      );
+      return;
+    }
+    await Navigator.of(context).push(MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => ReviewScreen(
+        history: history,
+        userPlaysRed: game.userRed,
+      ),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -101,17 +108,24 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
             onPressed: () async {
               final ok = await showDialog<bool>(
                 context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('清空棋谱'),
-                  content: const Text('确定删除全部历史棋谱吗？此操作不可恢复。'),
+                builder: (ctx) => XqDialog(
+                  title: '清空棋谱',
                   actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('取消')),
-                    FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('清空')),
+                    XqButton(
+                      label: '取消',
+                      variant: XqButtonVariant.tonal,
+                      onPressed: () => Navigator.pop(ctx, false),
+                    ),
+                    XqButton(
+                      label: '清空',
+                      variant: XqButtonVariant.primary,
+                      onPressed: () => Navigator.pop(ctx, true),
+                    ),
                   ],
+                  child: const Text(
+                    '确定删除全部历史棋谱吗？此操作不可恢复。',
+                    style: TextStyle(fontSize: 14, height: 1.7),
+                  ),
                 ),
               );
               if (ok == true && context.mounted) {
@@ -135,12 +149,15 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                     final isWin = g.resultLabel == '胜';
                     final isDraw = g.resultLabel == '和';
                     return ListTile(
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 20),
                       leading: CircleAvatar(
+                        radius: 17,
                         backgroundColor: isWin
                             ? const Color(0xFF2E7D32)
                             : isDraw
-                                ? Colors.grey
-                                : const Color(0xFFB03020),
+                                ? XqColors.wood
+                                : XqColors.red,
                         child: Text(
                           g.resultLabel,
                           style: const TextStyle(
@@ -150,11 +167,15 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                       // 标题：【对局时间-执红/执黑-胜负】
                       title: Text(
                         g.title,
-                        style: const TextStyle(fontSize: 14),
+                        style: const TextStyle(
+                            fontSize: 14, color: XqColors.inkBlack),
                       ),
-                      subtitle: Text('${g.history.length} 回合 · ${g.levelName}'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.pop(context, g),
+                      subtitle: Text('${g.history.length} 回合 · ${g.levelName}',
+                          style: const TextStyle(
+                              fontSize: 12, color: XqColors.wood)),
+                      trailing: const Icon(Icons.chevron_right,
+                          color: XqColors.wood),
+                      onTap: () => _openReview(context, g),
                     );
                   },
                 ),
@@ -249,7 +270,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                       lastMove: _review.currentMove,
                       suggestedMove: _review.suggestedMove,
                       quality: _review.cursor > 0
-                          ? _review.entries[_review.cursor - 1].quality?.color
+                          ? _review.entries[_review.cursor - 1].quality
                           : null,
                     ),
                   ),
@@ -271,11 +292,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
   /// 当前步信息卡
   Widget _buildMoveInfo() {
     if (_review.cursor == 0) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: Align(
+      return XqPanel(
+        margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+        child: const Align(
           alignment: Alignment.centerLeft,
-          child: Text('初始局面', style: TextStyle(fontWeight: FontWeight.w600)),
+          child: Text('初始局面',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
         ),
       );
     }
@@ -283,8 +305,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
     final isUserMove = (_review.cursor - 1).isEven == widget.userPlaysRed;
     final q = e.quality;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    return XqPanel(
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -305,21 +327,21 @@ class _ReviewScreenState extends State<ReviewScreen> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
-                    '${q.dot} ${q.label}',
+                    '${q.badge} ${q.label}',
                     style: TextStyle(
                         fontSize: 12, color: q.color, fontWeight: FontWeight.w600),
                   ),
                 )
               else if (_review.analyzing)
                 const Text('分析中…',
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    style: TextStyle(fontSize: 12, color: XqColors.wood)),
               const Spacer(),
               if (e.bestMoveUci != null && e.bestMoveUci != e.move.uci)
                 Flexible(
                   child: Text(
                     '建议：${_uciToNotation(e.bestMoveUci!, _review.cursor)}',
                     style: const TextStyle(
-                        fontSize: 12, color: Color(0xFF1565C0)),
+                        fontSize: 12, color: XqColors.red),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -331,7 +353,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
               child: Text(
                 '此步亏损 ${(e.loss / 100).toStringAsFixed(1)} 兵'
                 '${isUserMove ? '（你走的）' : ''}',
-                style: const TextStyle(fontSize: 11, color: Colors.grey),
+                style: const TextStyle(fontSize: 11, color: XqColors.wood),
               ),
             ),
         ],
@@ -432,33 +454,35 @@ class _ReviewScreenState extends State<ReviewScreen> {
   Widget _buildControls() {
     final busy = _review.analyzing;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
       child: Row(
         children: [
           Expanded(
-            child: FilledButton.tonalIcon(
+            child: XqButton(
+              label: '上一步',
+              icon: Icons.chevron_left,
+              variant: XqButtonVariant.tonal,
               onPressed: busy ? null : (_review.canBack ? _review.back : null),
-              icon: const Icon(Icons.chevron_left),
-              label: const Text('上一步'),
             ),
           ),
+          const SizedBox(width: 8),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: FilledButton.tonalIcon(
-                onPressed: busy
-                    ? null
-                    : (_review.canForward ? _review.forward : null),
-                icon: const Icon(Icons.chevron_right),
-                label: const Text('下一步'),
-              ),
+            child: XqButton(
+              label: '下一步',
+              icon: Icons.chevron_right,
+              variant: XqButtonVariant.tonal,
+              onPressed: busy
+                  ? null
+                  : (_review.canForward ? _review.forward : null),
             ),
           ),
+          const SizedBox(width: 8),
           Expanded(
-            child: OutlinedButton.icon(
+            child: XqButton(
+              label: '退出',
+              icon: Icons.exit_to_app,
+              variant: XqButtonVariant.outline,
               onPressed: () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.exit_to_app),
-              label: const Text('退出'),
             ),
           ),
         ],

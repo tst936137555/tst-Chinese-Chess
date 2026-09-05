@@ -89,11 +89,50 @@ void main() {
     });
 
     test('将死判定', () {
-      // 简单杀局：黑将无处可走
-      final b = Board.fromFen('3k5/9/9/9/9/9/9/9/9/3K1R3 b - - 0 1');
-      // 黑将 d9：红车 e0（file 4）控制 e 线，红帅 d0 控制 d 线
-      // 黑将只能在 d 线上下移动（d8, d9 间）
-      expect(b.statusAfterMove(), GameStatus.blackWin == GameStatus.redWin ? GameStatus.playing : (b.legalMoves().isEmpty ? GameStatus.redWin : GameStatus.playing));
+      // 双车闷杀：黑将 (4,0)，红车 (0,0) 沿底线将军、红车 (8,1) 封锁第 1 横线
+      final b = Board.fromFen('R3k4/8R/9/9/9/9/9/9/9/9 b - - 0 1');
+      // 黑方被将死，无子可动 → 红方胜
+      expect(b.statusAfterMove(), GameStatus.redWin);
+    });
+  });
+
+  group('将军检测', () {
+    test('黑卒正面攻击红帅', () {
+      // 黑卒 (4,6) 向下走可吃红帅 (4,7)
+      final b = Board.fromFen('3k5/9/9/9/9/9/4p4/4K4/9/9 w - - 0 1');
+      expect(b.inCheck, isTrue);
+    });
+
+    test('红兵正面攻击黑将', () {
+      // 红兵 (4,3) 向上走可吃黑将 (4,2)
+      final b = Board.fromFen('9/9/4k4/4P4/9/9/9/3K5/9/9 b - - 0 1');
+      expect(b.inCheck, isTrue);
+    });
+
+    test('将帅身后的敌卒不构成将军', () {
+      // 黑卒 (4,8) 在红帅 (4,7) 下方（已过），无法回头攻击
+      final b = Board.fromFen('3k5/9/9/9/9/9/9/4K4/4p4/9 w - - 0 1');
+      expect(b.inCheck, isFalse);
+    });
+
+    test('黑将身后的敌兵不构成将军', () {
+      // 红兵 (4,1) 在黑将 (4,2) 上方（已过），无法回头攻击
+      final b = Board.fromFen('9/4P4/4k4/9/9/9/9/3K5/9/9 b - - 0 1');
+      expect(b.inCheck, isFalse);
+    });
+
+    test('过河卒横向攻击红帅', () {
+      // 黑卒 (3,7) 过河后横吃红帅 (4,7)
+      final b = Board.fromFen('3k5/9/9/9/9/9/9/3pK4/9/9 w - - 0 1');
+      expect(b.inCheck, isTrue);
+    });
+
+    test('送吃红帅给黑卒的走法非法', () {
+      // 黑卒 (3,8) 正吃 (3,9)、横吃 (2,8)/(4,8)；红帅 (4,9)
+      final b = Board.fromFen('k8/9/9/9/9/9/9/9/3p5/4K4 w - - 0 1');
+      expect(b.isLegal(Move(4, 9, 5, 9)), isTrue); // 避开卒的攻击
+      expect(b.isLegal(Move(4, 9, 4, 8)), isFalse); // 送入卒横吃
+      expect(b.isLegal(Move(4, 9, 3, 9)), isFalse); // 送入卒正面
     });
   });
 

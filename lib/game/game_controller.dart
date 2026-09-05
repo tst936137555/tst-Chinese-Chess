@@ -129,6 +129,8 @@ class GameController extends ChangeNotifier {
     hinting = true;
     _hints = const [];
     notifyListeners();
+    // 记录请求时的步数：期间若已走子/悔棋，结果作废
+    final historyLen = _history.length;
     try {
       // 提示用较低深度：满深度双路搜索易使手机过热，10 层已足够给出建议
       final result = await engine.analyze(
@@ -136,6 +138,8 @@ class GameController extends ChangeNotifier {
         depth: 10,
         multiPv: 2,
       );
+      // 页面已销毁或期间已走子：过期建议直接丢弃
+      if (disposed || _history.length != historyLen) return;
       final moves = <Move>[];
       for (final pv in result.pvList.take(2)) {
         try {
@@ -147,7 +151,7 @@ class GameController extends ChangeNotifier {
       debugPrint('提示获取失败: $e');
     } finally {
       hinting = false;
-      notifyListeners();
+      if (!disposed) notifyListeners();
     }
   }
 
@@ -192,7 +196,8 @@ class GameController extends ChangeNotifier {
   }
 
   /// 应用走法并更新历史与状态
-  void _applyMove(Move m) {
+  /// [persist] 为 false 时（恢复对局重放）不落盘、不归档
+  void _applyMove(Move m, {bool persist = true}) {
     final captured = _board.pieceAt(m.toFile, m.toRank);
     final notation = moveToChinese(_board, m);
     _board.makeMove(m);
@@ -203,6 +208,7 @@ class GameController extends ChangeNotifier {
       fenAfter: _board.fen,
     ));
     _updateStatus();
+    if (!persist) return;
     _saveState();
     if (_status != GameStatus.playing) {
       _archiveGame();
@@ -219,8 +225,9 @@ class GameController extends ChangeNotifier {
       _status = _board.redToMove ? GameStatus.blackWin : GameStatus.redWin;
       return;
     }
-    // 简单重复局面判和
-    final fens = _history.map((e) => e.fenAfter.split(' ').first).toList();
+    // 简单重复局面判和（局面 = 棋盘 + 行棋方）
+    final fens =
+        _history.map((e) => e.fenAfter.split(' ').take(2).join(' ')).toList();
     final last = fens.last;
     final count = fens.where((f) => f == last).length;
     _status = count >= 3 ? GameStatus.draw : GameStatus.playing;
@@ -274,6 +281,8 @@ class GameController extends ChangeNotifier {
     _status = GameStatus.playing;
     notifyListeners();
     _saveState();
+    // 撤销后若轮到 AI（如执黑时悔掉 AI 的开局首步），需重新触发引擎走棋
+    _maybeEngineMove();
   }
 
   /// 结束对局：引擎分析当前局势，按分差判定胜负
@@ -307,7 +316,7 @@ class GameController extends ChangeNotifier {
       _archiveGame();
     } finally {
       ending = false;
-      notifyListeners();
+      if (!disposed) notifyListeners();
       _saveState();
     }
   }
@@ -358,6 +367,11 @@ class GameController extends ChangeNotifier {
   /// 保存当前局面（自动保存）
   Future<void> _saveState() async {
     try {
+      // 对局已结束：棋局不可续玩，清除存档（结果已归档到复盘棋谱）
+      if (_status != GameStatus.playing) {
+        await _prefs.remove('saved_game');
+        return;
+      }
       await _prefs.setString('saved_game', jsonEncode({
         'history': _history.map((e) => {
           'uci': e.move.uci,
@@ -407,7 +421,7 @@ class GameController extends ChangeNotifier {
           _history = [];
           return false;
         }
-        _applyMove(m);
+        _applyMove(m, persist: false);
       }
       final savedStatus = GameStatus.values[data['status'] as int? ?? 0];
       _status = _history.isEmpty ? GameStatus.playing : savedStatus;
@@ -415,6 +429,10 @@ class GameController extends ChangeNotifier {
       _maybeEngineMove();
       return true;
     } catch (_) {
+      // 数据损坏：丢弃恢复结果，避免留下走了一半的残缺局面
+      _board = Board();
+      _history = [];
+      _status = GameStatus.playing;
       return false;
     } finally {
       _loading = false;
