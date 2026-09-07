@@ -178,25 +178,29 @@ class PikafishEngine {
     return _enqueue(() async {
       await start();
       final response = ReceivePort();
-      _engineSendPort!.send(_GoRequest(
-        sendPort: response.sendPort,
-        fen: board.fen,
-        level: level,
-      ));
-      final result = await response.first
-          .timeout(const Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('引擎思考超时');
-      }) as List;
-      response.close();
-      final uci = result[0] as String;
-      final score = result[1] as int;
-      final m = Move(
-        uci.codeUnitAt(0) - 'a'.codeUnitAt(0),
-        9 - int.parse(uci[1]),
-        uci.codeUnitAt(2) - 'a'.codeUnitAt(0),
-        9 - int.parse(uci[3]),
-      );
-      return EngineResult(move: m, scoreCp: score);
+      try {
+        _engineSendPort!.send(_GoRequest(
+          sendPort: response.sendPort,
+          fen: board.fen,
+          level: level,
+        ));
+        final result = await response.first
+            .timeout(const Duration(seconds: 30), onTimeout: () {
+          throw TimeoutException('引擎思考超时');
+        }) as List;
+        final uci = result[0] as String;
+        final score = result[1] as int;
+        final m = Move(
+          uci.codeUnitAt(0) - 'a'.codeUnitAt(0),
+          9 - int.parse(uci[1]),
+          uci.codeUnitAt(2) - 'a'.codeUnitAt(0),
+          9 - int.parse(uci[3]),
+        );
+        return EngineResult(move: m, scoreCp: score);
+      } finally {
+        // 超时/异常时也必须关闭，否则 ReceivePort 泄漏
+        response.close();
+      }
     });
   }
 
@@ -210,31 +214,35 @@ class PikafishEngine {
     return _enqueue(() async {
       await start();
       final response = ReceivePort();
-      _engineSendPort!.send(_GoRequest(
-        sendPort: response.sendPort,
-        fen: board.fen,
-        level: DifficultyLevel.master,
-        analysis: true,
-        analysisDepth: depth,
-        multiPv: multiPv,
-      ));
-      final result = await response.first
-          .timeout(const Duration(seconds: 60), onTimeout: () {
-        throw TimeoutException('引擎分析超时');
-      }) as List;
-      response.close();
-      return AnalysisResult(
-        scoreCp: result[0] as int,
-        bestMove: result[1] as String,
-        pvMoves: (result[2] as List).cast<String>(),
-        pvList: (result[3] as List)
-            .map((e) => (
-                  move: e[0] as String,
-                  scoreCp: e[1] as int,
-                  pv: (e[2] as List).cast<String>(),
-                ))
-            .toList(),
-      );
+      try {
+        _engineSendPort!.send(_GoRequest(
+          sendPort: response.sendPort,
+          fen: board.fen,
+          level: DifficultyLevel.master,
+          analysis: true,
+          analysisDepth: depth,
+          multiPv: multiPv,
+        ));
+        final result = await response.first
+            .timeout(const Duration(seconds: 60), onTimeout: () {
+          throw TimeoutException('引擎分析超时');
+        }) as List;
+        return AnalysisResult(
+          scoreCp: result[0] as int,
+          bestMove: result[1] as String,
+          pvMoves: (result[2] as List).cast<String>(),
+          pvList: (result[3] as List)
+              .map((e) => (
+                    move: e[0] as String,
+                    scoreCp: e[1] as int,
+                    pv: (e[2] as List).cast<String>(),
+                  ))
+              .toList(),
+        );
+      } finally {
+        // 超时/异常时也必须关闭，否则 ReceivePort 泄漏
+        response.close();
+      }
     });
   }
 
@@ -261,7 +269,73 @@ void _engineIsolateEntry(List args) {
     /// 当前请求的上下文（串行处理，一次只有一个在跑）
     _RequestContext? current;
 
-    void send(String s) => proc.stdin.writeln(s);
+    /// 引擎忙时挂起的新请求（主侧超时后会继续发新请求，需排队处理）
+    final pending = <_GoRequest>[];
+
+    /// 进程已退出：此后不再写 stdin（写入会抛异步异常）
+    bool dead = false;
+
+    void send(String s) {
+      if (!dead) proc.stdin.writeln(s);
+    }
+
+    /// 处理一条走棋/分析请求
+    void handleRequest(_GoRequest req) {
+      current = _RequestContext(req);
+
+      // 发送局面与搜索指令
+      send('stop');
+      send('position fen ${req.fen}');
+      if (req.analysis || req.level.elo <= 0) {
+        // 复盘分析 / 大师：不限棋力，满强度
+        send('setoption name UCI_LimitStrength value false');
+        send('setoption name Skill Level value 20');
+        send('setoption name MultiPV value ${req.multiPv}');
+      } else {
+        // 对局难度：使用皮卡鱼官方标定的 UCI_Elo 削弱机制
+        send('setoption name UCI_LimitStrength value true');
+        send('setoption name UCI_Elo value ${req.level.elo}');
+        send('setoption name MultiPV value 1');
+      }
+      send('isready');
+      if (req.analysis) {
+        send('go depth ${req.analysisDepth}');
+      } else {
+        send('go movetime ${req.level.movetimeMs}');
+      }
+
+      // 捕获当前 ctx（完成回调触发时 current 可能已被 failCurrent 置空）
+      final ctxRef = current!;
+      ctxRef.future.then((_) {
+        final ctx = ctxRef;
+        // 评分是“行棋方视角”，统一转为红方视角
+        final board = Board.fromFen(req.fen);
+        final flip = board.redToMove != true;
+
+        int toRed(int s) => flip ? -s : s;
+
+        final score = toRed(ctx.scores[1] ?? 0);
+        final pv1 = ctx.pvs[1] ?? const <String>[];
+
+        if (req.analysis) {
+          // MultiPV 各路变化（按引擎行棋方视角转红方视角）
+          final pvList = <List<dynamic>>[];
+          for (final idx in (ctx.scores.keys.toList()..sort())) {
+            final mv = ctx.pvs[idx]?.firstOrNull ?? '';
+            if (mv.isEmpty) continue;
+            pvList.add([mv, toRed(ctx.scores[idx] ?? 0), ctx.pvs[idx] ?? const []]);
+          }
+          req.sendPort.send([score, ctx.bestmove, pv1, pvList]);
+        } else {
+          req.sendPort.send([ctx.bestmove, score]);
+        }
+        current = null;
+        // 旧请求结束后，若队列中还有新请求则继续处理
+        if (pending.isNotEmpty) {
+          handleRequest(pending.removeAt(0));
+        }
+      });
+    }
 
     /// 完成当前请求（bestmove 缺失时以兜底结果完成，避免主侧挂起）
     void failCurrent() {
@@ -326,8 +400,25 @@ void _engineIsolateEntry(List args) {
 
     // 进程退出/崩溃：完成等待中的请求，避免主 isolate 挂起
     proc.exitCode.then((_) {
+      dead = true;
       requests.close();
       failCurrent();
+      // 排队中的请求也无法处理，逐个兜底完成
+      while (pending.isNotEmpty) {
+        final req = pending.removeAt(0);
+        final board = Board.fromFen(req.fen);
+        final moves = board.legalMoves();
+        final uci = moves.isEmpty
+            ? '0000'
+            : moves[DateTime.now().millisecondsSinceEpoch % moves.length].uci;
+        if (req.analysis) {
+          req.sendPort.send([0, uci, <String>[], [
+            if (uci != '0000') [uci, 0, <String>[]]
+          ]]);
+        } else {
+          req.sendPort.send([uci, 0]);
+        }
+      }
     });
 
     // 初始化
@@ -345,58 +436,14 @@ void _engineIsolateEntry(List args) {
         return;
       }
       final req = msg as _GoRequest;
-      // 若上一请求尚未结束则忽略新请求（正常不会发生，主侧已排队）
-      if (current != null && !current!.done) return;
-      current = _RequestContext(req);
-
-      // 发送局面与搜索指令
-      send('stop');
-      send('position fen ${req.fen}');
-      if (req.analysis || req.level.elo <= 0) {
-        // 复盘分析 / 大师：不限棋力，满强度
-        send('setoption name UCI_LimitStrength value false');
-        send('setoption name Skill Level value 20');
-        send('setoption name MultiPV value ${req.multiPv}');
-      } else {
-        // 对局难度：使用皮卡鱼官方标定的 UCI_Elo 削弱机制
-        send('setoption name UCI_LimitStrength value true');
-        send('setoption name UCI_Elo value ${req.level.elo}');
-        send('setoption name MultiPV value 1');
+      if (current != null && !current!.done) {
+        // 引擎仍在搜索（主侧超时后会提前放行新请求）：
+        // 令引擎尽快结束当前搜索，新请求排队待 bestmove 后接管
+        send('stop');
+        pending.add(req);
+        return;
       }
-      send('isready');
-      if (req.analysis) {
-        send('go depth ${req.analysisDepth}');
-      } else {
-        send('go movetime ${req.level.movetimeMs}');
-      }
-
-      // 捕获当前 ctx（完成回调触发时 current 可能已被 failCurrent 置空）
-      final ctxRef = current!;
-      ctxRef.future.then((_) {
-        final ctx = ctxRef;
-        // 评分是“行棋方视角”，统一转为红方视角
-        final board = Board.fromFen(req.fen);
-        final flip = board.redToMove != true;
-
-        int toRed(int s) => flip ? -s : s;
-
-        final score = toRed(ctx.scores[1] ?? 0);
-        final pv1 = ctx.pvs[1] ?? const <String>[];
-
-        if (req.analysis) {
-          // MultiPV 各路变化（按引擎行棋方视角转红方视角）
-          final pvList = <List<dynamic>>[];
-          for (final idx in (ctx.scores.keys.toList()..sort())) {
-            final mv = ctx.pvs[idx]?.firstOrNull ?? '';
-            if (mv.isEmpty) continue;
-            pvList.add([mv, toRed(ctx.scores[idx] ?? 0), ctx.pvs[idx] ?? const []]);
-          }
-          req.sendPort.send([score, ctx.bestmove, pv1, pvList]);
-        } else {
-          req.sendPort.send([ctx.bestmove, score]);
-        }
-        current = null;
-      });
+      handleRequest(req);
     });
   }).catchError((e) {
     // 引擎启动失败：向主 isolate 报错

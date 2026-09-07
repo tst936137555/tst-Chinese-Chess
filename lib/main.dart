@@ -377,7 +377,11 @@ class _GamePageState extends State<GamePage>
       initialLevel: widget.initialLevel,
     );
     if (widget.resumeGame) {
-      await controller.restoreGame();
+      final restored = await controller.restoreGame();
+      if (!restored && controller.history.isEmpty) {
+        // 存档损坏：兜底开新局，避免用户执黑时轮不到任何一方走棋
+        controller.newGame();
+      }
     }
     if (widget.initialUserRed != null) {
       controller.newGame(userRed: widget.initialUserRed);

@@ -305,8 +305,8 @@ class _BoardPainter extends CustomPainter {
         canvas.drawLine(point(f, 5), point(f, 9), paint);
       }
     }
-    // 九宫斜线
-    for (final (fr, tr) in const [(0, 2), (2, 0)]) {
+    // 九宫斜线（黑方 rank 0-2，红方 rank 7-9）
+    for (final (fr, tr) in const [(0, 2), (7, 9)]) {
       canvas.drawLine(point(3 + 0, fr), point(5, tr), paint);
       canvas.drawLine(point(5, fr), point(3, tr), paint);
     }

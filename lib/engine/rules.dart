@@ -415,36 +415,12 @@ class Board {
   List<Move> legalMoves() =>
       pseudoMoves().where((m) => isLegal(m)).toList();
 
-  /// 双方是否照面（非法局面）
-  bool kingsFacing() {
-    final rk = findKing(true);
-    final bk = findKing(false);
-    if (rk == null || bk == null) return false;
-    if (rk.$1 != bk.$1) return false;
-    for (int r = bk.$2 + 1; r < rk.$2; r++) {
-      if (pieceAt(rk.$1, r) != null) return false;
-    }
-    return true;
-  }
-
   /// 将死 / 困毙判定（在当前方走之前调用）
   GameStatus statusAfterMove() {
     if (legalMoves().isEmpty) {
       // 无子可动：被将军则将死，否则困毙，均为对方胜
       return redToMove ? GameStatus.blackWin : GameStatus.redWin;
     }
-    return GameStatus.playing;
-  }
-
-  /// 简单长将检测：检查最近 24 步内是否出现同一局面 3 次
-  static GameStatus repetitionStatus(List<String> historyFens) {
-    if (historyFens.length < 12) return GameStatus.playing;
-    // 历史不足 24 步时从头取，避免负数下标越界
-    final start = historyFens.length > 24 ? historyFens.length - 24 : 0;
-    final recent = historyFens.sublist(start);
-    final last = recent.last;
-    final count = recent.where((f) => f == last).length;
-    if (count >= 3) return GameStatus.draw;
     return GameStatus.playing;
   }
 }

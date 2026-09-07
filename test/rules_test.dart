@@ -162,6 +162,18 @@ void main() {
       final m = Move(6, 6, 6, 5);
       expect(moveToChinese(b, m), '兵三进一');
     });
+
+    test('同纵线进退用步数：红汉字、黑阿拉伯数字', () {
+      final b = Board();
+      // 红炮 h2 直进两步：炮二进二
+      expect(moveToChinese(b, Move(7, 7, 7, 5)), '炮二进二');
+      // 红帅直进一步：帅五进一
+      expect(moveToChinese(b, Move(4, 9, 4, 8)), '帅五进一');
+      // 黑炮 b7 直进两步：炮8进2（黑方步数用阿拉伯数字）
+      expect(moveToChinese(b, Move(1, 2, 1, 4)), '炮8进2');
+      // 黑车 a9 直进一步：车9进1
+      expect(moveToChinese(b, Move(0, 0, 0, 1)), '车9进1');
+    });
   });
 
   group('UCI 走法', () {

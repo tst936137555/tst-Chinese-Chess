@@ -49,20 +49,11 @@ String moveToChinese(Board board, Move m) {
   if (m.fromFile == m.toFile) {
     // 同一纵线：进/退 + 步数
     final steps = (m.toRank - m.fromRank).abs();
-    if (p.type == PieceType.pawn || p.type == PieceType.king || p.type == PieceType.advisor || p.type == PieceType.elephant) {
-      // 直行子用步数
-      final up = red ? m.toRank < m.fromRank : m.toRank > m.fromRank;
-      action = up ? '进' : '退';
-      target = red
-          ? const ['一', '二', '三', '四', '五', '六', '七', '八', '九'][steps - 1]
-          : '$steps';
-    } else {
-      final up = red ? m.toRank < m.fromRank : m.toRank > m.fromRank;
-      action = up ? '进' : '退';
-      target = red
-          ? const ['一', '二', '三', '四', '五', '六', '七', '八', '九'][steps - 1]
-          : '$steps';
-    }
+    final up = red ? m.toRank < m.fromRank : m.toRank > m.fromRank;
+    action = up ? '进' : '退';
+    target = red
+        ? const ['一', '二', '三', '四', '五', '六', '七', '八', '九'][steps - 1]
+        : '$steps';
   } else {
     final up = red ? m.toRank < m.fromRank : m.toRank > m.fromRank;
     if (m.toRank == m.fromRank) {

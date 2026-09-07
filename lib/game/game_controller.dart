@@ -387,6 +387,7 @@ class GameController extends ChangeNotifier {
   }
 
   /// 恢复上次对局
+  /// 失败时棋盘重置为初始局面并返回 false，难度与执子设置保持原值
   Future<bool> restoreGame() async {
     try {
       _loading = true;
@@ -394,8 +395,9 @@ class GameController extends ChangeNotifier {
       final raw = _prefs.getString('saved_game');
       if (raw == null || raw.isEmpty) return false;
       final data = jsonDecode(raw) as Map<String, dynamic>;
-      userPlaysRed = data['userRed'] as bool? ?? true;
-      _level = DifficultyLevel.all.firstWhere(
+      // 先暂存，整局重放成功后再提交，避免损坏数据污染设置
+      final savedUserRed = data['userRed'] as bool? ?? true;
+      final savedLevel = DifficultyLevel.all.firstWhere(
         (l) => l.name == data['levelName'],
         orElse: () => DifficultyLevel.medium,
       );
@@ -407,6 +409,7 @@ class GameController extends ChangeNotifier {
         if (uci.length < 4) {
           _board = Board();
           _history = [];
+          _status = GameStatus.playing;
           return false;
         }
         final m = Move(
@@ -419,12 +422,15 @@ class GameController extends ChangeNotifier {
           // 数据损坏时放弃恢复
           _board = Board();
           _history = [];
+          _status = GameStatus.playing;
           return false;
         }
         _applyMove(m, persist: false);
       }
       final savedStatus = GameStatus.values[data['status'] as int? ?? 0];
       _status = _history.isEmpty ? GameStatus.playing : savedStatus;
+      userPlaysRed = savedUserRed;
+      _level = savedLevel;
       notifyListeners();
       _maybeEngineMove();
       return true;
