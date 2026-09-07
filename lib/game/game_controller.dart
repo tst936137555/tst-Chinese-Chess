@@ -142,12 +142,12 @@ class GameController extends ChangeNotifier {
     // 记录请求时的局面：期间走子/悔棋导致局面变化（含悔棋后重走、长度不变）即作废
     final fenAtRequest = _history.isEmpty ? '' : _history.last.fenAfter;
     try {
-      // 深度/时间双限：快设备吃满深度 14，慢设备由 1s 时间上限兜底（防过热/久等）
+      // 深度/时间双限：快设备吃满深度 14，慢设备由 1.5s 时间上限兜底（保证深度达标）
       final result = await engine.analyze(
         Board.cloneFrom(_board),
         depth: 14,
         multiPv: 2,
-        movetimeMs: 1000,
+        movetimeMs: 1500,
       );
       // 页面已销毁或局面已变化：过期建议直接丢弃
       if (disposed ||

@@ -179,7 +179,7 @@ class ReviewController extends ChangeNotifier {
 
       Future<AnalysisResult> eval(Board b) {
         return cache.putIfAbsent(
-            b.fen, () => engine.analyze(b, depth: depth, movetimeMs: 1000));
+            b.fen, () => engine.analyze(b, depth: depth, movetimeMs: 1500));
       }
 
       for (int i = 0; i < entries.length; i++) {

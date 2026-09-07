@@ -17,13 +17,15 @@ import 'package:flutter/services.dart';
 
 import 'rules.dart';
 
-/// 难度等级定义（应用层削弱：深度/时间双限 + MultiPV 加权随机选路）
+/// 难度等级定义（应用层削弱：深度/时间双限 + MultiPV 分差容差加权随机选路）
 class DifficultyLevel {
   const DifficultyLevel({
     required this.name,
     required this.depth,
     required this.multiPv,
     required this.movetimeMs,
+    this.toleranceCp = 0,
+    this.minThinkMs = 0,
     this.fullStrength = false,
   });
 
@@ -34,24 +36,52 @@ class DifficultyLevel {
   final int multiPv;
   /// 每步思考时间上限（毫秒）。
   final int movetimeMs;
+  /// 分差容差（厘兵）：仅从与最佳着法分差不超过该值的候选中随机选路，
+  /// 避免按名次削弱时选出大劣着（亏 2-3 兵）。0 = 只走最佳。
+  final int toleranceCp;
+  /// 最低思考时长（毫秒）：低档深度极浅，实际几十毫秒即完成搜索，
+  /// 补足最少思考时间让落子节奏自然。0 = 不补足。
+  final int minThinkMs;
   /// true = 满强度（大师）：MultiPV 1，随机选路不生效。
   final bool fullStrength;
 
   /// 皮卡鱼 2026-09-06 起移除了 UCI_Elo / UCI_LimitStrength 官方削弱机制，
   /// 改为应用层模拟棋力梯度：档位越低，深度/时间越保守、候选越宽、越易偏离最佳。
+  /// 容差按旧版 Elo 档位（1500-2400）的手感标定：档位越低容差越大、越"人味"。
   /// depth 取值贴近当前主流设备的实测有效深度：
   /// 快设备上深度先到（棋力跨设备一致），慢设备上时间先到（延迟可控）。
   static const beginner = DifficultyLevel(
-      name: '入门', depth: 6, multiPv: 5, movetimeMs: 1000);
-  static const easy =
-      DifficultyLevel(name: '简单', depth: 8, multiPv: 4, movetimeMs: 1500);
-  static const medium =
-      DifficultyLevel(name: '中等', depth: 10, multiPv: 3, movetimeMs: 2000);
-  static const hard =
-      DifficultyLevel(name: '困难', depth: 14, multiPv: 2, movetimeMs: 2500);
+      name: '入门',
+      depth: 6,
+      multiPv: 5,
+      movetimeMs: 1000,
+      toleranceCp: 300,
+      minThinkMs: 500);
+  static const easy = DifficultyLevel(
+      name: '简单',
+      depth: 8,
+      multiPv: 4,
+      movetimeMs: 1500,
+      toleranceCp: 180,
+      minThinkMs: 500);
+  static const medium = DifficultyLevel(
+      name: '中等',
+      depth: 10,
+      multiPv: 3,
+      movetimeMs: 2000,
+      toleranceCp: 100,
+      minThinkMs: 600);
+  static const hard = DifficultyLevel(
+      name: '困难',
+      depth: 14,
+      multiPv: 2,
+      movetimeMs: 2500,
+      toleranceCp: 40,
+      minThinkMs: 800);
   static const master = DifficultyLevel(
       name: '大师',
-      depth: 20,
+      // 不限深度：大师档为真实满强度，由 movetime 控制节奏（先到先停中时间到即停）
+      depth: 0,
       multiPv: 1,
       movetimeMs: 3000,
       fullStrength: true);
@@ -202,6 +232,7 @@ class PikafishEngine {
   Future<EngineResult> think(Board board, DifficultyLevel level) {
     return _enqueue(() async {
       await start();
+      final sw = Stopwatch()..start();
       final response = ReceivePort();
       try {
         _engineSendPort!.send(_GoRequest(
@@ -213,6 +244,12 @@ class PikafishEngine {
             .timeout(const Duration(seconds: 30), onTimeout: () {
           throw TimeoutException('引擎思考超时');
         }) as List;
+        // 低档深度上限极浅（实测几十毫秒完成），补足最少思考时间，
+        // 让落子节奏自然（观感上"引擎在思考"而非瞬间应答）
+        final remain = level.minThinkMs - sw.elapsedMilliseconds;
+        if (remain > 0) {
+          await Future<void>.delayed(Duration(milliseconds: remain));
+        }
         final uci = result[0] as String;
         final score = result[1] as int;
         final m = Move(
@@ -368,12 +405,21 @@ void _engineIsolateEntry(List args) {
         } else if (fullStrength) {
           req.sendPort.send([ctx.bestmove, score]);
         } else {
-          // 难度档：从 MultiPV 候选中加权随机选路（棋力削弱的核心）
+          // 难度档：从 MultiPV 候选中加权随机选路（棋力削弱的核心）。
+          // 先按档位分差容差过滤（只选不明显劣于最佳的着法，避免选出大劣着），
+          // 再按名次线性加权随机（越优越常被选）。
           final idxs = ctx.scores.keys.toList()..sort();
+          final best = ctx.scores[1];
           final k = math.min(req.level.multiPv, idxs.length);
-          var chosenIdx = 1;
-          if (k > 1) {
-            chosenIdx = idxs[_pickWeighted(k, rng)];
+          final pool = <int>[];
+          for (final i in idxs.take(k)) {
+            if (best == null || best - (ctx.scores[i] ?? 0) <= req.level.toleranceCp) {
+              pool.add(i);
+            }
+          }
+          var chosenIdx = pool.isEmpty ? 1 : pool.first;
+          if (pool.length > 1) {
+            chosenIdx = pool[_pickWeighted(pool.length, rng)];
           }
           final mv = ctx.pvs[chosenIdx]?.firstOrNull;
           final chosenScore = ctx.scores[chosenIdx] ?? ctx.scores[1] ?? 0;
@@ -477,7 +523,10 @@ void _engineIsolateEntry(List args) {
     // 初始化
     send('uci');
     send('setoption name EvalFile value $nnuePath');
-    send('setoption name Threads value 1');
+    // 多线程搜索：单线程会浪费多核算力，大师/分析档的满强度依赖足够算力
+    // （留 1 核给主 isolate/UI，最多 8 线程防低配设备过热）
+    final threads = math.max(1, math.min(8, Platform.numberOfProcessors - 1));
+    send('setoption name Threads value $threads');
     send('setoption name Hash value 128');
     send('isready');
 

@@ -252,14 +252,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
             onPressed: () => Navigator.of(context).maybePop(),
           ),
           actions: [
-            if (!_review.analyzing)
-              IconButton(
-                icon: const Icon(Icons.psychology),
-                tooltip: '引擎分析',
-                onPressed: _review.entries.isEmpty
-                    ? null
-                    : () => _review.analyzeAll(),
-              ),
             if (_review.analyzing)
               const Padding(
                 padding: EdgeInsets.all(16),
