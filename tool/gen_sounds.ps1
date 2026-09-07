@@ -84,16 +84,17 @@ function Get-Capture {
     return ,$out.ToArray()
 }
 
-# 将军：两声急促的中频提示
+# 将军：三声上行高音警报（尖锐急促，提醒意味强）
 function Get-Check {
     $out = New-Object 'System.Collections.Generic.List[double]'
-    foreach ($f in @(660.0, 880.0)) {
-        $n = [int](0.09 * $sr)
+    foreach ($spec in @(@(988.0, 0.11, 18.0), @(1245.0, 0.11, 18.0), @(1568.0, 0.2, 9.0))) {
+        $f = $spec[0]; $dur = $spec[1]; $dk = $spec[2]
+        $n = [int]($dur * $sr)
         for ($i = 0; $i -lt $n; $i++) {
             $t = $i / $sr
-            $env = [Math]::Exp(-$t * 30) * (1 - [Math]::Exp(-$t * 400))
-            $v = [Math]::Sin(2 * [Math]::PI * $f * $t) + 0.3 * [Math]::Sin(2 * [Math]::PI * $f * 2 * $t)
-            $out.Add($v * $env * 0.6)
+            $env = [Math]::Exp(-$t * $dk) * (1 - [Math]::Exp(-$t * 700))
+            $v = [Math]::Sin(2 * [Math]::PI * $f * $t) + 0.4 * [Math]::Sin(2 * [Math]::PI * $f * 2 * $t) + 0.15 * [Math]::Sin(2 * [Math]::PI * $f * 3 * $t)
+            $out.Add($v * $env * 0.75)
         }
         for ($i = 0; $i -lt [int](0.035 * $sr); $i++) { $out.Add(0.0) }
     }
