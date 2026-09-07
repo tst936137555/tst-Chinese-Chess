@@ -280,6 +280,16 @@ class _HomePageState extends State<HomePage> {
                 height: 44,
                 onPressed: () => openReviewArchive(context),
               ),
+              const SizedBox(height: 40),
+              // 版本标注
+              const Text(
+                'v1.0.0',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: XqColors.wood,
+                  letterSpacing: 1,
+                ),
+              ),
             ],
           ),
         ),
