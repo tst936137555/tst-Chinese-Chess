@@ -5,6 +5,7 @@
 /// mate N 步 = 10000 - N（一步绝杀 9999）。
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// 评估折线图组件
@@ -35,8 +36,15 @@ class EvalChart extends StatelessWidget {
           onTapUp: (d) {
             final tap = onTapIndex;
             if (tap == null || scores.length < 2) return;
-            final w = constraints.maxWidth;
-            final i = ((d.localPosition.dx / w) * (scores.length - 1)).round();
+            // 与绘制坐标对齐：数据点分布在 [padLeft, width - padRight]
+            final plotLeft = _EvalChartPainter.padLeft;
+            final plotW =
+                constraints.maxWidth - plotLeft - _EvalChartPainter.padRight;
+            if (plotW <= 0) return;
+            final i = ((d.localPosition.dx - plotLeft) /
+                    plotW *
+                    (scores.length - 1))
+                .round();
             tap(i.clamp(0, scores.length - 1));
           },
           child: CustomPaint(
@@ -276,5 +284,5 @@ class _EvalChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_EvalChartPainter old) =>
-      old.scores != scores || old.currentIndex != currentIndex;
+      !listEquals(old.scores, scores) || old.currentIndex != currentIndex;
 }

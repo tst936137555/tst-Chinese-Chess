@@ -139,8 +139,8 @@ class GameController extends ChangeNotifier {
     hinting = true;
     _hints = const [];
     notifyListeners();
-    // 记录请求时的步数：期间若已走子/悔棋，结果作废
-    final historyLen = _history.length;
+    // 记录请求时的局面：期间走子/悔棋导致局面变化（含悔棋后重走、长度不变）即作废
+    final fenAtRequest = _history.isEmpty ? '' : _history.last.fenAfter;
     try {
       // 深度/时间双限：快设备吃满深度 14，慢设备由 1s 时间上限兜底（防过热/久等）
       final result = await engine.analyze(
@@ -149,8 +149,11 @@ class GameController extends ChangeNotifier {
         multiPv: 2,
         movetimeMs: 1000,
       );
-      // 页面已销毁或期间已走子：过期建议直接丢弃
-      if (disposed || _history.length != historyLen) return;
+      // 页面已销毁或局面已变化：过期建议直接丢弃
+      if (disposed ||
+          (_history.isEmpty ? '' : _history.last.fenAfter) != fenAtRequest) {
+        return;
+      }
       final moves = <Move>[];
       for (final pv in result.pvList.take(2)) {
         try {
@@ -453,6 +456,7 @@ class GameController extends ChangeNotifier {
       );
       _board = Board();
       _history = [];
+      _status = GameStatus.playing;
       final hist = data['history'] as List;
       for (final e in hist) {
         final uci = e['uci'] as String;
@@ -477,8 +481,8 @@ class GameController extends ChangeNotifier {
         }
         _applyMove(m, persist: false);
       }
-      final savedStatus = GameStatus.values[data['status'] as int? ?? 0];
-      _status = _history.isEmpty ? GameStatus.playing : savedStatus;
+      // 状态以重放重算为准（_applyMove → _updateStatus 已按终局与重复/长将规则重算），
+      // 不再用存档 status 覆盖，避免损坏数据下覆盖出与实际局面不一致的结果
       userPlaysRed = savedUserRed;
       _level = savedLevel;
       notifyListeners();

@@ -36,18 +36,34 @@ Future<void> openReviewArchive(BuildContext context) {
   ));
 }
 
-/// 从存档重建历史，数据异常时返回空列表
+/// 从存档重建历史；走法非法或局面数据损坏时截断（丢弃其后数据），
+/// 避免损坏的 fen 在复盘 build 中触发 Board.fromFen 异常
 List<HistoryEntry> _historyFromArchive(ArchivedGame game) {
   final history = <HistoryEntry>[];
+  final board = Board();
   for (final e in game.history) {
     final uci = e['uci'] as String? ?? '';
     if (uci.length < 4) break;
+    final Move m;
+    try {
+      m = Move.fromUci(uci);
+    } catch (_) {
+      break;
+    }
+    if (!board.isLegal(m)) break;
+    final fen = e['fen'] as String? ?? '';
+    try {
+      Board.fromFen(fen); // 仅校验可解析
+    } catch (_) {
+      break;
+    }
     history.add(HistoryEntry(
-      move: Move.fromUci(uci),
+      move: m,
       capturedPiece: e['captured'] as String?,
       notation: e['notation'] as String? ?? uci,
-      fenAfter: e['fen'] as String? ?? '',
+      fenAfter: fen,
     ));
+    board.makeMove(m);
   }
   return history;
 }
@@ -313,7 +329,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
           Row(
             children: [
               Text(
-                '${_review.cursor ~/ 2 + 1}. ${e.notation}',
+                '${_review.cursor}. ${e.notation}',
                 style: const TextStyle(
                     fontSize: 15, fontWeight: FontWeight.w700),
               ),
@@ -426,11 +442,21 @@ class _ReviewScreenState extends State<ReviewScreen> {
 
   /// 当前局面的评分文字
   Widget _currentScoreText() {
+    // 当前步是否已完成引擎评估（quality 在该步整步评估结束后才填充）
+    bool analyzed;
     int score;
     if (_review.cursor == 0) {
-      score = _review.entries.isNotEmpty ? _review.entries.first.scoreBefore : 0;
+      analyzed = _review.entries.isNotEmpty &&
+          _review.entries.first.quality != null;
+      score = analyzed ? _review.entries.first.scoreBefore : 0;
     } else {
-      score = _review.entries[_review.cursor - 1].scoreAfter;
+      final e = _review.entries[_review.cursor - 1];
+      analyzed = e.quality != null;
+      score = e.scoreAfter;
+    }
+    if (!analyzed) {
+      return const Text('待分析',
+          style: TextStyle(fontSize: 11, color: Colors.grey));
     }
     String text;
     if (score >= 9000) {

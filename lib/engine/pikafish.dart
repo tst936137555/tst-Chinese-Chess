@@ -187,9 +187,14 @@ class PikafishEngine {
   Future<String> _copyNnueToTmp() async {
     final dir = Directory.systemTemp;
     final nnue = File('${dir.path}${Platform.pathSeparator}pikafish.nnue');
-    // 每次启动重写，确保 App 升级携带的新权重生效
     final data = await rootBundle.load('assets/engine/pikafish.nnue');
-    await nnue.writeAsBytes(data.buffer.asUint8List(), flush: true);
+    final bytes = data.buffer.asUint8List();
+    // 大小与内置权重一致则跳过写入，减少启动 IO；
+    // writeAsBytes+flush 完整写入后大小恒定，损坏/截断的残留文件大小必然不同，
+    // 权重升级体积变化也必然触发重写，确保 App 携带的新权重生效
+    if (!await nnue.exists() || await nnue.length() != bytes.lengthInBytes) {
+      await nnue.writeAsBytes(bytes, flush: true);
+    }
     return nnue.path;
   }
 

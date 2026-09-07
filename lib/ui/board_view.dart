@@ -1,6 +1,7 @@
 /// 棋盘绘制与交互组件
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../engine/rules.dart';
@@ -488,5 +489,19 @@ class _BoardPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _BoardPainter old) => true;
+  bool shouldRepaint(covariant _BoardPainter old) =>
+      old.cell != cell ||
+      // Board 为可变对象（makeMove 原地修改），用 fen 内容比较
+      old.board.fen != board.fen ||
+      old.flip != flip ||
+      old.selected != selected ||
+      !listEquals(old.legalTargets, legalTargets) ||
+      old.lastMove != lastMove ||
+      old.checkPos != checkPos ||
+      old.animatingMove != animatingMove ||
+      old.animationProgress != animationProgress ||
+      old.capturedPiece != capturedPiece ||
+      old.suggestedMove != suggestedMove ||
+      !listEquals(old.suggestedMoves, suggestedMoves) ||
+      old.quality != quality;
 }
