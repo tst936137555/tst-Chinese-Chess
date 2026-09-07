@@ -10,8 +10,8 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "tst_xiangqi/engine")
             .setMethodCallHandler { call, result ->
                 if (call.method == "getEnginePath") {
-                    // Pikafish 2026-09-06 起 arm64-universal 单一二进制，
-                    // 运行时自适应指令集，无需按 CPU 特性区分变体
+                    // 按安装 ABI 解析：arm64-v8a = 官方 arm64-universal 预编译版（真机），
+                    // x86_64 = NDK 交叉编译版（模拟器，官方无 x86_64 Android 发行版）
                     result.success(applicationInfo.nativeLibraryDir + "/libpikafish.so")
                 } else {
                     result.notImplemented()

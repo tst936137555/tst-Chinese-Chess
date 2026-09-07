@@ -13,6 +13,8 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'rules.dart';
@@ -498,7 +500,8 @@ void _engineIsolateEntry(List args) {
     });
 
     // 进程退出/崩溃：完成等待中的请求，避免主 isolate 挂起
-    proc.exitCode.then((_) {
+    proc.exitCode.then((code) {
+      debugPrint('[Pikafish] 引擎进程退出 exit=$code（非 0 或提前退出 = 启动失败/崩溃）');
       dead = true;
       requests.close();
       failCurrent();
@@ -548,12 +551,14 @@ void _engineIsolateEntry(List args) {
       handleRequest(req);
     });
   }).catchError((e) {
-    // 引擎启动失败：向主 isolate 报错
+    // 引擎启动失败：向主 isolate 报错（后续请求走随机走法兜底）
+    debugPrint('[Pikafish] 引擎启动失败（常见于 x86 模拟器跑 arm64 引擎）: $e');
     final errPort = ReceivePort();
     mainPort.send(errPort.sendPort);
     errPort.listen((msg) {
       if (msg is _GoRequest) {
         // 无引擎时的随机走法回退
+        debugPrint('[Pikafish] 无引擎，本步返回随机走法（AI 表现为"乱下"即此兜底生效）');
         final board = Board.fromFen(msg.fen);
         final moves = board.legalMoves();
         final mv = moves.isEmpty

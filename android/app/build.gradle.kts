@@ -22,8 +22,9 @@ android {
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         ndk {
-            // 皮卡鱼引擎仅提供 arm64-v8a 二进制
-            abiFilters += listOf("arm64-v8a")
+            // arm64-v8a：官方预编译引擎（真机）
+            // x86_64：NDK 交叉编译（模拟器，官方未发布 x86_64 Android 版）
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
