@@ -1,10 +1,10 @@
 // 临时集成测试：真实引擎驱动 ReviewController 复盘分析
 import 'package:flutter_test/flutter_test.dart';
-import 'package:xiangqi/engine/chinese_notation.dart';
-import 'package:xiangqi/engine/pikafish.dart';
-import 'package:xiangqi/engine/rules.dart';
-import 'package:xiangqi/game/game_controller.dart';
-import 'package:xiangqi/game/review_controller.dart';
+import 'package:tst_xiangqi/engine/chinese_notation.dart';
+import 'package:tst_xiangqi/engine/pikafish.dart';
+import 'package:tst_xiangqi/engine/rules.dart';
+import 'package:tst_xiangqi/game/game_controller.dart';
+import 'package:tst_xiangqi/game/review_controller.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

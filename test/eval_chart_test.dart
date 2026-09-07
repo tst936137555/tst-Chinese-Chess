@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:xiangqi/ui/eval_chart.dart';
+import 'package:tst_xiangqi/ui/eval_chart.dart';
 
 void main() {
   testWidgets('评估折线图正常渲染并响应点击', (WidgetTester tester) async {

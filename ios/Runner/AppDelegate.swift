@@ -24,7 +24,7 @@ import UIKit
     guard let src = bundle.path(forResource: "pikafish", ofType: nil) else { return nil }
     let fm = FileManager.default
     guard let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-    let appDir = dir.appendingPathComponent("xiangqi", isDirectory: true)
+    let appDir = dir.appendingPathComponent("tst_xiangqi", isDirectory: true)
     let dst = appDir.appendingPathComponent("pikafish")
     do {
       if !fm.fileExists(atPath: appDir.path) {

@@ -1,5 +1,5 @@
-name: xiangqi
-description: "本地单机中国象棋（内置皮卡鱼引擎）"
+name: tst_xiangqi
+description: "tst自用象棋（本地单机中国象棋，内置皮卡鱼引擎）"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev

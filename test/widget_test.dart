@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:xiangqi/engine/rules.dart';
-import 'package:xiangqi/main.dart';
-import 'package:xiangqi/ui/board_view.dart';
+import 'package:tst_xiangqi/engine/rules.dart';
+import 'package:tst_xiangqi/main.dart';
+import 'package:tst_xiangqi/ui/board_view.dart';
 
 void main() {
   testWidgets('应用启动显示入口选择', (WidgetTester tester) async {
@@ -15,7 +15,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(find.text('中国象棋'), findsWidgets);
+    expect(find.text('tst自用象棋'), findsWidgets);
     expect(find.text('新开局'), findsOneWidget);
     // 无存档时继续上局按钮不可用，但仍在
     expect(find.textContaining('继续上局'), findsOneWidget);

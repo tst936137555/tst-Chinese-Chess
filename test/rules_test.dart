@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:xiangqi/engine/rules.dart';
-import 'package:xiangqi/engine/chinese_notation.dart';
+import 'package:tst_xiangqi/engine/rules.dart';
+import 'package:tst_xiangqi/engine/chinese_notation.dart';
 
 void main() {
   group('FEN 解析', () {

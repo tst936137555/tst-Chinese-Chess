@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="中国象棋"
+        android:label="tst自用象棋"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

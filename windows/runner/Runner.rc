@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "xiangqi" "\0"
+            VALUE "CompanyName", "com.tst" "\0"
+            VALUE "FileDescription", "tst自用象棋" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "xiangqi" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "xiangqi.exe" "\0"
-            VALUE "ProductName", "xiangqi" "\0"
+            VALUE "InternalName", "tst_xiangqi" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.tst. All rights reserved." "\0"
+            VALUE "OriginalFilename", "tst_xiangqi.exe" "\0"
+            VALUE "ProductName", "tst自用象棋" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -38,7 +38,7 @@ class AppDelegate: FlutterAppDelegate {
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
     if let enginePath = AppDelegate.prepareEngine() {
-      setenv("XIANGQI_ENGINE_PATH", enginePath, 1)
+      setenv("TST_XIANGQI_ENGINE_PATH", enginePath, 1)
     }
     super.applicationDidFinishLaunching(notification)
   }

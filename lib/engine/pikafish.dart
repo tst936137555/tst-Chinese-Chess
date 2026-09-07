@@ -135,12 +135,12 @@ class PikafishEngine {
   /// 解析平台对应的引擎可执行文件路径
   Future<String> _resolveEngineExecutable() async {
     if (Platform.isAndroid) {
-      final path = await const MethodChannel('xiangqi/engine')
+      final path = await const MethodChannel('tst_xiangqi/engine')
           .invokeMethod<String>('getEnginePath');
       return path!;
     }
     if (Platform.isIOS || Platform.isMacOS) {
-      final env = Platform.environment['XIANGQI_ENGINE_PATH'];
+      final env = Platform.environment['TST_XIANGQI_ENGINE_PATH'];
       if (env != null && env.isNotEmpty) return env;
       // 开发/调试回退（macOS bundle 内）
       return 'pikafish';
