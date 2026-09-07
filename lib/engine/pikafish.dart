@@ -11,33 +11,50 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 
 import 'package:flutter/services.dart';
 
 import 'rules.dart';
 
-/// 难度等级定义（映射到皮卡鱼 UCI_LimitStrength / UCI_Elo）
+/// 难度等级定义（应用层削弱：深度/时间双限 + MultiPV 加权随机选路）
 class DifficultyLevel {
   const DifficultyLevel({
     required this.name,
-    required this.elo,
+    required this.depth,
+    required this.multiPv,
     required this.movetimeMs,
+    this.fullStrength = false,
   });
 
   final String name;
-  /// 皮卡鱼标定棋力区间为 UCI_Elo 1280-3133（引擎官方削弱机制）。
-  /// elo = 0 表示不限棋力（满强度，Skill Level 20），仅用于"大师"。
-  final int elo;
-  /// 每步思考时间（毫秒）。
+  /// 搜索深度上限（与 [movetimeMs] 先到先停）；0 表示不限深度。
+  final int depth;
+  /// MultiPV 候选路数：引擎返回前 N 优走法，按"越优越常被选"的加权随机选路。
+  final int multiPv;
+  /// 每步思考时间上限（毫秒）。
   final int movetimeMs;
+  /// true = 满强度（大师）：MultiPV 1，随机选路不生效。
+  final bool fullStrength;
 
-  /// 低档位用低 Elo 削弱棋力；大师档不限棋力并给足思考时间，
-  /// 以完整发挥皮卡鱼实力。
-  static const beginner = DifficultyLevel(name: '入门', elo: 1500, movetimeMs: 1000);
-  static const easy = DifficultyLevel(name: '简单', elo: 1800, movetimeMs: 1000);
-  static const medium = DifficultyLevel(name: '中等', elo: 2100, movetimeMs: 1000);
-  static const hard = DifficultyLevel(name: '困难', elo: 2400, movetimeMs: 1000);
-  static const master = DifficultyLevel(name: '大师', elo: 0, movetimeMs: 3000);
+  /// 皮卡鱼 2026-09-06 起移除了 UCI_Elo / UCI_LimitStrength 官方削弱机制，
+  /// 改为应用层模拟棋力梯度：档位越低，深度/时间越保守、候选越宽、越易偏离最佳。
+  /// depth 取值贴近当前主流设备的实测有效深度：
+  /// 快设备上深度先到（棋力跨设备一致），慢设备上时间先到（延迟可控）。
+  static const beginner = DifficultyLevel(
+      name: '入门', depth: 6, multiPv: 5, movetimeMs: 1000);
+  static const easy =
+      DifficultyLevel(name: '简单', depth: 8, multiPv: 4, movetimeMs: 1500);
+  static const medium =
+      DifficultyLevel(name: '中等', depth: 10, multiPv: 3, movetimeMs: 2000);
+  static const hard =
+      DifficultyLevel(name: '困难', depth: 14, multiPv: 2, movetimeMs: 2500);
+  static const master = DifficultyLevel(
+      name: '大师',
+      depth: 20,
+      multiPv: 1,
+      movetimeMs: 3000,
+      fullStrength: true);
 
   static const all = [beginner, easy, medium, hard, master];
 }
@@ -78,16 +95,19 @@ class _GoRequest {
     this.analysis = false,
     this.analysisDepth = 12,
     this.multiPv = 1,
+    this.analysisMovetimeMs = 0,
   });
   final SendPort sendPort;
   final String fen;
   final DifficultyLevel level;
-  /// true = 复盘分析模式（满强度、不限 Elo）
+  /// true = 复盘分析模式（满强度）
   final bool analysis;
   /// 分析模式搜索深度
   final int analysisDepth;
   /// MultiPV 路数（提示功能用）
   final int multiPv;
+  /// 分析模式思考时间上限（毫秒）；0 = 不限时，仅深度控制
+  final int analysisMovetimeMs;
 }
 
 /// 皮卡鱼引擎管理类
@@ -206,10 +226,12 @@ class PikafishEngine {
 
   /// 请求引擎分析（复盘用，满强度）。请求会排队串行执行。
   /// [multiPv] > 1 时返回多路最佳走法（提示功能用）。
+  /// [movetimeMs] > 0 时为深度/时间双限（先到先停），兜底慢设备延迟。
   Future<AnalysisResult> analyze(
     Board board, {
     int depth = 12,
     int multiPv = 1,
+    int movetimeMs = 0,
   }) {
     return _enqueue(() async {
       await start();
@@ -222,6 +244,7 @@ class PikafishEngine {
           analysis: true,
           analysisDepth: depth,
           multiPv: multiPv,
+          analysisMovetimeMs: movetimeMs,
         ));
         final result = await response.first
             .timeout(const Duration(seconds: 60), onTimeout: () {
@@ -254,11 +277,22 @@ class PikafishEngine {
   }
 }
 
+/// 线性加权随机：返回 [0, n) 下标，权重 n, n-1, ..., 1（越靠前越易被选中）。
+int _pickWeighted(int n, math.Random rng) {
+  var r = rng.nextInt(n * (n + 1) ~/ 2);
+  for (var i = 0; i < n; i++) {
+    if (r < n - i) return i;
+    r -= n - i;
+  }
+  return n - 1;
+}
+
 /// 引擎 isolate 入口：与皮卡鱼进程保持长连接并处理走棋请求
 void _engineIsolateEntry(List args) {
   final mainPort = args[0] as SendPort;
   final exePath = args[1] as String;
   final nnuePath = args[2] as String;
+  final rng = math.Random();
 
   final process = Process.start(exePath, []);
 
@@ -286,22 +320,22 @@ void _engineIsolateEntry(List args) {
       // 发送局面与搜索指令
       send('stop');
       send('position fen ${req.fen}');
-      if (req.analysis || req.level.elo <= 0) {
-        // 复盘分析 / 大师：不限棋力，满强度
-        send('setoption name UCI_LimitStrength value false');
-        send('setoption name Skill Level value 20');
-        send('setoption name MultiPV value ${req.multiPv}');
-      } else {
-        // 对局难度：使用皮卡鱼官方标定的 UCI_Elo 削弱机制
-        send('setoption name UCI_LimitStrength value true');
-        send('setoption name UCI_Elo value ${req.level.elo}');
-        send('setoption name MultiPV value 1');
-      }
+      // 满强度 = 复盘分析或大师档；否则按档位 MultiPV 加权随机选路削弱
+      final fullStrength = req.analysis || req.level.fullStrength;
+      send('setoption name MultiPV value '
+          '${fullStrength ? req.multiPv : req.level.multiPv}');
       send('isready');
       if (req.analysis) {
-        send('go depth ${req.analysisDepth}');
+        // 深度为主，movetimeMs > 0 时叠加时间上限（先到先停）
+        final t = req.analysisMovetimeMs > 0
+            ? ' movetime ${req.analysisMovetimeMs}'
+            : '';
+        send('go depth ${req.analysisDepth}$t');
       } else {
-        send('go movetime ${req.level.movetimeMs}');
+        // 深度/时间双限，先到先停（depth 0 = 不限深度，仅时间控制）
+        final depthLimit =
+            req.level.depth > 0 ? 'depth ${req.level.depth} ' : '';
+        send('go ${depthLimit}movetime ${req.level.movetimeMs}');
       }
 
       // 捕获当前 ctx（完成回调触发时 current 可能已被 failCurrent 置空）
@@ -326,8 +360,22 @@ void _engineIsolateEntry(List args) {
             pvList.add([mv, toRed(ctx.scores[idx] ?? 0), ctx.pvs[idx] ?? const []]);
           }
           req.sendPort.send([score, ctx.bestmove, pv1, pvList]);
-        } else {
+        } else if (fullStrength) {
           req.sendPort.send([ctx.bestmove, score]);
+        } else {
+          // 难度档：从 MultiPV 候选中加权随机选路（棋力削弱的核心）
+          final idxs = ctx.scores.keys.toList()..sort();
+          final k = math.min(req.level.multiPv, idxs.length);
+          var chosenIdx = 1;
+          if (k > 1) {
+            chosenIdx = idxs[_pickWeighted(k, rng)];
+          }
+          final mv = ctx.pvs[chosenIdx]?.firstOrNull;
+          final chosenScore = ctx.scores[chosenIdx] ?? ctx.scores[1] ?? 0;
+          req.sendPort.send([
+            mv != null && mv.isNotEmpty ? mv : ctx.bestmove,
+            toRed(chosenScore),
+          ]);
         }
         current = null;
         // 旧请求结束后，若队列中还有新请求则继续处理

@@ -158,7 +158,7 @@ class ReviewController extends ChangeNotifier {
   }
 
   /// 逐步分析整局（走法前后各评估一次）
-  Future<void> analyzeAll({int depth = 10}) async {
+  Future<void> analyzeAll({int depth = 14}) async {
     if (analyzing || entries.isEmpty) return;
     _cancelled = false;
     analyzing = true;
@@ -178,7 +178,8 @@ class ReviewController extends ChangeNotifier {
       final cache = <String, Future<AnalysisResult>>{};
 
       Future<AnalysisResult> eval(Board b) {
-        return cache.putIfAbsent(b.fen, () => engine.analyze(b, depth: depth));
+        return cache.putIfAbsent(
+            b.fen, () => engine.analyze(b, depth: depth, movetimeMs: 1000));
       }
 
       for (int i = 0; i < entries.length; i++) {
@@ -208,6 +209,8 @@ class ReviewController extends ChangeNotifier {
         // 分级（阈值单位：厘兵 ≈ 1/100 兵）
         e.quality = _classify(e.loss, before.bestMove == history[i].move.uci);
         analyzedCount = i + 1;
+        // 自动回放：分析推进到哪一步，棋盘就走到哪一步，与折线图同步生长
+        cursor = i + 1;
         notifyListeners();
       }
     } catch (err) {

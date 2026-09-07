@@ -118,7 +118,7 @@ class Board {
 
   /// 标准初始局面
   Board() {
-    _loadFen(_startFen);
+    _loadFen(startFen);
   }
 
   Board.cloneFrom(Board other) {
@@ -128,7 +128,8 @@ class Board {
     redToMove = other.redToMove;
   }
 
-  static const _startFen =
+  /// 标准初始局面 FEN（公开供重复判定等使用）
+  static const startFen =
       'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1';
 
   /// 从 FEN 载入局面
@@ -423,4 +424,64 @@ class Board {
     }
     return GameStatus.playing;
   }
+}
+
+/// 重复局面判和与长将判负。
+///
+/// [positionKeys] 为局面键序列：下标 0 = 初始局面，k = 走完第 k 步后；
+/// 键须为「棋盘 FEN + 行棋方」两段（不含着法计数等无关字段）。
+/// [givesChecks][k] 表示第 k 步（0 基）走完后对方是否被将军。
+///
+/// 同一局面出现 3 次即触发：取最后一个完整重复周期分析——
+/// 周期内若一方所有着法均为将军而对方并非如此，则该方长将判负；
+/// 双方均长将（或均非长将）判和。未重复 3 次返回 null（对局继续）。
+GameStatus? repetitionStatus(
+    List<String> positionKeys, List<bool> givesChecks) {
+  if (positionKeys.length < 5) return null; // 3 次同局面至少需 4 步
+  final last = positionKeys.last;
+  final occurrences = <int>[];
+  for (var i = 0; i < positionKeys.length; i++) {
+    if (positionKeys[i] == last) occurrences.add(i);
+  }
+  if (occurrences.length < 3) return null;
+
+  // 最后一个完整周期：局面 o2 -> o3，即 0 基第 o2 .. o3-1 步
+  final o2 = occurrences[occurrences.length - 2];
+  final o3 = occurrences.last;
+  return switch (longCheckSide(givesChecks, o2, o3)) {
+    'r' => GameStatus.blackWin, // 红方长将
+    'b' => GameStatus.redWin, // 黑方长将
+    _ => GameStatus.draw,
+  };
+}
+
+/// 当前行棋后局面（键序列最后一项）的出现次数，供「距判和还差一次」预警。
+int repetitionCount(List<String> positionKeys) {
+  if (positionKeys.isEmpty) return 0;
+  final last = positionKeys.last;
+  var n = 0;
+  for (final k in positionKeys) {
+    if (k == last) n++;
+  }
+  return n;
+}
+
+/// 判断 0 基第 [o2] .. [o3]-1 步构成的周期内，是否为单方长将
+/// （该方所有着法均为将军而对方并非如此）。
+///
+/// 返回 'r'（红方长将）/ 'b'（黑方长将）/ null（双方均长将或均非长将）。
+String? longCheckSide(List<bool> givesChecks, int o2, int o3) {
+  var redAllCheck = true;
+  var blackAllCheck = true;
+  for (var k = o2; k < o3; k++) {
+    if (givesChecks[k]) continue;
+    if (k.isEven) {
+      redAllCheck = false; // 红方永远走偶数步（红先行）
+    } else {
+      blackAllCheck = false;
+    }
+  }
+  if (redAllCheck && !blackAllCheck) return 'r';
+  if (blackAllCheck && !redAllCheck) return 'b';
+  return null;
 }

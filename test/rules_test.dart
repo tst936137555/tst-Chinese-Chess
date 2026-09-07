@@ -150,11 +150,18 @@ void main() {
       expect(moveToChinese(b, m), '马二进三');
     });
 
-    test('黑方炮8平5', () {
+    test('黑方炮2平5', () {
       final b = Board();
-      // 黑炮 b8 (file 1, rank 2) 平 e8 (file 4, rank 2)
+      // 黑炮 b8 (file 1, rank 2) 平 e8 (file 4, rank 2)：黑2 路 -> 黑5 路
       final m = Move(1, 2, 4, 2);
-      expect(moveToChinese(b, m), '炮8平5');
+      expect(moveToChinese(b, m), '炮2平5');
+    });
+
+    test('黑方马8进7（标准对照 h9g7）', () {
+      final b = Board();
+      // 黑马 h9 (file 7, rank 0) 进到 g7 (file 6, rank 2)：黑8 路 -> 黑7 路
+      final m = Move(7, 0, 6, 2);
+      expect(moveToChinese(b, m), '马8进7');
     });
 
     test('兵三进一', () {
@@ -169,10 +176,32 @@ void main() {
       expect(moveToChinese(b, Move(7, 7, 7, 5)), '炮二进二');
       // 红帅直进一步：帅五进一
       expect(moveToChinese(b, Move(4, 9, 4, 8)), '帅五进一');
-      // 黑炮 b7 直进两步：炮8进2（黑方步数用阿拉伯数字）
-      expect(moveToChinese(b, Move(1, 2, 1, 4)), '炮8进2');
-      // 黑车 a9 直进一步：车9进1
-      expect(moveToChinese(b, Move(0, 0, 0, 1)), '车9进1');
+      // 黑炮 b7 直进两步：炮2进2（黑方步数用阿拉伯数字）
+      expect(moveToChinese(b, Move(1, 2, 1, 4)), '炮2进2');
+      // 黑车 a9 (黑1 路) 直进一步：车1进1
+      expect(moveToChinese(b, Move(0, 0, 0, 1)), '车1进1');
+    });
+
+    test('同纵线双车用前/后缀并省略起始纵线', () {
+      // 红双车同在 a 线：(0,8) 更靠对方为前车，(0,9) 为后车
+      final b = Board.fromFen('4k4/9/9/9/9/9/9/9/R8/R3K4 w - - 0 1');
+      expect(moveToChinese(b, Move(0, 8, 3, 8)), '前车平六');
+      expect(moveToChinese(b, Move(0, 9, 3, 9)), '后车平六');
+    });
+
+    test('黑方同纵线双炮用前/后缀', () {
+      // 黑双炮同在 b 线：(1,2) 更靠红方为前炮，(1,1) 为后炮
+      final b = Board.fromFen('4k4/1c7/1c7/9/9/9/9/9/9/9 w - - 0 1');
+      expect(moveToChinese(b, Move(1, 2, 4, 2)), '前炮平5');
+      expect(moveToChinese(b, Move(1, 1, 4, 1)), '后炮平5');
+    });
+
+    test('同纵线三兵用前/中/后', () {
+      // 红三兵同在 c 线 (file 2)：(2,3) 前、(2,4) 中、(2,5) 后
+      final b = Board.fromFen('4k4/9/9/2P6/2P6/2P6/9/9/9/4K4 w - - 0 1');
+      expect(moveToChinese(b, Move(2, 3, 1, 3)), '前兵平八');
+      expect(moveToChinese(b, Move(2, 4, 1, 4)), '中兵平八');
+      expect(moveToChinese(b, Move(2, 5, 1, 5)), '后兵平八');
     });
   });
 
@@ -180,6 +209,68 @@ void main() {
     test('格式', () {
       expect(Move(7, 7, 4, 7).uci, 'h2e2');
       expect(Move(1, 2, 4, 2).uci, 'b7e7');
+    });
+  });
+
+  group('重复局面判和与长将判负', () {
+    test('未重复三次返回 null（对局继续）', () {
+      expect(
+        repetitionStatus(['A', 'B', 'C', 'B'], [false, false, false]),
+        isNull,
+      );
+    });
+
+    test('含初始局面的三次重复判和（回归：初始局面计入序列）', () {
+      // A(初始) -> B -> A -> B -> A：初始局面出现 3 次
+      final keys = ['A', 'B', 'A', 'B', 'A'];
+      expect(
+        repetitionStatus(keys, [false, false, false, false]),
+        GameStatus.draw,
+      );
+    });
+
+    test('红方长将判负', () {
+      // 周期内红方每步将军（k=0,2,4），黑方不将军
+      final keys = ['A', 'B', 'C', 'B', 'C', 'B'];
+      final checks = [true, false, true, false, true];
+      expect(repetitionStatus(keys, checks), GameStatus.blackWin);
+    });
+
+    test('黑方长将判负', () {
+      final keys = ['A', 'B', 'C', 'B', 'C', 'B'];
+      final checks = [false, true, false, true, false];
+      expect(repetitionStatus(keys, checks), GameStatus.redWin);
+    });
+
+    test('双方均长将判和', () {
+      final keys = ['A', 'B', 'C', 'B', 'C', 'B'];
+      final checks = [true, true, true, true, true];
+      expect(repetitionStatus(keys, checks), GameStatus.draw);
+    });
+
+    test('重复但无长将判和', () {
+      final keys = ['A', 'B', 'C', 'B', 'C', 'B'];
+      final checks = [false, false, false, false, false];
+      expect(repetitionStatus(keys, checks), GameStatus.draw);
+    });
+  });
+
+  group('重复预警辅助函数', () {
+    test('repetitionCount 统计当前局面出现次数', () {
+      expect(repetitionCount([]), 0);
+      expect(repetitionCount(['A', 'B', 'C']), 1);
+      expect(repetitionCount(['A', 'B', 'A']), 2);
+      expect(repetitionCount(['A', 'B', 'A', 'B', 'A']), 3);
+    });
+
+    test('longCheckSide 识别周期内单方长将', () {
+      // k=3 黑不将军、k=4 红将军 → 红方长将
+      expect(longCheckSide([true, false, true, false, true], 3, 5), 'r');
+      // k=3 黑将军、k=4 红不将军 → 黑方长将
+      expect(longCheckSide([false, true, false, true, false], 3, 5), 'b');
+      // 双方均将军 / 均非将军 → null
+      expect(longCheckSide([true, true, true, true, true], 3, 5), isNull);
+      expect(longCheckSide([false, false, false, false, false], 3, 5), isNull);
     });
   });
 }

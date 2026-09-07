@@ -19,6 +19,7 @@ class HistoryEntry {
     required this.capturedPiece,
     required this.notation,
     required this.fenAfter,
+    this.givesCheck = false,
   });
 
   final Move move;
@@ -26,6 +27,9 @@ class HistoryEntry {
   final String? capturedPiece;
   final String notation;
   final String fenAfter;
+
+  /// 该步是否将军对方（供长将判定；存档回放时由 _applyMove 重算）
+  final bool givesCheck;
 
   /// 被吃棋子的 Piece 对象（按 FEN 字符还原）
   Piece? get capturedPieceObj {
@@ -80,6 +84,12 @@ class GameController extends ChangeNotifier {
   /// 引擎评估（红方视角厘兵值）
   int engineScore = 0;
 
+  /// 局内醒目提示（重复局面 / 长将预警），每次局面变化后在 _updateStatus 重算
+  String? ruleNotice;
+
+  /// 终局原因说明（三次重复判和 / 长将判负），无则为 null
+  String? endReason;
+
   /// 正在恢复存档
   bool get loading => _loading;
 
@@ -132,11 +142,12 @@ class GameController extends ChangeNotifier {
     // 记录请求时的步数：期间若已走子/悔棋，结果作废
     final historyLen = _history.length;
     try {
-      // 提示用较低深度：满深度双路搜索易使手机过热，10 层已足够给出建议
+      // 深度/时间双限：快设备吃满深度 14，慢设备由 1s 时间上限兜底（防过热/久等）
       final result = await engine.analyze(
         Board.cloneFrom(_board),
-        depth: 10,
+        depth: 14,
         multiPv: 2,
+        movetimeMs: 1000,
       );
       // 页面已销毁或期间已走子：过期建议直接丢弃
       if (disposed || _history.length != historyLen) return;
@@ -179,6 +190,8 @@ class GameController extends ChangeNotifier {
     _status = GameStatus.playing;
     engineScore = 0;
     thinking = false;
+    ruleNotice = null;
+    endReason = null;
     _hints = const [];
     notifyListeners();
     _saveSettings();
@@ -201,11 +214,14 @@ class GameController extends ChangeNotifier {
     final captured = _board.pieceAt(m.toFile, m.toRank);
     final notation = moveToChinese(_board, m);
     _board.makeMove(m);
+    // 走完后对方（当前行棋方）被将军 = 该步将军，供长将判定
+    final givesCheck = _board.inCheck;
     _history.add(HistoryEntry(
       move: m,
       capturedPiece: captured?.fenChar,
       notation: notation,
       fenAfter: _board.fen,
+      givesCheck: givesCheck,
     ));
     _updateStatus();
     if (!persist) return;
@@ -216,6 +232,8 @@ class GameController extends ChangeNotifier {
   }
 
   void _updateStatus() {
+    ruleNotice = null;
+    endReason = null;
     if (_history.isEmpty) {
       _status = GameStatus.playing;
       return;
@@ -225,13 +243,43 @@ class GameController extends ChangeNotifier {
       _status = _board.redToMove ? GameStatus.blackWin : GameStatus.redWin;
       return;
     }
-    // 简单重复局面判和（局面 = 棋盘 + 行棋方）
-    final fens =
-        _history.map((e) => e.fenAfter.split(' ').take(2).join(' ')).toList();
-    final last = fens.last;
-    final count = fens.where((f) => f == last).length;
-    _status = count >= 3 ? GameStatus.draw : GameStatus.playing;
+    // 重复局面判和 / 长将判负（局面 = 棋盘 + 行棋方）。
+    // 序列含初始局面，避免"绕回开局局面"的循环漏判。
+    final keys = <String>[_posKey(Board.startFen)];
+    final checks = <bool>[];
+    for (final e in _history) {
+      keys.add(_posKey(e.fenAfter));
+      checks.add(e.givesCheck);
+    }
+    final rep = repetitionStatus(keys, checks);
+    _status = rep ?? GameStatus.playing;
+    if (rep != null) {
+      // 判定生效：终局原因说明（结算弹窗展示）
+      endReason = switch (rep) {
+        GameStatus.draw => '三次重复局面，双方不变作和',
+        GameStatus.blackWin => '红方长将，判负',
+        _ => '黑方长将，判负',
+      };
+      return;
+    }
+    // 预警：当前局面第 2 次出现（距判和 / 判负生效还差一次重复）
+    final last = keys.last;
+    var prev = -1; // 上一次出现的位置
+    for (var i = 0; i < keys.length - 1; i++) {
+      if (keys[i] == last) prev = i;
+    }
+    if (prev >= 0) {
+      final side = longCheckSide(checks, prev, keys.length - 1);
+      ruleNotice = switch (side) {
+        'r' => '红方长将！再重复一次将判红方负',
+        'b' => '黑方长将！再重复一次将判黑方负',
+        _ => '局面已重复 2 次，再重复一次将判和',
+      };
+    }
   }
+
+  /// 局面键：棋盘 FEN + 行棋方（不含着法计数等无关字段）
+  static String _posKey(String fen) => fen.split(' ').take(2).join(' ');
 
   /// 若轮到 AI 且对局进行中，请求引擎走棋
   Future<void> _maybeEngineMove() async {
@@ -278,7 +326,8 @@ class GameController extends ChangeNotifier {
     if (_history.isNotEmpty && _board.redToMove != userPlaysRed) {
       _undoOne();
     }
-    _status = GameStatus.playing;
+    // 重算状态与规则提示（预警随局面回退自动清除）
+    _updateStatus();
     notifyListeners();
     _saveState();
     // 撤销后若轮到 AI（如执黑时悔掉 AI 的开局首步），需重新触发引擎走棋
@@ -300,7 +349,8 @@ class GameController extends ChangeNotifier {
     ending = true;
     notifyListeners();
     try {
-      final result = await engine.analyze(Board.cloneFrom(_board), depth: 12);
+      final result = await engine.analyze(Board.cloneFrom(_board),
+          depth: 14, movetimeMs: 2000);
       engineScore = result.scoreCp;
       if (result.scoreCp > 1000) {
         _status = GameStatus.redWin;

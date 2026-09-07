@@ -120,13 +120,13 @@ class _HomePageState extends State<HomePage> {
               lines: const [
                 '许可证：GNU GPL v3.0',
                 '版权：Copyright © 2026 tst-936137555',
-                '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.0.0）',
+                '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.2.0）',
               ],
             ),
             _licenseSection(
               title: '2. Pikafish 引擎（皮卡鱼）',
               lines: const [
-                '版本：v2026-01-31',
+                '版本：v2026-09-06',
                 '许可证：GNU GPL v3.0',
                 '版权：Copyright © Pikafish contributors',
                 '源码：https://github.com/official-pikafish/pikafish',
@@ -283,7 +283,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 40),
               // 版本标注
               const Text(
-                'v1.0.0',
+                'v1.2.0',
                 style: TextStyle(
                   fontSize: 11,
                   color: XqColors.wood,
@@ -626,6 +626,9 @@ class _GamePageState extends State<GamePage>
       GameStatus.draw => ('和棋', '双方局面相当，握手言和。'),
       _ => ('', ''),
     };
+    // 终局原因（三次重复判和 / 长将判负等规则判定）
+    final reason = c.endReason;
+    final fullMsg = reason == null ? msg : '$msg\n$reason';
     // 终局音效
     switch (s) {
       case GameStatus.redWin:
@@ -639,7 +642,7 @@ class _GamePageState extends State<GamePage>
     }
     _endTimer?.cancel();
     setState(() {
-      _endInfo = (title, msg);
+      _endInfo = (title, fullMsg);
       _showEndOverlay = true;
       _endActionsReady = false;
     });
@@ -829,6 +832,8 @@ class _GamePageState extends State<GamePage>
                     ],
                   ),
                 ),
+                // 规则醒目提示：将军（红）/ 重复局面与长将预警（橙）
+                ..._buildRuleBanner(c),
                 // 棋盘（结构固定：始终由 AnimatedBuilder 驱动，动画起止不再切换子树）
                 Expanded(
                   child: Center(
@@ -940,6 +945,56 @@ class _GamePageState extends State<GamePage>
     );
   }
 
+  /// 局内醒目提示横幅：将军（红色）/ 重复局面与长将预警（橙色）。
+  /// 仅对局进行中显示；将军与预警可同时出现。
+  Iterable<Widget> _buildRuleBanner(GameController c) sync* {
+    if (c.status != GameStatus.playing) return;
+    final inCheck = c.checkPos != null;
+    final notice = c.ruleNotice;
+    if (!inCheck && notice == null) return;
+    final text = [
+      if (inCheck) '将军！',
+      ?notice,
+    ].join('　');
+    final color = inCheck ? Colors.red.shade700 : Colors.orange.shade800;
+    yield Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              inCheck
+                  ? Icons.notification_important_rounded
+                  : Icons.warning_amber_rounded,
+              color: Colors.white,
+              size: 16,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// 对局结束遮罩
   Widget _buildEndOverlay() {
     final (title, msg) = _endInfo;
@@ -965,6 +1020,7 @@ class _GamePageState extends State<GamePage>
                 const SizedBox(height: 10),
                 Text(
                   msg,
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15,
                     color: Colors.white.withValues(alpha: 0.85),

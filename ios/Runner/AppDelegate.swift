@@ -9,7 +9,7 @@ import UIKit
   ) -> Bool {
     // 从 Bundle 中提取皮卡鱼引擎到应用支持目录
     if let enginePath = AppDelegate.extractEngine() {
-      setenv("XIANGQI_ENGINE_PATH", enginePath, 1)
+      setenv("TST_XIANGQI_ENGINE_PATH", enginePath, 1)
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }

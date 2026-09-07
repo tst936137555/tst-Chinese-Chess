@@ -170,7 +170,7 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                         style: const TextStyle(
                             fontSize: 14, color: XqColors.inkBlack),
                       ),
-                      subtitle: Text('${g.history.length} 回合 · ${g.levelName}',
+                      subtitle: Text('${g.history.length} 步 · ${g.levelName}',
                           style: const TextStyle(
                               fontSize: 12, color: XqColors.wood)),
                       trailing: const Icon(Icons.chevron_right,
@@ -412,7 +412,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   height: 108,
                   child: Center(
                     child: Text(
-                      '点击右上角图标开始引擎分析',
+                      _review.analyzing ? '正在分析棋谱…' : '暂无分析数据',
                       style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey.withValues(alpha: 0.7)),
