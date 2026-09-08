@@ -192,11 +192,26 @@ class PikafishEngine {
           .invokeMethod<String>('getEnginePath');
       return path!;
     }
-    if (Platform.isIOS || Platform.isMacOS) {
+    if (Platform.isIOS) {
+      // iOS 沙盒不允许派生子进程，无法运行外部 UCI 引擎
+      throw UnsupportedError('iOS 不支持外部引擎进程');
+    }
+    if (Platform.isMacOS) {
       final env = Platform.environment['TST_XIANGQI_ENGINE_PATH'];
       if (env != null && env.isNotEmpty) return env;
-      // 开发/调试回退（macOS bundle 内）
-      return 'pikafish';
+      // macOS：优先 bundle 内引擎（Contents/MacOS 与 Contents/engine/），
+      // 其次工作目录（调试布局：项目根或 engine/ 子目录）。
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      final candidates = [
+        '$exeDir/pikafish',
+        '$exeDir/engine/pikafish',
+        'pikafish',
+        'engine/pikafish',
+      ];
+      for (final c in candidates) {
+        if (File(c).existsSync()) return c;
+      }
+      throw StateError('未找到 macOS 引擎，请将 pikafish 放入 App bundle（Contents/MacOS）或设置 TST_XIANGQI_ENGINE_PATH');
     }
     if (Platform.isWindows) {
       // Windows：优先在 exe 同目录找引擎（打包发布布局），

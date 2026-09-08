@@ -303,6 +303,8 @@ class GameController extends ChangeNotifier {
   Future<void>? _thinkToken;
 
   Future<void> _doThink() async {
+    // 记录请求时局面：期间新开局/恢复存档等导致局面变化即作废结果
+    final fenAtRequest = _board.fen;
     thinking = true;
     notifyListeners();
     try {
@@ -311,6 +313,7 @@ class GameController extends ChangeNotifier {
       if (!disposed &&
           _status == GameStatus.playing &&
           _board.redToMove != userPlaysRed &&
+          _board.fen == fenAtRequest &&
           _board.isLegal(result.move)) {
         _applyMove(result.move);
       }

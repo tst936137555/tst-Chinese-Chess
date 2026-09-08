@@ -112,16 +112,15 @@ class ReviewController extends ChangeNotifier {
     final n = history.length;
     if (n == 0) return [0];
     final list = List<int>.filled(n + 1, 0);
+    // 初始局面：首步整步评估完成后（quality 已填）scoreBefore 才为真实评分
+    if (entries.first.quality != null) {
+      list[0] = entries.first.scoreBefore;
+    }
     var last = 0;
     for (var i = 0; i < n; i++) {
-      if (i == 0) {
-        // 初始局面：首步 before（未分析时为 0）
-        last = entries.first.scoreBefore;
-        list[0] = last;
-      }
       final e = entries[i];
+      // 已完整分析的步才推进"最近评分"，部分分析（仅 before）不向前泄漏
       if (e.quality != null) {
-        // 已分析：该步之后用真实评分
         last = e.scoreAfter;
       }
       list[i + 1] = last;

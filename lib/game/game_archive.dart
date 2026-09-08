@@ -5,8 +5,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 最多保留的对局数
-const int kMaxArchivedGames = 50;
+/// 最多保留的未收藏对局数
+const int kMaxArchivedGames = 100;
 
 /// 一局已结束的对局
 class ArchivedGame {
@@ -16,6 +16,7 @@ class ArchivedGame {
     required this.levelName,
     required this.result,
     required this.history,
+    this.favorite = false,
   });
 
   final DateTime time;
@@ -26,6 +27,19 @@ class ArchivedGame {
   final String result;
   /// 走法列表：{uci, captured, notation, fen}
   final List<Map<String, dynamic>> history;
+
+  /// 是否已收藏：置顶显示，且不占 50 局名额、不会被自动移除
+  final bool favorite;
+
+  /// 复制并修改收藏状态
+  ArchivedGame withFavorite(bool favorite) => ArchivedGame(
+        time: time,
+        userRed: userRed,
+        levelName: levelName,
+        result: result,
+        history: history,
+        favorite: favorite,
+      );
 
   String get resultLabel {
     switch (result) {
@@ -59,6 +73,7 @@ class ArchivedGame {
         'levelName': levelName,
         'result': result,
         'history': history,
+        'favorite': favorite,
       };
 
   static ArchivedGame fromJson(Map<String, dynamic> json) => ArchivedGame(
@@ -69,6 +84,7 @@ class ArchivedGame {
         history: (json['history'] as List? ?? [])
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList(),
+        favorite: json['favorite'] as bool? ?? false,
       );
 }
 
@@ -76,30 +92,57 @@ class ArchivedGame {
 class GameArchive {
   static const _key = 'game_archive';
 
-  /// 读取全部存档（新的在前）
+  /// 读取全部存档（新的在前）。
+  /// 单条记录损坏时跳过该条，保留其余棋谱；整体结构损坏返回空列表。
   static Future<List<ArchivedGame>> loadAll(SharedPreferences prefs) async {
+    List<dynamic> list;
     try {
       final raw = prefs.getString(_key);
       if (raw == null || raw.isEmpty) return [];
-      final list = jsonDecode(raw) as List;
-      return list
-          .map((e) => ArchivedGame.fromJson(Map<String, dynamic>.from(e as Map)))
-          .toList();
+      list = jsonDecode(raw) as List;
     } catch (_) {
       return [];
     }
+    final games = <ArchivedGame>[];
+    for (final e in list) {
+      try {
+        games.add(
+            ArchivedGame.fromJson(Map<String, dynamic>.from(e as Map)));
+      } catch (_) {
+        // 单条损坏：跳过，不影响其余棋谱
+      }
+    }
+    return games;
   }
 
-  /// 追加一局（插到最前，超出上限丢弃最旧的）
+  /// 追加一局（插到最前）。
+  /// 未收藏对局最多保留 100 局：超出时从最旧的非收藏对局开始移除；
+  /// 收藏对局不占名额，不会被自动移除。
   static Future<void> add(SharedPreferences prefs, ArchivedGame game) async {
     try {
       final all = await loadAll(prefs);
       all.insert(0, game);
-      if (all.length > kMaxArchivedGames) {
-        all.removeRange(kMaxArchivedGames, all.length);
+      var kept = 0;
+      final keptGames = <ArchivedGame>[];
+      for (final g in all) {
+        if (g.favorite) {
+          keptGames.add(g);
+        } else if (kept < kMaxArchivedGames) {
+          kept++;
+          keptGames.add(g);
+        }
       }
       await prefs.setString(
-          _key, jsonEncode(all.map((g) => g.toJson()).toList()));
+          _key, jsonEncode(keptGames.map((g) => g.toJson()).toList()));
+    } catch (_) {}
+  }
+
+  /// 整体覆写保存（收藏切换用；不做裁剪，调用方保证列表已含全部保留项）
+  static Future<void> saveAll(
+      SharedPreferences prefs, List<ArchivedGame> games) async {
+    try {
+      await prefs.setString(
+          _key, jsonEncode(games.map((g) => g.toJson()).toList()));
     } catch (_) {}
   }
 

@@ -261,10 +261,10 @@ class _EvalChartPainter extends CustomPainter {
           textDirection: TextDirection.ltr,
         )..layout();
 
-    // y 轴刻度：±300 / 0（厘兵）
-    final y500 = tp('+300', Colors.grey, 9)..layout();
+    // y 轴刻度：±500 / 0（厘兵）
+    final y500 = tp('+500', Colors.grey, 9)..layout();
     y500.paint(canvas, Offset(left - y500.width - 3, cy - (bottom - cy) * 0.5 - y500.height / 2));
-    final ym500 = tp('-300', Colors.grey, 9)..layout();
+    final ym500 = tp('-500', Colors.grey, 9)..layout();
     ym500.paint(canvas, Offset(left - ym500.width - 3, cy + (bottom - cy) * 0.5 - ym500.height / 2));
     final y0 = tp('0', Colors.grey, 9)..layout();
     y0.paint(canvas, Offset(left - y0.width - 3, cy - y0.height / 2));

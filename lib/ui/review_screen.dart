@@ -89,8 +89,32 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     _games = await GameArchive.loadAll(prefs);
+    // 置顶排序：收藏在前，各组内保持"新的在前"
+    final favs = <ArchivedGame>[];
+    final rest = <ArchivedGame>[];
+    for (final g in _games) {
+      (g.favorite ? favs : rest).add(g);
+    }
+    _games = [...favs, ...rest];
     _loading = false;
     if (mounted) setState(() {});
+  }
+
+  /// 切换收藏并持久化（收藏置顶且不会被自动移除）
+  Future<void> _toggleFavorite(ArchivedGame game) async {
+    final updated = game.withFavorite(!game.favorite);
+    setState(() {
+      _games[_games.indexOf(game)] = updated;
+      // 置顶排序：收藏在前，各组内保持"新的在前"
+      final favs = <ArchivedGame>[];
+      final rest = <ArchivedGame>[];
+      for (final g in _games) {
+        (g.favorite ? favs : rest).add(g);
+      }
+      _games = [...favs, ...rest];
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await GameArchive.saveAll(prefs, _games);
   }
 
   /// 选中一局后，在棋谱列表之上打开复盘分析页；退出复盘时返回本列表
@@ -115,7 +139,20 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('复盘棋谱'),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('复盘棋谱'),
+            Text(
+              '最多保留 100 局，超出自动移除最早对局（收藏除外）',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.white.withValues(alpha: 0.75),
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
         centerTitle: true,
         actions: [
           IconButton(
@@ -189,8 +226,29 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                       subtitle: Text('${g.history.length} 步 · ${g.levelName}',
                           style: const TextStyle(
                               fontSize: 12, color: XqColors.wood)),
-                      trailing: const Icon(Icons.chevron_right,
-                          color: XqColors.wood),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 收藏开关：置顶且不会被自动移除
+                          IconButton(
+                            icon: Icon(
+                              g.favorite
+                                  ? Icons.star_rounded
+                                  : Icons.star_border_rounded,
+                              color: g.favorite
+                                  ? const Color(0xFFF5A623)
+                                  : XqColors.wood,
+                            ),
+                            tooltip: g.favorite ? '取消收藏' : '收藏',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: () => _toggleFavorite(g),
+                          ),
+                          const Icon(Icons.chevron_right,
+                              color: XqColors.wood),
+                        ],
+                      ),
                       onTap: () => _openReview(context, g),
                     );
                   },

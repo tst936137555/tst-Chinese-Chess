@@ -120,7 +120,7 @@ class _HomePageState extends State<HomePage> {
               lines: const [
                 '许可证：GNU GPL v3.0',
                 '版权：Copyright © 2026 tst-936137555',
-                '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.2.3）',
+                '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.2.8）',
               ],
             ),
             _licenseSection(
@@ -283,7 +283,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 40),
               // 版本标注
               const Text(
-                'v1.2.3',
+                'v1.2.8',
                 style: TextStyle(
                   fontSize: 11,
                   color: XqColors.wood,
