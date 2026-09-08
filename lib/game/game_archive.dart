@@ -28,7 +28,7 @@ class ArchivedGame {
   /// 走法列表：{uci, captured, notation, fen}
   final List<Map<String, dynamic>> history;
 
-  /// 是否已收藏：置顶显示，且不占 50 局名额、不会被自动移除
+  /// 是否已收藏：置顶显示，且不占 100 局名额、不会被自动移除
   final bool favorite;
 
   /// 复制并修改收藏状态

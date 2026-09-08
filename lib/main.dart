@@ -9,6 +9,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'engine/pikafish.dart';
 import 'engine/rules.dart';
@@ -24,6 +25,47 @@ Future<void> main() async {
   runApp(XiangqiApp(prefs: prefs));
 }
 
+/// 屏幕常亮路由观察器：对局页 / 复盘列表 / 复盘分析位于栈顶时保持屏幕常亮，
+/// 离开这些页面（返回主页等）自动恢复正常熄屏策略。
+final wakeLockRouteObserver = WakeLockRouteObserver();
+
+class WakeLockRouteObserver extends RouteObserver<PageRoute<dynamic>> {
+  static const _wakelockRoutes = {'/game', '/archive', '/review'};
+
+  void _sync(Route<dynamic>? route) {
+    final name = route?.settings.name;
+    if (name != null && _wakelockRoutes.contains(name)) {
+      WakelockPlus.enable();
+    } else {
+      WakelockPlus.disable();
+    }
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    _sync(route);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPop(route, previousRoute);
+    _sync(previousRoute);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+    _sync(newRoute);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didRemove(route, previousRoute);
+    _sync(previousRoute);
+  }
+}
+
 class XiangqiApp extends StatelessWidget {
   const XiangqiApp({super.key, required this.prefs});
 
@@ -35,6 +77,15 @@ class XiangqiApp extends StatelessWidget {
       title: '中国象棋',
       debugShowCheckedModeBanner: false,
       theme: xiangqiTheme(),
+      // 锁定应用内字体：不随系统字体大小缩放，UI 按固定设计尺寸渲染
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.noScaling),
+          child: child!,
+        );
+      },
+      navigatorObservers: [wakeLockRouteObserver],
       home: HomePage(prefs: prefs),
     );
   }
@@ -120,7 +171,7 @@ class _HomePageState extends State<HomePage> {
               lines: const [
                 '许可证：GNU GPL v3.0',
                 '版权：Copyright © 2026 tst-936137555',
-                '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.2.8）',
+                '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.3.2）',
               ],
             ),
             _licenseSection(
@@ -283,7 +334,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 40),
               // 版本标注
               const Text(
-                'v1.2.8',
+                'v1.3.2',
                 style: TextStyle(
                   fontSize: 11,
                   color: XqColors.wood,
@@ -303,6 +354,7 @@ class _HomePageState extends State<HomePage> {
       // 继续上局：使用已保存的难度与执子方
       if (!mounted) return;
       Navigator.of(context).push(MaterialPageRoute(
+        settings: const RouteSettings(name: '/game'),
         builder: (_) => GamePage(
           prefs: widget.prefs,
           resumeGame: true,
@@ -370,6 +422,7 @@ class _HomePageState extends State<HomePage> {
     if (userRed == null || !mounted) return;
 
     Navigator.of(context).push(MaterialPageRoute(
+      settings: const RouteSettings(name: '/game'),
       builder: (_) => GamePage(
         prefs: widget.prefs,
         initialLevel: level,
@@ -537,7 +590,7 @@ class _GamePageState extends State<GamePage>
   }
 
   void _onTapSquare(int file, int rank) {
-    if (c.thinking || !c.isUserTurn) return;
+    if (c.thinking || c.ending || !c.isUserTurn) return;
     final piece = c.board.pieceAt(file, rank);
 
     if (_selected != null) {
@@ -1116,3 +1169,4 @@ class _GamePageState extends State<GamePage>
     );
   }
 }
+

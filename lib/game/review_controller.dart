@@ -157,8 +157,8 @@ class ReviewController extends ChangeNotifier {
   }
 
   /// 逐步分析整局（走法前后各评估一次）。
-  /// 深度 20 + 3s 与大师档/提示同一评判标准，慢设备由时间上限兜底。
-  Future<void> analyzeAll({int depth = 20}) async {
+  /// 深度 12 + 3s 与大师档/提示同一评判标准，慢设备由时间上限兜底。
+  Future<void> analyzeAll({int depth = 12}) async {
     if (analyzing || entries.isEmpty) return;
     _cancelled = false;
     analyzing = true;

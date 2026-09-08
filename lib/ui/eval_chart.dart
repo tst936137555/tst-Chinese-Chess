@@ -8,6 +8,8 @@ library;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'theme.dart';
+
 /// 评估折线图组件
 class EvalChart extends StatelessWidget {
   const EvalChart({
@@ -256,7 +258,11 @@ class _EvalChartPainter extends CustomPainter {
           text: TextSpan(
             text: s,
             style: TextStyle(
-                color: c, fontSize: size, fontWeight: bold ? FontWeight.w700 : null),
+              color: c,
+              fontSize: size,
+              fontWeight: bold ? FontWeight.w700 : null,
+              fontFamily: xqFontFamily,
+            ),
           ),
           textDirection: TextDirection.ltr,
         )..layout();

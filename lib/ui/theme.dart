@@ -8,6 +8,10 @@ library;
 
 import 'package:flutter/material.dart';
 
+/// 全局字体：霞鹜文楷（见 pubspec.yaml fonts 声明）。
+/// Canvas 自绘文字（棋子、楚河汉界等 TextPainter）需显式引用此常量。
+const xqFontFamily = 'XqKai';
+
 /// 调色板（与棋盘绘制配色同源）
 abstract final class XqColors {
   /// 宣纸（面板/弹窗底色）
@@ -40,6 +44,7 @@ ThemeData xiangqiTheme() {
   );
   return ThemeData(
     useMaterial3: true,
+    fontFamily: xqFontFamily,
     colorScheme: scheme,
     scaffoldBackgroundColor: const Color(0xFFF3E7CD),
     appBarTheme: const AppBarTheme(

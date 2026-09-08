@@ -142,10 +142,10 @@ class GameController extends ChangeNotifier {
     // 记录请求时的局面：期间走子/悔棋导致局面变化（含悔棋后重走、长度不变）即作废
     final fenAtRequest = _history.isEmpty ? '' : _history.last.fenAfter;
     try {
-      // 深度/时间双限：与大师档/复盘同一评判标准（深度 20），慢设备由 3s 时间上限兜底
+      // 深度/时间双限：与大师档/复盘同一评判标准（深度 12），慢设备由 3s 时间上限兜底
       final result = await engine.analyze(
         Board.cloneFrom(_board),
-        depth: 20,
+        depth: 12,
         multiPv: 2,
         movetimeMs: 3000,
       );
@@ -327,7 +327,7 @@ class GameController extends ChangeNotifier {
 
   /// 悔棋：撤销用户与 AI 各一步
   void undo() {
-    if (_history.isEmpty || thinking) return;
+    if (_history.isEmpty || thinking || ending) return;
     _undoOne();
     if (_history.isNotEmpty && _board.redToMove != userPlaysRed) {
       _undoOne();
@@ -357,7 +357,7 @@ class GameController extends ChangeNotifier {
     notifyListeners();
     try {
       final result = await engine.analyze(Board.cloneFrom(_board),
-          depth: 14, movetimeMs: 2000);
+          depth: 12, movetimeMs: 2000);
       engineScore = result.scoreCp;
       if (result.scoreCp > 600) {
         _status = GameStatus.redWin;

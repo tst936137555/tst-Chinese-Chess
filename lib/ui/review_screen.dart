@@ -20,6 +20,7 @@ Future<void> openReviewLastGame(
   required GameController game,
 }) {
   return Navigator.of(context).push(MaterialPageRoute(
+    settings: const RouteSettings(name: '/review'),
     fullscreenDialog: true,
     builder: (_) => ReviewScreen(
       history: game.history,
@@ -31,6 +32,7 @@ Future<void> openReviewLastGame(
 /// 复盘棋谱：打开存档列表选择一局
 Future<void> openReviewArchive(BuildContext context) {
   return Navigator.of(context).push(MaterialPageRoute(
+    settings: const RouteSettings(name: '/archive'),
     fullscreenDialog: true,
     builder: (_) => const ArchivePickerScreen(),
   ));
@@ -139,19 +141,23 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('复盘棋谱'),
-            Text(
-              '最多保留 100 局，超出自动移除最早对局（收藏除外）',
-              style: TextStyle(
-                fontSize: 10,
-                color: Colors.white.withValues(alpha: 0.75),
-                letterSpacing: 0,
+        // FittedBox：空间不足时整体等比缩小，避免大字体下标题被裁切/压扁
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('复盘棋谱'),
+              Text(
+                '最多保留 100 局，超出自动移除最早对局（收藏除外）',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.white.withValues(alpha: 0.75),
+                  letterSpacing: 0,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
         centerTitle: true,
         actions: [

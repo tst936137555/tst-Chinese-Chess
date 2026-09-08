@@ -1,4 +1,4 @@
-// 存档服务测试：50 局裁剪、收藏保护、序列化往返
+// 存档服务测试：100 局裁剪、收藏保护、序列化往返
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../engine/rules.dart';
 import '../game/review_controller.dart';
+import 'theme.dart';
 
 /// 棋子显示名（红/黑）
 const _redNames = {
@@ -230,6 +231,7 @@ class _BoardPainter extends CustomPainter {
           fontSize: radius * 1.3,
           fontWeight: FontWeight.w700,
           height: 1.0,
+          fontFamily: xqFontFamily,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -267,6 +269,7 @@ class _BoardPainter extends CustomPainter {
           color: Colors.white,
           fontSize: radius * 1.35,
           fontWeight: FontWeight.w700,
+          fontFamily: xqFontFamily,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -323,6 +326,7 @@ class _BoardPainter extends CustomPainter {
           fontSize: 20,
           fontWeight: FontWeight.bold,
           letterSpacing: 6,
+          fontFamily: xqFontFamily,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -333,7 +337,14 @@ class _BoardPainter extends CustomPainter {
     // 纵线号：红方一~九（右侧）、黑方 1~9（左侧）
     const redDigits = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
     TextPainter tpHelper(String s, Color c, double size) => TextPainter(
-          text: TextSpan(text: s, style: TextStyle(color: c, fontSize: size)),
+          text: TextSpan(
+            text: s,
+            style: TextStyle(
+              color: c,
+              fontSize: size,
+              fontFamily: xqFontFamily,
+            ),
+          ),
           textDirection: TextDirection.ltr,
         )..layout();
 
@@ -481,6 +492,7 @@ class _BoardPainter extends CustomPainter {
               .withValues(alpha: opacity),
           fontSize: radius,
           fontWeight: FontWeight.bold,
+          fontFamily: xqFontFamily,
         ),
       ),
       textDirection: TextDirection.ltr,

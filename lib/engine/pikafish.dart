@@ -54,37 +54,37 @@ class DifficultyLevel {
   /// 快设备上深度先到（棋力跨设备一致），慢设备上时间先到（延迟可控）。
   static const beginner = DifficultyLevel(
       name: '入门',
-      depth: 6,
+      depth: 3,
       multiPv: 5,
       movetimeMs: 1000,
       toleranceCp: 300,
       minThinkMs: 500);
   static const easy = DifficultyLevel(
       name: '简单',
-      depth: 8,
+      depth: 5,
       multiPv: 4,
       movetimeMs: 1500,
       toleranceCp: 180,
       minThinkMs: 500);
   static const medium = DifficultyLevel(
       name: '中等',
-      depth: 10,
+      depth: 7,
       multiPv: 3,
       movetimeMs: 2000,
       toleranceCp: 100,
       minThinkMs: 600);
   static const hard = DifficultyLevel(
       name: '困难',
-      depth: 14,
+      depth: 9,
       multiPv: 2,
       movetimeMs: 2500,
       toleranceCp: 40,
       minThinkMs: 800);
   static const master = DifficultyLevel(
       name: '大师',
-      // 深度 20 与提示/复盘分析同一评判标准；快设备 3s 内先触达时间上限，
-      // 慢设备由深度 20 兜底（先到先停，跨设备表现一致）
-      depth: 20,
+      // 深度 12 与提示/复盘分析同一评判标准；快设备 3s 内先触达时间上限，
+      // 慢设备由深度 12 兜底（先到先停，跨设备表现一致）
+      depth: 12,
       multiPv: 1,
       movetimeMs: 3000,
       fullStrength: true);
