@@ -298,73 +298,108 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   /// 当前步信息卡
+  ///
+  /// 固定内容高度：建议走法 / 亏损文字出现与否都不改变卡片高度，
+  /// 避免棋盘区域被挤压抖动。
   Widget _buildMoveInfo() {
+    const contentHeight = 56.0;
     if (_review.cursor == 0) {
       return XqPanel(
         margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-        child: const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('初始局面',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        child: SizedBox(
+          height: contentHeight,
+          child: const Align(
+            alignment: Alignment.centerLeft,
+            child: Text('初始局面',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          ),
         ),
       );
     }
     final e = _review.entries[_review.cursor - 1];
     final isUserMove = (_review.cursor - 1).isEven == widget.userPlaysRed;
     final q = e.quality;
+    final suggestion = (e.bestMoveUci != null && e.bestMoveUci != e.move.uci)
+        ? '建议：${_uciToNotation(e.bestMoveUci!, _review.cursor)}'
+        : null;
+    final lossText = (e.loss > 100 && q != null)
+        ? '亏损 ${e.loss} 厘兵'
+          '${isUserMove ? '（你走的）' : ''}'
+        : null;
 
     return XqPanel(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                '${_review.cursor}. ${e.notation}',
-                style: const TextStyle(
-                    fontSize: 15, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(width: 8),
-              if (q != null)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: q.color.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${q.badge} ${q.label}',
-                    style: TextStyle(
-                        fontSize: 12, color: q.color, fontWeight: FontWeight.w600),
-                  ),
-                )
-              else if (_review.analyzing)
-                const Text('分析中…',
-                    style: TextStyle(fontSize: 12, color: XqColors.wood)),
-              const Spacer(),
-              if (e.bestMoveUci != null && e.bestMoveUci != e.move.uci)
+      child: SizedBox(
+        height: contentHeight,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
                 Flexible(
                   child: Text(
-                    '建议：${_uciToNotation(e.bestMoveUci!, _review.cursor)}',
-                    style: const TextStyle(
-                        fontSize: 12, color: XqColors.red),
+                    '${_review.cursor}. ${e.notation}',
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700),
                   ),
                 ),
-            ],
-          ),
-          if (e.loss > 100 && q != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                '此步亏损 ${(e.loss / 100).toStringAsFixed(1)} 兵'
-                '${isUserMove ? '（你走的）' : ''}',
-                style: const TextStyle(fontSize: 11, color: XqColors.wood),
-              ),
+                const SizedBox(width: 8),
+                if (q != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: q.color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${q.badge} ${q.label}',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: q.color,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  )
+                else if (_review.analyzing)
+                  const Text('分析中…',
+                      style: TextStyle(fontSize: 12, color: XqColors.wood)),
+              ],
             ),
-        ],
+            if (suggestion != null || lossText != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Row(
+                  children: [
+                    if (suggestion != null)
+                      Flexible(
+                        child: Text(
+                          suggestion,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 13, color: XqColors.red),
+                        ),
+                      ),
+                    if (suggestion != null && lossText != null)
+                      const SizedBox(width: 10),
+                    if (lossText != null)
+                      Flexible(
+                        child: Text(
+                          lossText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 12, color: XqColors.wood),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -453,14 +488,14 @@ class _ReviewScreenState extends State<ReviewScreen> {
     String text;
     if (score >= 9000) {
       final mateIn = 10000 - score;
-      text = '红方绝杀（$mateIn 步）';
+      text = mateIn == 0 ? '红方已将死' : '红方绝杀（$mateIn 步）';
     } else if (score <= -9000) {
       final mateIn = 10000 + score;
-      text = '黑方绝杀（$mateIn 步）';
+      text = mateIn == 0 ? '黑方已将死' : '黑方绝杀（$mateIn 步）';
     } else if (score > 0) {
-      text = '红方 +${(score / 100).toStringAsFixed(1)}';
+      text = '红方 +$score 厘兵';
     } else if (score < 0) {
-      text = '黑方 +${(-score / 100).toStringAsFixed(1)}';
+      text = '黑方 +${-score} 厘兵';
     } else {
       text = '均势';
     }

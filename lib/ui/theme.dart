@@ -100,7 +100,7 @@ class XqButton extends StatelessWidget {
     this.onPressed,
     this.icon,
     this.variant = XqButtonVariant.tonal,
-    this.height = 48,
+    this.height = 52,
   });
 
   final String label;
@@ -146,7 +146,7 @@ class XqButton extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 17,
                       fontWeight: FontWeight.w600,
                       color: fgFinal,
                       letterSpacing: 1,

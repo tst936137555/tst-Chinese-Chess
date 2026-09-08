@@ -142,12 +142,12 @@ class GameController extends ChangeNotifier {
     // 记录请求时的局面：期间走子/悔棋导致局面变化（含悔棋后重走、长度不变）即作废
     final fenAtRequest = _history.isEmpty ? '' : _history.last.fenAfter;
     try {
-      // 深度/时间双限：快设备吃满深度 14，慢设备由 1.5s 时间上限兜底（保证深度达标）
+      // 深度/时间双限：与大师档/复盘同一评判标准（深度 20），慢设备由 3s 时间上限兜底
       final result = await engine.analyze(
         Board.cloneFrom(_board),
-        depth: 14,
+        depth: 20,
         multiPv: 2,
-        movetimeMs: 1500,
+        movetimeMs: 3000,
       );
       // 页面已销毁或局面已变化：过期建议直接丢弃
       if (disposed ||
@@ -338,7 +338,8 @@ class GameController extends ChangeNotifier {
   }
 
   /// 结束对局：引擎分析当前局势，按分差判定胜负
-  /// 分差 1000 以内为平局，某方超过 1000 则该方获胜。
+  /// 分差 600 以内为平局，某方超过 600 则该方获胜
+  /// （600 ≈ 皮卡鱼子力尺度下净多一马/炮；绝杀分 ±9000+ 必然判胜）。
   Future<void> endGameByScore() async {
     if (_status != GameStatus.playing) return;
     if (_history.isEmpty) {
@@ -355,9 +356,9 @@ class GameController extends ChangeNotifier {
       final result = await engine.analyze(Board.cloneFrom(_board),
           depth: 14, movetimeMs: 2000);
       engineScore = result.scoreCp;
-      if (result.scoreCp > 1000) {
+      if (result.scoreCp > 600) {
         _status = GameStatus.redWin;
-      } else if (result.scoreCp < -1000) {
+      } else if (result.scoreCp < -600) {
         _status = GameStatus.blackWin;
       } else {
         _status = GameStatus.draw;

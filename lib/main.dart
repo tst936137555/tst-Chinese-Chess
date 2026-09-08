@@ -120,7 +120,7 @@ class _HomePageState extends State<HomePage> {
               lines: const [
                 '许可证：GNU GPL v3.0',
                 '版权：Copyright © 2026 tst-936137555',
-                '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.2.0）',
+                '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.2.3）',
               ],
             ),
             _licenseSection(
@@ -283,7 +283,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 40),
               // 版本标注
               const Text(
-                'v1.2.0',
+                'v1.2.3',
                 style: TextStyle(
                   fontSize: 11,
                   color: XqColors.wood,
@@ -594,8 +594,8 @@ class _GamePageState extends State<GamePage>
         ],
         child: const Text(
           '确定要结束此局吗？将根据当前局势判定胜负：\n\n'
-          '分差 1000 以内为平局，某方超过 1000 则判定该方获胜。',
-          style: TextStyle(fontSize: 14, height: 1.7),
+          '分差 600 厘兵以内为平局，某方超过 600 则判定该方获胜。',
+          style: TextStyle(fontSize: 15, height: 1.7),
         ),
       ),
     );
@@ -704,6 +704,7 @@ class _GamePageState extends State<GamePage>
         final targetSquares =
             _legalTargets.map((m) => (m.toFile, m.toRank)).toList();
         final anim = _animController;
+        final banner = _buildRuleBanner(c);
         final canLower =
             DifficultyLevel.all.indexOf(c.level) > 0;
         final canRaise =
@@ -762,7 +763,7 @@ class _GamePageState extends State<GamePage>
                       Text(
                         'AI：${c.level.name}',
                         style: const TextStyle(
-                            fontSize: 13,
+                            fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: XqColors.red),
                       ),
@@ -772,13 +773,13 @@ class _GamePageState extends State<GamePage>
                           child: Row(
                             children: [
                               SizedBox(
-                                width: 14,
-                                height: 14,
+                                width: 16,
+                                height: 16,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               ),
                               SizedBox(width: 8),
                               Text('皮卡鱼思考中…',
-                                  style: TextStyle(fontSize: 13)),
+                                  style: TextStyle(fontSize: 15)),
                             ],
                           ),
                         )
@@ -787,13 +788,13 @@ class _GamePageState extends State<GamePage>
                           child: Row(
                             children: [
                               SizedBox(
-                                width: 14,
-                                height: 14,
+                                width: 16,
+                                height: 16,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               ),
                               SizedBox(width: 8),
                               Text('引擎计算建议中…',
-                                  style: TextStyle(fontSize: 13)),
+                                  style: TextStyle(fontSize: 15)),
                             ],
                           ),
                         )
@@ -802,13 +803,13 @@ class _GamePageState extends State<GamePage>
                           child: Row(
                             children: [
                               SizedBox(
-                                width: 14,
-                                height: 14,
+                                width: 16,
+                                height: 16,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               ),
                               SizedBox(width: 8),
                               Text('正在分析局势判定胜负…',
-                                  style: TextStyle(fontSize: 13)),
+                                  style: TextStyle(fontSize: 15)),
                             ],
                           ),
                         )
@@ -820,47 +821,60 @@ class _GamePageState extends State<GamePage>
                                     ? '轮到你走棋（${c.userPlaysRed ? "红" : "黑"}方）'
                                     : '轮到对方走棋')
                                 : '对局结束',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w500),
+                                fontSize: 15, fontWeight: FontWeight.w500),
                           ),
                         ),
                       Text(
                         '第 ${c.history.length ~/ 2 + 1} 回合',
                         style: const TextStyle(
-                            fontSize: 12, color: XqColors.wood),
+                            fontSize: 13, color: XqColors.wood),
                       ),
                     ],
                   ),
                 ),
-                // 规则醒目提示：将军（红）/ 重复局面与长将预警（橙）
-                ..._buildRuleBanner(c),
-                // 棋盘（结构固定：始终由 AnimatedBuilder 驱动，动画起止不再切换子树）
+                // 棋盘（结构固定：始终由 AnimatedBuilder 驱动，动画起止不再切换子树）。
+                // 规则横幅悬浮于棋盘区顶部空白处（Stack 覆盖层）：
+                // 出现/消失不改变布局高度，棋盘既不抖动也不被挤压。
                 Expanded(
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: AnimatedBuilder(
-                        animation: anim!,
-                        builder: (context, _) => BoardView(
-                          board: c.board,
-                          onTapSquare: _onTapSquare,
-                          flipBoard: c.flipBoard,
-                          selected: _selected,
-                          legalTargets: targetSquares,
-                          lastMove: c.lastMove,
-                          checkPos: c.checkPos,
-                          animatingMove: _animMove,
-                          animationProgress: anim.value,
-                          capturedPiece: _animCaptured,
-                          suggestedMoves: c.hints,
+                  child: Stack(
+                    children: [
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: AnimatedBuilder(
+                            animation: anim!,
+                            builder: (context, _) => BoardView(
+                              board: c.board,
+                              onTapSquare: _onTapSquare,
+                              flipBoard: c.flipBoard,
+                              selected: _selected,
+                              legalTargets: targetSquares,
+                              lastMove: c.lastMove,
+                              checkPos: c.checkPos,
+                              animatingMove: _animMove,
+                              animationProgress: anim.value,
+                              capturedPiece: _animCaptured,
+                              suggestedMoves: c.hints,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                      if (banner != null)
+                        Positioned(
+                          left: 12,
+                          right: 12,
+                          top: 4,
+                          child: banner,
+                        ),
+                    ],
                   ),
                 ),
                 // 最近着法
                 SizedBox(
-                  height: 34,
+                  height: 38,
                   child: ListView.builder(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -873,6 +887,7 @@ class _GamePageState extends State<GamePage>
                         child: Text(
                           '${isRedMove ? '${i ~/ 2 + 1}. ' : ''}${e.notation}',
                           style: TextStyle(
+                            fontSize: 15,
                             color: isRedMove
                                 ? const Color(0xFFB03020)
                                 : const Color(0xFF222222),
@@ -947,50 +962,55 @@ class _GamePageState extends State<GamePage>
 
   /// 局内醒目提示横幅：将军（红色）/ 重复局面与长将预警（橙色）。
   /// 仅对局进行中显示；将军与预警可同时出现。
-  Iterable<Widget> _buildRuleBanner(GameController c) sync* {
-    if (c.status != GameStatus.playing) return;
+  /// 返回 null 表示当前无横幅；横幅作为棋盘区 Stack 的悬浮层展示，
+  /// 不参与 Column 布局，出现/消失不引起棋盘抖动。
+  Widget? _buildRuleBanner(GameController c) {
+    if (c.status != GameStatus.playing) return null;
     final inCheck = c.checkPos != null;
     final notice = c.ruleNotice;
-    if (!inCheck && notice == null) return;
+    if (!inCheck && notice == null) return null;
     final text = [
       if (inCheck) '将军！',
       ?notice,
     ].join('　');
     final color = inCheck ? Colors.red.shade700 : Colors.orange.shade800;
-    yield Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              inCheck
-                  ? Icons.notification_important_rounded
-                  : Icons.warning_amber_rounded,
-              color: Colors.white,
-              size: 16,
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(
+            inCheck
+                ? Icons.notification_important_rounded
+                : Icons.warning_amber_rounded,
+            color: Colors.white,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1012,7 +1032,7 @@ class _GamePageState extends State<GamePage>
                 Text(
                   title,
                   style: const TextStyle(
-                    fontSize: 40,
+                    fontSize: 44,
                     fontWeight: FontWeight.w700,
                     color: Colors.white,
                   ),
@@ -1022,7 +1042,7 @@ class _GamePageState extends State<GamePage>
                   msg,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 15,
+                    fontSize: 16,
                     color: Colors.white.withValues(alpha: 0.85),
                   ),
                 ),

@@ -82,8 +82,9 @@ class DifficultyLevel {
       minThinkMs: 800);
   static const master = DifficultyLevel(
       name: '大师',
-      // 不限深度：大师档为真实满强度，由 movetime 控制节奏（先到先停中时间到即停）
-      depth: 0,
+      // 深度 20 与提示/复盘分析同一评判标准；快设备 3s 内先触达时间上限，
+      // 慢设备由深度 20 兜底（先到先停，跨设备表现一致）
+      depth: 20,
       multiPv: 1,
       movetimeMs: 3000,
       fullStrength: true);
