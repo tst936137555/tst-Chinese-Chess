@@ -49,7 +49,7 @@ NNUE 权重与字体随 assets 打包，无需额外下载。
 
 ## 发版流程
 
-1. 在 [CHANGELOG.md](CHANGELOG.md) 顶部新增 `## v<版本号>` 段落，写下本版更新内容（该段落会由 CI 自动上传为 GitHub Release 发行说明，与自动生成的提交列表合并展示）
+1. （可选）在 [CHANGELOG.md](CHANGELOG.md) 顶部新增 `## v<版本号>` 段落手写更新内容；不写则 CI 自动从提交历史按类型分组生成发行说明（`feat` → 新增、`fix` → 修复、`perf` → 优化、`refactor` → 重构、`docs/test/chore/ci/style/build` → 其他变更），支持 `feat(模块):` 作用域格式与全角冒号，最后统一附上 GitHub 自动生成的提交对比
 2. 更新 `pubspec.yaml` 版本号与 `lib/ui/home_screen.dart` 首页版本标注，保持一致
 3. 提交并推送到 main
 4. 打 tag 并推送：`git tag v<版本号> && git push <remote> v<版本号>`

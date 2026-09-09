@@ -142,14 +142,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # 与 windows-release 并行创建同一 Release：先尝试创建，
-          # 已存在（对方先建）则改为追加附件
-          # 发行说明 = CHANGELOG.md 当前版本段落（手写）+ 自动生成的提交列表
+          # 已存在（对方先建）则改为追加附件。
+          # 发行说明优先级：CHANGELOG.md 手写段落 > 提交历史自动分组，
+          # 两种来源最终都会附带 GitHub 自动生成的提交对比
           TAG="$GITHUB_REF_NAME"
           NOTES=$(awk -v ver="## $TAG" '
             $0 == ver {found=1; next}
             found && /^## / {exit}
             found {print}
           ' CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            # 自动生成：取上一 tag 以来的提交，按 conventional 类型分组
+            PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+            if [ -n "$PREV_TAG" ]; then RANGE="$PREV_TAG..$TAG"; else RANGE="$TAG"; fi
+            echo "commit range: $RANGE" >&2
+            gen_group() {
+              local pattern="$1" label="$2" items
+              items=$(git log "$RANGE" --no-merges --pretty=format:'%s' \
+                | grep -iE "^(${pattern})[:：]" | sed 's/^[^:：]*[:：] *//' \
+                | sed 's/^/- /')
+              [ -n "$items" ] && printf '### %s\n%s\n\n' "$label" "$items"
+            }
+            # 命令替换会吞尾部换行，先落盘再整体读取，避免组间粘连
+            NOTES_FILE=$(mktemp)
+            {
+              gen_group 'feat' '新增'
+              gen_group 'fix' '修复'
+              gen_group 'perf' '优化'
+              gen_group 'refactor' '重构'
+              gen_group 'docs|test|chore|ci|style' '其他变更'
+            } > "$NOTES_FILE"
+            NOTES=$(cat "$NOTES_FILE")
+          fi
           if [ -n "$NOTES" ]; then
             if ! gh release create "$TAG" "$APK_NAME" \
                 --title "$TAG" --notes "$NOTES" --generate-notes; then
@@ -177,6 +201,10 @@ jobs:
       PIKAFISH_SHA256: 0D57D64C212E78F96CBA9E5E4F140D8872F8FAA42EA631A27AB6C5DB08509DA3
     steps:
       - uses: actions/checkout@v5
+        with:
+          # 发行说明自动生成需要完整提交历史与全部 tag
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: subosito/flutter-action@v2
         with:
@@ -260,11 +288,33 @@ jobs:
         run: |
           # 与 android-release 并行创建同一 Release：先尝试创建，
           # 已存在（对方先建）则改为追加附件。
-          # 发行说明 = CHANGELOG.md 当前版本段落（手写）+ 自动生成的提交列表
+          # 发行说明优先级：CHANGELOG.md 手写段落 > 提交历史自动分组，
+          # 两种来源最终都会附带 GitHub 自动生成的提交对比
           $tag = $env:GITHUB_REF_NAME
           $notes = Get-Content CHANGELOG.md -Raw
+          $section = $null
           if ($notes -match "(?ms)^## $([regex]::Escape($tag))\s*\n(.*?)(?=^## |\z)") {
             $section = $Matches[1].Trim()
+          } else {
+            # 自动生成：取上一 tag 以来的提交，按 conventional 类型分组
+            $prevTag = git describe --tags --abbrev=0 "$tag^" 2>$null
+            if ($prevTag) { $range = "$prevTag..$tag" } else { $range = $tag }
+            Write-Host "commit range: $range"
+            $subjects = git log $range --no-merges --pretty=format:'%s'
+            # 正则中用 \uFF1A 表示全角冒号，避免脚本文件编码差异导致解析失败
+            function Group-Notes([string]$pattern, [string]$label) {
+              $items = $subjects | Where-Object { $_ -imatch "^($pattern)(\([^)]*\))?[:\uFF1A]" } |
+                ForEach-Object { $_ -ireplace "^[^:\uFF1A]*[:\uFF1A]\s*", "- " }
+              if ($items) { "### $label`n$($items -join "`n")`n" }
+            }
+            $section = (Group-Notes 'feat' '新增') +
+              (Group-Notes 'fix' '修复') +
+              (Group-Notes 'perf' '优化') +
+              (Group-Notes 'refactor' '重构') +
+              (Group-Notes 'docs|test|chore|ci|style|build' '其他变更')
+            $section = "$section".Trim()
+          }
+          if ($section) {
             gh release create $tag $env:ZIP_NAME --title $tag --notes $section --generate-notes
           } else {
             gh release create $tag $env:ZIP_NAME --title $tag --generate-notes
