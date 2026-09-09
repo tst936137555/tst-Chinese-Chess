@@ -26,6 +26,7 @@
 ## 安装
 
 - **Android**：从 GitHub [Releases](https://github.com/tst936137555/tst-Chinese-Chess/releases) 下载 `tst_xiangqi-<版本>.apk` 直接安装（自 v1.3.3 起由 CI 自动构建签名）。
+- **Windows**：从 Releases 下载 `tst_xiangqi-<版本>-windows.zip`，解压后运行 `tst_xiangqi.exe`（已内置 Pikafish 引擎与许可证文件，自 v1.3.4 起由 CI 自动构建）。
 - **iOS / macOS**：无预编译分发，请按下一节自行构建。
 
 ## 构建
@@ -87,6 +88,7 @@ flutter test
 - Android 预编译来源：
   - arm64-v8a：官方发布版 `Pikafish-Android-arm64-universal`（随 [v2026-09-06 release](https://github.com/official-pikafish/pikafish/releases/tag/Pikafish-2026-09-06) 分发）；
   - x86_64：官方**未提供** Android x86_64 预编译版，由本项目依据精确源码版本与工具链自行编译，见下文「4. Android x86_64 引擎自编译说明」。
+- Windows 预编译来源：官方发布版 `Pikafish-Windows-x86-64-universal`（随 [v2026-09-06 release](https://github.com/official-pikafish/pikafish/releases/tag/Pikafish-2026-09-06) 分发，由 CI 下载并经 SHA256 校验后随应用 zip 打包，GPLv3 与 NNUE 许可证文本随包附带）。
 
 ### 3. Pikafish NNUE 权重文件许可证
 

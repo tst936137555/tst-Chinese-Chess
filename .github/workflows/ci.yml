@@ -9,6 +9,9 @@
 #   产物上传为 artifact；打 v* 标签推送时额外创建 GitHub Release 并附 APK。
 #   首次使用前需配置 4 个 secrets（KEYSTORE_BASE64 / KEYSTORE_PASSWORD /
 #   KEY_ALIAS / KEY_PASSWORD），见项目文档。
+# - windows-release：下载钉住版本的官方 Pikafish Windows 引擎（SHA256 校验），
+#   连同 GPLv3 / NNUE 许可证文本一并打入 zip，产物上传为 artifact；打 v* 标签
+#   推送时附到同一 GitHub Release（与 android-release 并行，创建 Release 双方容错）。
 name: CI
 
 on:
@@ -133,11 +136,120 @@ jobs:
           path: ${{ env.APK_NAME }}
           if-no-files-found: error
 
-      - name: Create GitHub Release (tag push only)
+      - name: Attach APK to GitHub Release (tag push only)
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "$APK_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          # 与 windows-release 并行创建同一 Release：先尝试创建，
+          # 已存在（对方先建）则改为追加附件
+          if ! gh release create "$GITHUB_REF_NAME" "$APK_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes; then
+            gh release upload "$GITHUB_REF_NAME" "$APK_NAME" --clobber
+          fi
+
+  windows-release:
+    name: Windows Release (bundled engine)
+    # 仅 tag（v*）推送或手动触发时构建 release；PR 不跑
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: analyze-and-test
+    runs-on: windows-latest
+    permissions:
+      contents: write # 向 GitHub Release 追加附件需要
+    env:
+      # 钉住与 Android 引擎相同的官方版本（NNUE 权重配套，升级需同步
+      # assets/engine/pikafish.nnue 与此哈希）；sha256 用于防供应链投毒
+      PIKAFISH_TAG: Pikafish-2026-09-06
+      PIKAFISH_SHA256: 0D57D64C212E78F96CBA9E5E4F140D8872F8FAA42EA631A27AB6C5DB08509DA3
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter build windows (release)
+        run: flutter build windows --release
+
+      - name: Fetch Pikafish engine & licenses
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 官方 release 为单一 7z 总包（全平台二进制 + nnue + 许可证）
+          $url = "https://github.com/official-pikafish/pikafish/releases/download/${env:PIKAFISH_TAG}/Pikafish.2026-09-06.7z"
+          $archive = "$env:RUNNER_TEMP\Pikafish.7z"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash
+          Write-Host "archive sha256: $hash"
+          # 解压取 Windows 引擎与许可证（NNUE 已内置 assets，无需打包）
+          $dst = "$env:RUNNER_TEMP\pikafish"
+          7z e -y -o"$dst" $archive "Pikafish-Windows-x86-64-universal.exe" "Copying.txt" "NNUE-License.md"
+          if ($LASTEXITCODE -ne 0) { throw "7z extract failed" }
+          $exe = Get-Item "$dst\Pikafish-Windows-x86-64-universal.exe"
+          $exeHash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+          Write-Host "engine sha256: $exeHash"
+          if ($exeHash -ne $env:PIKAFISH_SHA256) {
+            throw "engine sha256 mismatch: expected $($env:PIKAFISH_SHA256), got $exeHash"
+          }
+          # 引擎重命名为应用约定的 pikafish.exe，与 app 主程序同目录；
+          # 许可证一并拷入（GPLv3 分发合规：随包附带许可与来源信息）
+          $bundle = "build\windows\x64\runner\Release"
+          Copy-Item $exe.FullName "$bundle\pikafish.exe"
+          Copy-Item "$dst\Copying.txt" "$bundle\COPYING-pikafish.txt"
+          Copy-Item "$dst\NNUE-License.md" "$bundle\NNUE-License.md"
+          Get-ChildItem $bundle | Select-Object Name, Length
+
+      - name: Smoke-test bundled engine
+        shell: pwsh
+        run: |
+          # 引擎自检：确认 zip 内 pikafish.exe 能完成基础 UCI 握手
+          $exe = "build\windows\x64\runner\Release\pikafish.exe"
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $exe
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.UseShellExecute = $false
+          $psi.CreateNoWindow = $true
+          $p = [System.Diagnostics.Process]::Start($psi)
+          $p.StandardInput.WriteLine("uci")
+          $p.StandardInput.WriteLine("quit")
+          $out = $p.StandardOutput.ReadToEnd()
+          $p.WaitForExit(10000) | Out-Null
+          if ($out -notmatch 'uciok') { throw "engine UCI handshake failed" }
+          Write-Host "engine UCI handshake OK"
+
+      - name: Rename zip with version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*(.+)$').Matches[0].Groups[1].Value.Split('+')[0]
+          $zip = "tst_xiangqi-$version-windows.zip"
+          Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath $zip
+          "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "zip: $zip ($((Get-Item $zip).Length) bytes)"
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+      - name: Attach zip to GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          # 与 android-release 并行创建同一 Release：先尝试创建，
+          # 已存在（对方先建）则改为追加附件
+          $tag = $env:GITHUB_REF_NAME
+          gh release create $tag $env:ZIP_NAME --title $tag --generate-notes
+          if ($LASTEXITCODE -ne 0) {
+            gh release upload $tag $env:ZIP_NAME --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+          }
