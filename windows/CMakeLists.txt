@@ -77,9 +77,13 @@ install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
 
 # Pikafish 引擎二进制：运行时必须在应用目录（App 按 exeDir\pikafish.exe 解析），
 # NNUE 权重走 flutter_assets（App 内复制到临时目录），此处只需 exe。
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../pikafish.exe"
-  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-  COMPONENT Runtime)
+# 本地开发根目录存在 pikafish.exe 时随包安装；CI 等无引擎环境跳过
+# （缺失时 file(INSTALL) 报错导致构建失败），windows-release 工作流构建后另行拷入。
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../pikafish.exe")
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../pikafish.exe"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
