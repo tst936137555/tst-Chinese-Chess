@@ -282,14 +282,22 @@ class PikafishEngine implements EngineClient {
   }
 
   Future<void> _doStart() async {
+    // 测试工厂在解析前判定：内存传输不需要引擎可执行文件与 NNUE 权重，
+    // 跳过平台相关路径解析（无引擎二进制的 Linux CI 可完整运行可靠性测试）
+    final testFactory = debugIoFactory;
     String exePath;
     String nnuePath;
-    try {
-      exePath = await _resolveEngineExecutable();
-      nnuePath = await _copyNnueToTmp();
-    } catch (e) {
-      _startFailures++;
-      throw EngineUnavailableException('引擎初始化失败: $e');
+    if (testFactory != null) {
+      exePath = 'debug';
+      nnuePath = 'debug';
+    } else {
+      try {
+        exePath = await _resolveEngineExecutable();
+        nnuePath = await _copyNnueToTmp();
+      } catch (e) {
+        _startFailures++;
+        throw EngineUnavailableException('引擎初始化失败: $e');
+      }
     }
 
     final readyPort = ReceivePort();
@@ -310,7 +318,6 @@ class PikafishEngine implements EngineClient {
         }
       });
 
-      final testFactory = debugIoFactory;
       if (testFactory != null) {
         // 测试模式：会话在当前 isolate 内运行（跳过 Isolate.spawn），
         // 失败同样经 _IsolateFailed 消息通知主侧
