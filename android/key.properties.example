@@ -1,0 +1,6 @@
+# 复制为 android/key.properties 并填入真实值（key.properties 不入库）
+# storeFile：支持绝对路径，或相对 android/ 目录的相对路径
+storeFile=../tst_xiangqi-release.jks
+storePassword=你的keystore密码
+keyAlias=tst_xiangqi
+keyPassword=你的key密码

@@ -505,6 +505,17 @@ class _ReviewScreenState extends State<ReviewScreen> {
             ],
           ),
         ),
+        if (_review.analysisError != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _review.analysisError!,
+                style: TextStyle(fontSize: 11, color: Colors.red.shade700),
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(10, 0, 8, 2),
           child: hasData
@@ -519,10 +530,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   height: 108,
                   child: Center(
                     child: Text(
-                      _review.analyzing ? '正在分析棋谱…' : '暂无分析数据',
+                      _review.analysisError ??
+                          (_review.analyzing ? '正在分析棋谱…' : '暂无分析数据'),
                       style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.withValues(alpha: 0.7)),
+                          color: _review.analysisError != null
+                              ? Colors.red.shade700
+                              : Colors.grey.withValues(alpha: 0.7)),
                     ),
                   ),
                 ),

@@ -45,5 +45,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Android release signing（密钥与口令绝不入库）
+android/key.properties
+*.jks
+*.keystore
+
 # Widget Preview related
 .widget_preview/

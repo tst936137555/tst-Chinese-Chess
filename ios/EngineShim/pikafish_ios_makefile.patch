@@ -1,0 +1,54 @@
+# Pikafish Makefile iOS 交叉编译补丁（tst_xiangqi tool/setup_ios_engine.sh 应用）
+#
+# 作用：为 Darwin 编译分支增加 IOS_PLATFORM 切换（镜像上游 COMP=ndk 的
+# 目标平台切换思路）。设置 IOS_PLATFORM=iphoneos / iphonesimulator 后，
+# 编译旗标改用对应 SDK sysroot 与版本下限，不再附加 macOS 旗标；
+# ARCH=armv8[-dotprod]（arch=armv8）自动映射为 Apple 的 -arch arm64。
+# 未设置 IOS_PLATFORM 时行为与原版完全一致（纯 macOS 构建不受影响）。
+#
+# 适用版本：Pikafish-2026-09-06（与项目内 Android 构建脚本同 tag）。
+# 升级 tag 后若上下文漂移导致 patch 失败，需对照新版 Makefile 重新生成。
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -495,15 +495,34 @@
+ 			LDFLAGS += -m$(bits)
+ 		endif
+ endif
+ ifeq ($(TARGET_KERNEL),Darwin)
+-	mac_target_flags := -mmacosx-version-min=10.15
+-	ifneq ($(arch),any)
+-		mac_target_flags += -arch $(arch)
+-	endif
+-	CXXFLAGS += $(mac_target_flags)
+-	LDFLAGS += $(mac_target_flags)
+-	XCRUN = xcrun
++	XCRUN = xcrun
++ifneq ($(IOS_PLATFORM),)
++	mac_arch := $(arch)
++	ifeq ($(mac_arch),armv8)
++		mac_arch := arm64
++	endif
++	mac_target_flags := -isysroot $(shell xcrun -sdk $(IOS_PLATFORM) --show-sdk-path)
++	ifeq ($(IOS_PLATFORM),iphoneos)
++		mac_target_flags += -miphoneos-version-min=$(IOS_MIN_VER)
++	endif
++	ifeq ($(IOS_PLATFORM),iphonesimulator)
++		mac_target_flags += -mios-simulator-version-min=$(IOS_MIN_VER)
++	endif
++	ifneq ($(mac_arch),any)
++		mac_target_flags += -arch $(mac_arch)
++	endif
++	CXXFLAGS += $(mac_target_flags)
++	LDFLAGS += $(mac_target_flags)
++else
++	mac_target_flags := -mmacosx-version-min=10.15
++	ifneq ($(arch),any)
++		mac_target_flags += -arch $(arch)
++	endif
++	CXXFLAGS += $(mac_target_flags)
++	LDFLAGS += $(mac_target_flags)
++endif
+ endif
+ # To cross-compile for Android, use NDK version r27c or later.
+ ifeq ($(COMP),ndk)
+ 	CXXFLAGS += -stdlib=libc++

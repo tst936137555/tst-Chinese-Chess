@@ -1,7 +1,21 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// 正式签名配置：android/key.properties（不入库，见 key.properties.example）。
+// 首次发布前生成 keystore（务必长期备份，升级必须使用同一 keystore 签名）：
+//   keytool -genkey -v -keystore ../tst_xiangqi-release.jks ^
+//           -keyalg RSA -keysize 2048 -validity 36500 -alias tst_xiangqi
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        FileInputStream(keystorePropertiesFile).use { load(it) }
+    }
 }
 
 android {
@@ -34,11 +48,29 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            // 仅在提供 key.properties 时填充；缺失时保持未配置，
+            // buildTypes.release 会回退 debug 签名（保证本地 flutter run --release 可用）
+            if (keystorePropertiesFile.exists()) {
+                // storeFile 支持绝对路径，或相对 android/ 目录的相对路径
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // 有 key.properties 时用正式签名（正式分发 / 长期升级必须），
+            // 否则回退 debug 签名（仅限本地开发验证，不可用于分发）
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

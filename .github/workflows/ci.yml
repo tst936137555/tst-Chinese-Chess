@@ -1,0 +1,143 @@
+# CI：analyze + 全量测试 + Android 编译检查 + 签名 release 构建
+#
+# 说明：
+# - 引擎协议可靠性（握手/看门狗/崩溃恢复/fail-fast）由内存伪造引擎驱动，
+#   无需真实引擎二进制，可在 Linux CI 完整运行（见 test/engine_reliability_test.dart）。
+# - 真实引擎端到端测试（test/review_engine_integration_test.dart）在无引擎
+#   环境自动跳过，仅在本机（Windows/macOS）运行。
+# - android-release：从仓库 secrets 还原正式签名密钥，构建签名 release APK，
+#   产物上传为 artifact；打 v* 标签推送时额外创建 GitHub Release 并附 APK。
+#   首次使用前需配置 4 个 secrets（KEYSTORE_BASE64 / KEYSTORE_PASSWORD /
+#   KEY_ALIAS / KEY_PASSWORD），见项目文档。
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-test:
+    name: Analyze & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: flutter test
+        run: flutter test
+
+  android-build:
+    name: Android Debug Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter build apk (debug)
+        run: flutter build apk --debug
+
+  android-release:
+    name: Android Release (signed)
+    # 仅 tag（v*）推送或手动触发时构建 release；PR 不跑（secrets 不可用）
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: analyze-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 创建 GitHub Release 需要
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: Restore signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::缺少 KEYSTORE_BASE64 secret，请在仓库 Settings → Secrets and variables → Actions 配置（4 个：KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD）"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > tst_xiangqi-release.jks
+
+      - name: Write key.properties
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          {
+            echo "storeFile=../tst_xiangqi-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: flutter build apk (release, signed)
+        run: flutter build apk --release
+
+      - name: Verify APK signature
+        run: |
+          APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --print-certs build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Rename APK with version
+        run: |
+          VERSION="$(grep '^version:' pubspec.yaml | sed 's/version: *//' | cut -d'+' -f1)"
+          cp build/app/outputs/flutter-apk/app-release.apk "tst_xiangqi-${VERSION}.apk"
+          echo "APK_NAME=tst_xiangqi-${VERSION}.apk" >> "$GITHUB_ENV"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK_NAME }}
+          path: ${{ env.APK_NAME }}
+          if-no-files-found: error
+
+      - name: Create GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$APK_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

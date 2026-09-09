@@ -1,10 +1,45 @@
 // 临时集成测试：真实引擎驱动 ReviewController 复盘分析
+//
+// 依赖真实引擎二进制（仅 Windows/macOS 本地环境具备），
+// 无引擎的环境（如 Linux CI）自动跳过；引擎协议可靠性由
+// engine_reliability_test.dart 以内存伪造引擎覆盖，CI 可运行。
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tst_xiangqi/engine/chinese_notation.dart';
 import 'package:tst_xiangqi/engine/pikafish.dart';
 import 'package:tst_xiangqi/engine/rules.dart';
 import 'package:tst_xiangqi/game/game_controller.dart';
 import 'package:tst_xiangqi/game/review_controller.dart';
+
+/// 当前环境是否存在可用的真实引擎二进制（与 PikafishEngine 的解析逻辑对齐）
+bool _realEngineAvailable() {
+  try {
+    if (Platform.isWindows) {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      return [
+        '$exeDir\\pikafish.exe',
+        '$exeDir\\engine\\pikafish.exe',
+        'pikafish.exe',
+        'engine/pikafish.exe',
+      ].any((c) => File(c).existsSync());
+    }
+    if (Platform.isMacOS) {
+      final env = Platform.environment['TST_XIANGQI_ENGINE_PATH'];
+      if (env != null && env.isNotEmpty) return true;
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      return [
+        '$exeDir/pikafish',
+        '$exeDir/engine/pikafish',
+        'pikafish',
+        'engine/pikafish',
+      ].any((c) => File(c).existsSync());
+    }
+  } catch (_) {}
+  return false;
+}
+
+const _skipNoEngine = '跳过：当前环境无真实引擎二进制（CI 用伪造引擎协议测试替代）';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -56,7 +91,8 @@ void main() {
     expect(review.scoreSeries.any((s) => s != 0), isTrue);
 
     engine.dispose();
-  }, timeout: const Timeout(Duration(minutes: 5)));
+  }, timeout: const Timeout(Duration(minutes: 5)),
+      skip: _realEngineAvailable() ? false : _skipNoEngine);
 
   test('scoreSeries 全长且未分析步沿用最近评分', () async {
     final engine = PikafishEngine.instance;

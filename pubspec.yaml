@@ -37,6 +37,8 @@ dependencies:
   shared_preferences: ^2.5.5
   audioplayers: ^6.1.0
   wakelock_plus: ^1.8.0
+  # dart:ffi 原生内存分配器（iOS 进程内引擎 FFI 传输层使用）
+  ffi: ^2.1.0
 
 dev_dependencies:
   flutter_test:
@@ -63,6 +65,8 @@ flutter:
   assets:
     - assets/engine/pikafish.nnue
     - assets/sounds/
+    # 霞鹜文楷 OFL 许可证文本：OFL 要求分发字体时附带许可证副本
+    - assets/fonts/OFL.txt
 
   # 全局字体：霞鹜文楷（Medium 单权重，w600/w700 映射到同一文件避免合成粗体）
   fonts:

@@ -182,6 +182,8 @@ class _HomePageState extends State<HomePage> {
                 '版权：Copyright © Pikafish contributors',
                 '源码：https://github.com/official-pikafish/pikafish',
                 '本应用包含 Pikafish 引擎代码，依 GPLv3 条款使用，本 App 源码已公开，满足 GPLv3 对应源码要求。',
+                'Android arm64-v8a 采用官方预编译版；x86_64 为官方无预编译版、',
+                '依源码 tag Pikafish-2026-09-06 + NDK r28c 自行编译（构建脚本见仓库 tool/）。',
               ],
             ),
             _licenseSection(
@@ -191,6 +193,17 @@ class _HomePageState extends State<HomePage> {
                 '· 仅限合法使用，超出合法范围使用的后果由用户自行承担；',
                 '· 仅授权个人非商业用途免费使用，任何商业用途须另向 Pikafish 团队申请商业许可。',
                 '本 App 为非商用项目，严格遵守上述限制。',
+              ],
+            ),
+            _licenseSection(
+              title: '4. 霞鹜文楷字体（LXGW WenKai）',
+              lines: const [
+                '版本：v1.522（Medium）',
+                '许可证：SIL Open Font License 1.1（OFL-1.1）',
+                '版权：Copyright 2021-2026 LXGW；基于 Fontworks 开源的 Klee One 衍生',
+                '（Copyright 2020 The Klee Project Authors）',
+                '源码：https://github.com/lxgw/LxgwWenKai',
+                'OFL 许可证全文随本应用分发（assets/fonts/OFL.txt）。',
               ],
             ),
             const SizedBox(height: 10),
@@ -1021,10 +1034,12 @@ class _GamePageState extends State<GamePage>
     if (c.status != GameStatus.playing) return null;
     final inCheck = c.checkPos != null;
     final notice = c.ruleNotice;
-    if (!inCheck && notice == null) return null;
+    final engineNotice = c.engineNotice;
+    if (!inCheck && notice == null && engineNotice == null) return null;
     final text = [
       if (inCheck) '将军！',
       ?notice,
+      ?engineNotice,
     ].join('　');
     final color = inCheck ? Colors.red.shade700 : Colors.orange.shade800;
     return Container(

@@ -57,7 +57,7 @@ class GameController extends ChangeNotifier {
     }
   }
 
-  final PikafishEngine engine;
+  final EngineClient engine;
   final SharedPreferences _prefs;
 
   /// 页面销毁后不再处理异步结果
@@ -89,6 +89,10 @@ class GameController extends ChangeNotifier {
 
   /// 终局原因说明（三次重复判和 / 长将判负），无则为 null
   String? endReason;
+
+  /// 引擎故障提示（不可用/超时等）：与规则预警同区域展示，
+  /// 引擎调用成功后自动清除，新对局时重置
+  String? engineNotice;
 
   /// 正在恢复存档
   bool get loading => _loading;
@@ -161,6 +165,10 @@ class GameController extends ChangeNotifier {
         } catch (_) {}
       }
       _hints = moves;
+      engineNotice = null;
+    } on EngineUnavailableException catch (e) {
+      debugPrint('提示获取失败: $e');
+      engineNotice = '引擎不可用，无法获取提示';
     } catch (e) {
       debugPrint('提示获取失败: $e');
     } finally {
@@ -309,6 +317,7 @@ class GameController extends ChangeNotifier {
     notifyListeners();
     try {
       final result = await engine.think(Board.cloneFrom(_board), _level);
+      engineNotice = null;
       engineScore = result.scoreCp;
       if (!disposed &&
           _status == GameStatus.playing &&
@@ -317,6 +326,10 @@ class GameController extends ChangeNotifier {
           _board.isLegal(result.move)) {
         _applyMove(result.move);
       }
+    } on EngineUnavailableException catch (e) {
+      // 引擎不可用：明确告知用户，不静默卡住，也绝不伪造走法
+      debugPrint('引擎错误: $e');
+      engineNotice = '引擎不可用，AI 暂停走棋';
     } catch (e) {
       debugPrint('引擎错误: $e');
     } finally {

@@ -55,7 +55,7 @@ class ReviewController extends ChangeNotifier {
     _buildEntries();
   }
 
-  final PikafishEngine engine;
+  final EngineClient engine;
   final List<HistoryEntry> history;
   final bool userPlaysRed;
 
@@ -73,6 +73,10 @@ class ReviewController extends ChangeNotifier {
 
   /// 分析取消标记
   bool _cancelled = false;
+
+  /// 分析错误信息（引擎不可用等）：非空时 UI 展示，重试分析前清空。
+  /// 故障必须如实呈现，不得以空评分/全"优秀"冒充分析结果。
+  String? analysisError;
 
   /// 控制器已销毁（销毁后不再通知监听者）
   bool _disposed = false;
@@ -163,6 +167,7 @@ class ReviewController extends ChangeNotifier {
     _cancelled = false;
     analyzing = true;
     analyzedCount = 0;
+    analysisError = null;
     notifyListeners();
 
     try {
