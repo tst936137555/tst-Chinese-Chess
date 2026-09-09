@@ -143,10 +143,23 @@ jobs:
         run: |
           # 与 windows-release 并行创建同一 Release：先尝试创建，
           # 已存在（对方先建）则改为追加附件
-          if ! gh release create "$GITHUB_REF_NAME" "$APK_NAME" \
-              --title "$GITHUB_REF_NAME" \
-              --generate-notes; then
-            gh release upload "$GITHUB_REF_NAME" "$APK_NAME" --clobber
+          # 发行说明 = CHANGELOG.md 当前版本段落（手写）+ 自动生成的提交列表
+          TAG="$GITHUB_REF_NAME"
+          NOTES=$(awk -v ver="## $TAG" '
+            $0 == ver {found=1; next}
+            found && /^## / {exit}
+            found {print}
+          ' CHANGELOG.md)
+          if [ -n "$NOTES" ]; then
+            if ! gh release create "$TAG" "$APK_NAME" \
+                --title "$TAG" --notes "$NOTES" --generate-notes; then
+              gh release upload "$TAG" "$APK_NAME" --clobber
+            fi
+          else
+            if ! gh release create "$TAG" "$APK_NAME" \
+                --title "$TAG" --generate-notes; then
+              gh release upload "$TAG" "$APK_NAME" --clobber
+            fi
           fi
 
   windows-release:
@@ -246,9 +259,16 @@ jobs:
         shell: pwsh
         run: |
           # 与 android-release 并行创建同一 Release：先尝试创建，
-          # 已存在（对方先建）则改为追加附件
+          # 已存在（对方先建）则改为追加附件。
+          # 发行说明 = CHANGELOG.md 当前版本段落（手写）+ 自动生成的提交列表
           $tag = $env:GITHUB_REF_NAME
-          gh release create $tag $env:ZIP_NAME --title $tag --generate-notes
+          $notes = Get-Content CHANGELOG.md -Raw
+          if ($notes -match "(?ms)^## $([regex]::Escape($tag))\s*\n(.*?)(?=^## |\z)") {
+            $section = $Matches[1].Trim()
+            gh release create $tag $env:ZIP_NAME --title $tag --notes $section --generate-notes
+          } else {
+            gh release create $tag $env:ZIP_NAME --title $tag --generate-notes
+          }
           if ($LASTEXITCODE -ne 0) {
             gh release upload $tag $env:ZIP_NAME --clobber
             if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
