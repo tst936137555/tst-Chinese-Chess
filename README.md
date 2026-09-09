@@ -75,7 +75,7 @@ flutter test
 
 - 许可证：GNU GPL v3.0
 - 版权：Copyright © 2026 tst-936137555
-- 源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.3.2）
+- 源码：https://github.com/tst936137555/tst-Chinese-Chess
 
 ### 2. Pikafish 引擎（皮卡鱼）
 

@@ -44,7 +44,7 @@ void showAnnouncementDialog(BuildContext context) {
             lines: const [
               '许可证：GNU GPL v3.0',
               '版权：Copyright © 2026 tst-936137555',
-              '源码：https://github.com/tst936137555/tst-Chinese-Chess（tag: v1.3.3）',
+              '源码：https://github.com/tst936137555/tst-Chinese-Chess',
             ],
           ),
           _licenseSection(
