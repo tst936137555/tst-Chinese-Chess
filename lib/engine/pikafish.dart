@@ -528,6 +528,10 @@ class PikafishEngine implements EngineClient {
         } catch (_) {
           throw EngineUnavailableException('引擎返回无效走法: $uci');
         }
+        // 坐标合法但当前局面下不合法（引擎状态异常输出）同样拦截
+        if (!board.isLegal(m)) {
+          throw EngineUnavailableException('引擎返回非法走法: $uci');
+        }
         return EngineResult(move: m, scoreCp: result[1] as int);
       });
     });

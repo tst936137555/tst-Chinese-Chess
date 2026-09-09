@@ -210,6 +210,24 @@ void main() {
       expect(Move(7, 7, 4, 7).uci, 'h2e2');
       expect(Move(1, 2, 4, 2).uci, 'b7e7');
     });
+
+    test('解析与往返', () {
+      expect(Move.fromUci('h2e2'), const Move(7, 7, 4, 7));
+      // 边界：纵线 a/i、横线数字 0/9（数字 d 对应 rank 9-d）
+      expect(Move.fromUci('a0i9'), const Move(0, 9, 8, 0));
+      expect(Move.fromUci('i0a9'), const Move(8, 9, 0, 0));
+    });
+
+    test('非法格式被拒绝（不再静默映射到棋盘内错误位置）', () {
+      // 回归用例：旧实现 j-'a'=9，索引 8*9+9=81<90，静默读到错误棋子
+      expect(() => Move.fromUci('j1i1'), throwsFormatException);
+      expect(() => Move.fromUci('0000'), throwsFormatException);
+      expect(() => Move.fromUci('x1y1'), throwsFormatException);
+      expect(() => Move.fromUci('a9a10'), throwsFormatException);
+      expect(() => Move.fromUci('a'), throwsFormatException);
+      expect(() => Move.fromUci(''), throwsFormatException);
+      expect(() => Move.fromUci('A0A1'), throwsFormatException); // 大写
+    });
   });
 
   group('重复局面判和与长将判负', () {

@@ -2,6 +2,7 @@
 // 以伪造 EngineClient 注入，无需真实引擎二进制（CI 可运行）。
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -65,13 +66,20 @@ class FakeEngineClient implements EngineClient {
 /// 让控制器内的微任务队列（AI 调度/结果应用）跑完
 Future<void> _settle() => Future<void>.delayed(const Duration(milliseconds: 30));
 
+/// 测试创建的临时目录（tearDown 统一清理）
+final _tempDirs = <Directory>[];
+
 Future<GameController> _newController(FakeEngineClient engine,
     {SharedPreferences? prefs, bool userRed = true}) async {
   final p = prefs ?? await _freshPrefs();
+  // 存档注入临时文件，避免测试触碰平台通道（path_provider）
+  final tmp = await Directory.systemTemp.createTemp('xq_gc_test');
+  _tempDirs.add(tmp);
   final c = GameController(
     engine: engine,
     prefs: p,
     initialLevel: DifficultyLevel.master,
+    archiveFile: File('${tmp.path}${Platform.pathSeparator}archive.json'),
   );
   c.userPlaysRed = userRed;
   return c;
@@ -84,6 +92,13 @@ Future<SharedPreferences> _freshPrefs() async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  tearDown(() async {
+    for (final d in _tempDirs) {
+      if (await d.exists()) await d.delete(recursive: true);
+    }
+    _tempDirs.clear();
+  });
 
   test('用户走子后引擎应答并自动落子', () async {
     final engine = FakeEngineClient();

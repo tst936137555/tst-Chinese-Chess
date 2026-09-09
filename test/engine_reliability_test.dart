@@ -17,6 +17,7 @@ class ScriptedEngineIo implements EngineIo {
     this.candidatesCp = const [30],
     this.mateIn,
     this.exitWhenIdle = false,
+    this.bestmove = 'h2e2',
   });
 
   /// 第 N 次 `go` 时崩溃（1 起），模拟引擎运行中崩溃
@@ -33,6 +34,9 @@ class ScriptedEngineIo implements EngineIo {
 
   /// 握手完成后立即退出（模拟空闲期崩溃，验证健康通知）
   final bool exitWhenIdle;
+
+  /// bestmove 应答走法（默认红方开局炮二平五；需与局面行棋方合法走法一致）
+  final String bestmove;
 
   void Function(String line)? _out;
   void Function(int code)? _exit;
@@ -56,13 +60,16 @@ class ScriptedEngineIo implements EngineIo {
   }
 
   void _search() {
+    // pv 首步须与 bestmove 一致（真实引擎行为），
+    // 且必须是行棋方合法走法（引擎侧 isLegal 兜底会拒绝非法候选）
+    final reply = bestmove == 'h9g7' ? 'h2e2' : 'h9g7';
     for (var i = 1; i <= _multiPv; i++) {
       final idx = (i - 1).clamp(0, candidatesCp.length - 1);
       final score =
           mateIn != null ? 'mate ${mateIn! + i - 1}' : 'cp ${candidatesCp[idx]}';
-      _out!('info depth 8 multipv $i score $score pv h2e2 h9g7');
+      _out!('info depth 8 multipv $i score $score pv $bestmove $reply');
     }
-    _out!('bestmove h2e2');
+    _out!('bestmove $bestmove');
   }
 
   @override
@@ -137,14 +144,16 @@ void main() {
   });
 
   test('黑方行棋时评分翻转为红方视角', () async {
-    normalFactory();
     final parts = Board.startFen.split(' ');
     parts[1] = 'b';
     final blackBoard = Board.fromFen(parts.join(' '));
+    // 黑方行棋局面：脚本引擎应答黑方合法走法（马8进7），
+    // 引擎侧 isLegal 兜底会拒绝行棋方的非法走法
+    installFactory(() => ScriptedEngineIo(bestmove: 'h9g7'));
 
     final r = await engine.think(blackBoard, level);
 
-    expect(r.move.uci, 'h2e2');
+    expect(r.move.uci, 'h9g7');
     expect(r.scoreCp, -30, reason: '行棋方（黑）视角 +30 = 红方视角 -30');
   });
 

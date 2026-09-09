@@ -52,8 +52,15 @@ class Move {
     return '${f(fromFile)}${9 - fromRank}${f(toFile)}${9 - toRank}';
   }
 
-  /// 从 UCI 字符串（如 "a0a1"）解析
+  /// UCI 走法格式：纵线 a-i、横线数字 0-9，共 4 字符（如 "a0i9"）。
+  /// 严格校验拒绝任何越界/错位字符，杜绝 "j1i1" 之类被静默映射到棋盘内的错误位置。
+  static final RegExp _uciPattern = RegExp(r'^[a-i][0-9][a-i][0-9]$');
+
+  /// 从 UCI 字符串（如 "a0a1"）解析；格式不合法时抛 [FormatException]
   factory Move.fromUci(String uci) {
+    if (!_uciPattern.hasMatch(uci)) {
+      throw FormatException('无效的 UCI 走法: $uci');
+    }
     return Move(
       uci.codeUnitAt(0) - 'a'.codeUnitAt(0),
       9 - int.parse(uci[1]),

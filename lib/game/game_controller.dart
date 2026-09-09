@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -49,6 +50,7 @@ class GameController extends ChangeNotifier {
     required this.engine,
     required this._prefs,
     DifficultyLevel? initialLevel,
+    this.archiveFile,
   })  : _level = initialLevel ?? DifficultyLevel.medium {
     if (initialLevel == null) {
       _loadSettings();
@@ -59,6 +61,9 @@ class GameController extends ChangeNotifier {
 
   final EngineClient engine;
   final SharedPreferences _prefs;
+
+  /// 存档文件（测试注入临时文件用；null 时用应用支持目录默认文件）
+  final File? archiveFile;
 
   /// 页面销毁后不再处理异步结果
   bool disposed = false;
@@ -93,6 +98,9 @@ class GameController extends ChangeNotifier {
   /// 引擎故障提示（不可用/超时等）：与规则预警同区域展示，
   /// 引擎调用成功后自动清除，新对局时重置
   String? engineNotice;
+
+  /// 棋谱归档失败提示：对局结束时写入存档失败则展示（读写错误不再静默）
+  String? archiveNotice;
 
   /// 正在恢复存档
   bool get loading => _loading;
@@ -238,7 +246,7 @@ class GameController extends ChangeNotifier {
     if (!persist) return;
     _saveState();
     if (_status != GameStatus.playing) {
-      _archiveGame();
+      unawaited(_archiveGame());
     }
   }
 
@@ -361,7 +369,7 @@ class GameController extends ChangeNotifier {
     if (_history.isEmpty) {
       // 一步未走直接结束：无局势可评，视为平局
       _status = GameStatus.draw;
-      _archiveGame();
+      unawaited(_archiveGame());
       notifyListeners();
       _saveState();
       return;
@@ -379,11 +387,11 @@ class GameController extends ChangeNotifier {
       } else {
         _status = GameStatus.draw;
       }
-      _archiveGame();
+      unawaited(_archiveGame());
     } catch (e) {
       debugPrint('结束分析失败: $e');
       _status = GameStatus.draw;
-      _archiveGame();
+      unawaited(_archiveGame());
     } finally {
       ending = false;
       if (!disposed) notifyListeners();
@@ -407,24 +415,30 @@ class GameController extends ChangeNotifier {
   }
 
   /// 归档对局（对局结束时）
-  void _archiveGame() {
+  Future<void> _archiveGame() async {
     if (_history.isEmpty) return;
-    GameArchive.add(_prefs, ArchivedGame(
-      time: DateTime.now(),
-      userRed: userPlaysRed,
-      levelName: _level.name,
-      result: switch (_status) {
-        GameStatus.redWin => 'redWin',
-        GameStatus.blackWin => 'blackWin',
-        _ => 'draw',
-      },
-      history: _history.map((e) => {
-            'uci': e.move.uci,
-            'captured': e.capturedPiece,
-            'notation': e.notation,
-            'fen': e.fenAfter,
-          }).toList(),
-    ));
+    final ok = await GameArchive.add(
+        archiveFile ?? await GameArchive.defaultArchiveFile(),
+        ArchivedGame(
+          time: DateTime.now(),
+          userRed: userPlaysRed,
+          levelName: _level.name,
+          result: switch (_status) {
+            GameStatus.redWin => 'redWin',
+            GameStatus.blackWin => 'blackWin',
+            _ => 'draw',
+          },
+          history: _history.map((e) => {
+                'uci': e.move.uci,
+                'captured': e.capturedPiece,
+                'notation': e.notation,
+                'fen': e.fenAfter,
+              }).toList(),
+        ));
+    if (!ok && !disposed) {
+      archiveNotice = '棋谱保存失败';
+      notifyListeners();
+    }
   }
 
   /// 立即保存当前对局状态（生命周期兜底：切后台/进程终止前调用）

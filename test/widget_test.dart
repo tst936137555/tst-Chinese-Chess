@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:tst_xiangqi/app.dart';
 import 'package:tst_xiangqi/engine/rules.dart';
-import 'package:tst_xiangqi/main.dart';
 import 'package:tst_xiangqi/ui/board_view.dart';
 
 void main() {

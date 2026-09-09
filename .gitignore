@@ -50,5 +50,11 @@ android/key.properties
 *.jks
 *.keystore
 
+# Windows 引擎可执行文件不入库（体积大且可从官方 release 获取，放置方式见 README「构建」）
+/pikafish.exe
+
+# Trae 内部工作文档
+.trae/documents/
+
 # Widget Preview related
 .widget_preview/

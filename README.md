@@ -9,8 +9,59 @@
 - 本地单机对弈：执红先行 / 执黑后手，五档难度（入门 ~ 大师）
 - 引擎支持：提示（双建议）、悔棋、按局势判定胜负结束对局
 - 复盘分析：全局逐步引擎评估、局势走势折线图、走法质量分级
-- 复盘棋谱：对局自动归档（最多保留 100 局），支持收藏（置顶且不被自动移除）
+- 复盘棋谱：对局自动归档（未收藏最多 100 局、收藏最多 50 局，超出自动移除最旧），支持收藏置顶
 - 中文记谱（纵线记谱法）、规则判定（将死/困毙、三次重复判和、长将判负）、音效开关
+
+## 支持平台
+
+| 平台 | 引擎形态 | 说明 |
+|------|----------|------|
+| Android（arm64-v8a / x86_64） | 子进程（`libpikafish.so`） | 提供签名 APK 发布 |
+| iOS（A12 及以上） | 进程内 FFI（静态库 `libpikafish.a`） | 需 macOS 构建，引擎依赖 dotprod 指令 |
+| macOS | 子进程（随应用打包） | 引擎二进制随仓库提供 |
+| Windows | 子进程（`pikafish.exe`） | 需自行放置引擎可执行文件，见「构建」 |
+
+不支持 Linux 与 Web。
+
+## 安装
+
+- **Android**：从 GitHub [Releases](https://github.com/tst936137555/tst-Chinese-Chess/releases) 下载 `tst_xiangqi-<版本>.apk` 直接安装（自 v1.3.3 起由 CI 自动构建签名）。
+- **iOS / macOS**：无预编译分发，请按下一节自行构建。
+
+## 构建
+
+前置要求：Flutter SDK（stable 渠道）、Android SDK（构建 Android）或 Xcode（构建 iOS/macOS）。
+
+```bash
+flutter pub get
+flutter run                # 调试运行到已连接设备
+```
+
+各平台发布构建：
+
+- **Android**：`flutter build apk --release`；或推送 `v*` 标签触发 CI 自动构建签名 APK（见 `.github/workflows/ci.yml`）。
+- **iOS**：先在 macOS 上运行 `tool/setup_ios_engine.sh`（构建 `libpikafish.a` 静态库并注入 Xcode 工程），之后 `flutter build ios`。
+- **Windows**：`flutter build windows`，并将 [Pikafish 官方发布版](https://github.com/official-pikafish/pikafish/releases) 的 Windows 可执行文件重命名为 `pikafish.exe` 放入产物目录（开发调试时放项目根目录即可）。
+- **macOS**：`flutter build macos`（引擎二进制已在 `macos/EngineBin/`）。
+
+NNUE 权重与字体随 assets 打包，无需额外下载。
+
+## 测试
+
+```bash
+flutter analyze
+flutter test
+```
+
+全部单元测试无需真实引擎二进制与平台通道：引擎可靠性测试使用内存伪造 UCI 引擎驱动真实会话协议；真实引擎端到端测试（`review_engine_integration_test.dart`）在无引擎环境自动跳过。
+
+## 已知限制
+
+- 仅单机对弈：无网络对战、无账号与云同步功能。
+- 随应用分发的 Pikafish NNUE 权重仅授权个人非商业用途，本应用及其衍生分发不得商用（见下文开源声明第 3 节）。
+- iOS 需 A12 芯片（2018 年机型）及以上，旧设备不支持。
+- 棋谱存档有数量上限（未收藏 100 局 / 收藏 50 局），超出自动移除最旧；存档保存在应用文档目录，卸载应用即清除。
+- 引擎崩溃或挂死时会自动重启并重试一次，仍失败则如实提示「引擎不可用」，不会伪造走法或评分。
 
 ## 作者声明
 

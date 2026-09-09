@@ -2,7 +2,6 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../engine/chinese_notation.dart';
 import '../engine/pikafish.dart';
@@ -89,34 +88,64 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    _games = await GameArchive.loadAll(prefs);
-    // 置顶排序：收藏在前，各组内保持"新的在前"
+    final file = await GameArchive.defaultArchiveFile();
+    // 存在且非空的文件却读出空列表 = 存档损坏（正常情况不会写入空档）
+    final suspicious = file.existsSync() && file.lengthSync() > 0;
+    _games = await GameArchive.loadAll(file);
+    final corrupted = suspicious && _games.isEmpty;
+    _resort();
+    _loading = false;
+    if (mounted) setState(() {});
+    if (corrupted && mounted) {
+      // 等首帧完成后再提示，避免 initState 期间展示 SnackBar
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('棋谱读取失败，数据可能已损坏')),
+          );
+        }
+      });
+    }
+  }
+
+  /// 置顶排序：收藏在前，各组内保持"新的在前"
+  void _resort() {
     final favs = <ArchivedGame>[];
     final rest = <ArchivedGame>[];
     for (final g in _games) {
       (g.favorite ? favs : rest).add(g);
     }
     _games = [...favs, ...rest];
-    _loading = false;
-    if (mounted) setState(() {});
   }
 
-  /// 切换收藏并持久化（收藏置顶且不会被自动移除）
+  /// 切换收藏并持久化（收藏置顶且不会被自动移除）。
+  /// 收藏数达上限时拒绝新增；保存失败时回滚列表并提示。
   Future<void> _toggleFavorite(ArchivedGame game) async {
     final updated = game.withFavorite(!game.favorite);
+    // 先查后改：收藏数已达上限时拒绝新增
+    if (updated.favorite &&
+        _games.where((g) => g.favorite).length >= kMaxFavoriteGames) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              '收藏已达上限（$kMaxFavoriteGames 条），请先取消部分收藏')));
+      return;
+    }
+    // 浅拷贝快照：下面的原位修改不能污染回滚用的列表
+    final before = List<ArchivedGame>.of(_games);
     setState(() {
       _games[_games.indexOf(game)] = updated;
-      // 置顶排序：收藏在前，各组内保持"新的在前"
-      final favs = <ArchivedGame>[];
-      final rest = <ArchivedGame>[];
-      for (final g in _games) {
-        (g.favorite ? favs : rest).add(g);
-      }
-      _games = [...favs, ...rest];
+      _resort();
     });
-    final prefs = await SharedPreferences.getInstance();
-    await GameArchive.saveAll(prefs, _games);
+    final file = await GameArchive.defaultArchiveFile();
+    if (await GameArchive.saveAll(file, _games)) return;
+    // 保存失败：回滚列表并提示
+    if (!mounted) return;
+    setState(() {
+      _games = before;
+      _resort();
+    });
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('棋谱保存失败')));
   }
 
   /// 选中一局后，在棋谱列表之上打开复盘分析页；退出复盘时返回本列表
@@ -188,9 +217,14 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                 ),
               );
               if (ok == true && context.mounted) {
-                final prefs = await SharedPreferences.getInstance();
-                await GameArchive.clear(prefs);
-                _load();
+                final file = await GameArchive.defaultArchiveFile();
+                if (await GameArchive.clear(file)) {
+                  _load();
+                } else if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('清空失败，请重试')),
+                  );
+                }
               }
             },
           ),
