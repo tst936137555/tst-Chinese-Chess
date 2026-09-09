@@ -57,6 +57,7 @@ ThemeData xiangqiTheme() {
         fontWeight: FontWeight.w700,
         color: Colors.white,
         letterSpacing: 3,
+        fontFamily: xqFontFamily,
       ),
       iconTheme: IconThemeData(color: Colors.white),
     ),
@@ -65,7 +66,8 @@ ThemeData xiangqiTheme() {
     ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: XqColors.wood,
-      contentTextStyle: const TextStyle(color: Colors.white, fontSize: 14),
+      contentTextStyle: const TextStyle(
+          color: Colors.white, fontSize: 14, fontFamily: xqFontFamily),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ),

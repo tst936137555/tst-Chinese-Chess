@@ -349,13 +349,21 @@ class _BoardPainter extends CustomPainter {
         )..layout();
 
     for (int f = 0; f < 9; f++) {
-      // 底部红方数字（红方视角 file 8 为"一"）
+      // 红方数字（红方底线外侧；翻转后红方底线在屏幕顶部，偏移改向上）
       final redIdx = 8 - f;
       final t1 = tpHelper(redDigits[redIdx], const Color(0xFF8B2F1F), 13);
-      t1.paint(canvas, point(f, 9) + Offset(-t1.width / 2, cell * 0.62));
-      // 顶部黑方数字
+      final redP = point(f, 9);
+      t1.paint(canvas, Offset(
+        redP.dx - t1.width / 2,
+        flip ? redP.dy - cell * 0.62 - t1.height : redP.dy + cell * 0.62,
+      ));
+      // 黑方数字（黑方底线外侧；翻转后黑方底线在屏幕底部，偏移改向下）
       final t2 = tpHelper('${f + 1}', const Color(0xFF333333), 12);
-      t2.paint(canvas, point(f, 0) + Offset(-t2.width / 2, -cell * 0.62 - t2.height));
+      final blackP = point(f, 0);
+      t2.paint(canvas, Offset(
+        blackP.dx - t2.width / 2,
+        flip ? blackP.dy + cell * 0.62 : blackP.dy - cell * 0.62 - t2.height,
+      ));
     }
   }
 
