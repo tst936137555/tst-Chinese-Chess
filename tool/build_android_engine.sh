@@ -39,7 +39,12 @@ usage() {
 
 case "${1:-x86_64}" in
   -h|--help) usage ;;
-  x86_64)    ABI="x86_64";    ARCH="x86_64" ;;  # Makefile: x86_64 → x86_64-linux-android29-clang++
+  # 架构名必须是 Makefile 支持列表中的官方连字符形式（x86-64-*），
+  # 下划线 x86_64 不在列表内，config-sanity 会因 SUPPORTED_ARCH=false 直接失败。
+  # 选 sse41-popcnt：NNUE 最低可用性能档（SSE2 档 NNUE 过慢），不依赖
+  # AVX2/BMI2（模拟器宿主 CPU 2008+ Intel / 2011+ AMD 全覆盖），
+  # 并避开早期 Ryzen 的 pext 性能陷阱。
+  x86_64)    ABI="x86_64";    ARCH="x86-64-sse41-popcnt" ;;  # Makefile: x86-64-* → x86_64-linux-android29-clang++
   arm64-v8a) ABI="arm64-v8a"; ARCH="armv8"  ;;  # Makefile: armv8  → aarch64-linux-android29-clang++
   *) echo "不支持的 ABI：$1（可选 x86_64 / arm64-v8a）" >&2; exit 1 ;;
 esac
@@ -79,6 +84,11 @@ case "$NDK_HOST_CASE" in
   *) NDK_HOST="linux-x86_64" ;;
 esac
 readonly NDK_BIN="$NDK/toolchains/llvm/prebuilt/$NDK_HOST/bin"
+
+# Makefile 以裸名调用交叉编译器（x86_64-linux-android29-clang++ /
+# aarch64-linux-android29-clang++），并用 $(CXX) -dumpversion、
+# which *-strip 等做特性探测——都必须能在 PATH 中解析到 NDK 工具链
+export PATH="$NDK_BIN:$PATH"
 
 log "NDK：$NDK"
 log "NDK 工具链：$NDK_BIN"
