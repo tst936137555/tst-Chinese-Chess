@@ -184,7 +184,7 @@ jobs:
           echo "APK_NAME=tst_xiangqi-${VERSION}.apk" >> "$GITHUB_ENV"
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.APK_NAME }}
           path: ${{ env.APK_NAME }}
@@ -314,7 +314,7 @@ jobs:
           Write-Host "zip: $zip ($((Get-Item $zip).Length) bytes)"
 
       - name: Upload zip artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ZIP_NAME }}
           path: ${{ env.ZIP_NAME }}
