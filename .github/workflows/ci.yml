@@ -144,7 +144,7 @@ jobs:
       - name: Build Android x86_64 engine (not published upstream)
         run: ./tool/build_android_engine.sh x86_64
         env:
-          ANDROID_NDK: ${{ steps.ndk.outputs.ndk-root }}
+          ANDROID_NDK: ${{ steps.ndk.outputs.ndk-path }}
 
       - name: Restore signing keystore
         env:
