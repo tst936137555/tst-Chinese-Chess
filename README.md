@@ -136,7 +136,8 @@ flutter test
 - 许可证：SIL Open Font License 1.1（OFL-1.1）
 - 版权：Copyright 2021-2026 LXGW（保留字体名「霞鹜」「落霞孤鹜」「LXGW」等）；基于 Fontworks 开源的 Klee One 衍生（Copyright 2020 The Klee Project Authors）
 - 源码：https://github.com/lxgw/LxgwWenKai
-- 许可证全文随应用分发：`assets/fonts/OFL.txt`（同时打包进 APK，满足 OFL「分发字体须附带许可证副本」要求）。
+- 字体文件本体不入 git 仓库，由 `tool/fetch_engine.ps1` 按 `tool/engine_manifest.json` 下载（SHA256 校验）；
+- 许可证全文随应用分发：`assets/fonts/OFL.txt`（入库并打包进 APK，满足 OFL「分发字体须附带许可证副本」要求）。
 
 ## 许可证
 

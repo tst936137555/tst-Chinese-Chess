@@ -50,8 +50,17 @@ android/key.properties
 *.jks
 *.keystore
 
-# Windows 引擎可执行文件不入库（体积大且可从官方 release 获取，放置方式见 README「构建」）
+# 引擎 / NNUE / 字体大文件不入库：由 tool/fetch_engine.ps1 按
+# tool/engine_manifest.json 从上游官方 release 下载并做 SHA256 校验后放置；
+# Android x86_64 引擎官方不发布，由 tool/build_android_engine.sh 编译。
+# 详见 README「构建」
 /pikafish.exe
+/assets/engine/pikafish.nnue
+/assets/fonts/LXGWWenKai-Medium.ttf
+/android/app/src/main/jniLibs/arm64-v8a/libpikafish.so
+/android/app/src/main/jniLibs/x86_64/libpikafish.so
+/macos/EngineBin/pikafish
+/build-licenses/
 
 # Trae 内部工作文档
 .trae/documents/
