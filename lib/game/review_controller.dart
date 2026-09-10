@@ -220,6 +220,10 @@ class ReviewController extends ChangeNotifier {
       }
     } catch (err) {
       debugPrint('复盘分析出错: $err');
+      // 故障如实呈现：UI 据此展示错误文案，而非停留在"暂无分析数据"
+      analysisError = err is EngineUnavailableException
+          ? '引擎不可用：${err.message}'
+          : '复盘分析失败：$err';
     } finally {
       analyzing = false;
       if (!_disposed) notifyListeners();

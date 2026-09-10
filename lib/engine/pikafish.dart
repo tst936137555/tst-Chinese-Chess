@@ -444,19 +444,46 @@ class PikafishEngine implements EngineClient {
     throw UnsupportedError('不支持的平台');
   }
 
-  /// 复制 NNUE 权重到引擎可访问的临时目录
+  /// NNUE 资产路径（避免散落的字符串字面量）
+  static const _nnueAssetKey = 'assets/engine/pikafish.nnue';
+
+  /// 复制 NNUE 权重到引擎可访问的临时目录。
+  ///
+  /// 临时文件名携带构建指纹（主可执行文件的修改时间）：
+  /// - 同一次安装内已落盘即直接复用，不再把 ~40MB 资产全量读入内存；
+  /// - 应用升级（NNUE 随包更新）后指纹变化，必然重新复制，确保新权重生效；
+  /// - 先写 .part 再改名：崩溃中断不会残留同名半截文件被误复用。
   Future<String> _copyNnueToTmp() async {
-    final dir = Directory.systemTemp;
-    final nnue = File('${dir.path}${Platform.pathSeparator}pikafish.nnue');
-    final data = await rootBundle.load('assets/engine/pikafish.nnue');
-    final bytes = data.buffer.asUint8List();
-    // 大小与内置权重一致则跳过写入，减少启动 IO；
-    // writeAsBytes+flush 完整写入后大小恒定，损坏/截断的残留文件大小必然不同，
-    // 权重升级体积变化也必然触发重写，确保 App 携带的新权重生效
-    if (!await nnue.exists() || await nnue.length() != bytes.lengthInBytes) {
-      await nnue.writeAsBytes(bytes, flush: true);
-    }
-    return nnue.path;
+    final stamp = File(Platform.resolvedExecutable)
+        .lastModifiedSync()
+        .millisecondsSinceEpoch;
+    final path =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}pikafish-$stamp.nnue';
+    if (File(path).existsSync()) return path;
+    final bytes = (await rootBundle.load(_nnueAssetKey)).buffer.asUint8List();
+    final part = File('$path.part');
+    await part.writeAsBytes(bytes, flush: true);
+    await part.rename(path);
+    _cleanupStaleNnue(File(path));
+    return path;
+  }
+
+  /// 清理其他构建指纹的残留 NNUE 与未完成的 .part（尽力而为，失败不影响启动）
+  static void _cleanupStaleNnue(File keep) {
+    try {
+      for (final entity in Directory.systemTemp.listSync()) {
+        final name = entity.path.split(Platform.pathSeparator).last;
+        final isNnue = name.startsWith('pikafish-') &&
+            (name.endsWith('.nnue') || name.endsWith('.nnue.part'));
+        if (entity is File && isNnue && entity.path != keep.path) {
+          try {
+            entity.deleteSync();
+          } catch (_) {
+            // 单个文件删除失败（被占用等）：跳过，下次启动再清
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   /// 请求引擎走棋（排队串行执行）。

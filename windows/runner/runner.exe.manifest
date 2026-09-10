@@ -3,6 +3,10 @@
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!-- 进程 ANSI 代码页切换为 UTF-8（Win10 1903+，旧系统自动忽略）：
+           引擎经 stdin 接收的 NNUE 临时路径位于系统 Temp（含用户名），
+           用户名含本机代码页无法表示的字符时，窄字符 fopen 才能正确打开 UTF-8 路径 -->
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
     </windowsSettings>
   </application>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
