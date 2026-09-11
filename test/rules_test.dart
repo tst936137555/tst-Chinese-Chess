@@ -291,4 +291,93 @@ void main() {
       expect(longCheckSide([false, false, false, false, false], 3, 5), isNull);
     });
   });
+
+  group('半回合计数与自然限着', () {
+    test('非吃子步推进计数，吃子步清零', () {
+      final b = Board();
+      expect(b.halfmoveClock, 0);
+      b.makeMove(Move(7, 7, 4, 7)); // 炮二平五，无吃子
+      expect(b.halfmoveClock, 1);
+      // 黑卒 (4,5) 吃红兵 (4,4)
+      final c = Board.fromFen('4k4/9/9/9/4P4/4p4/9/9/9/4K4 b - - 12 6');
+      expect(c.halfmoveClock, 12);
+      c.makeMove(Move(4, 5, 4, 4));
+      expect(c.halfmoveClock, 0);
+    });
+
+    test('FEN 着法计数字段往返一致', () {
+      final b = Board.fromFen('4k4/9/9/9/9/9/9/9/9/4K4 w - - 23 45');
+      expect(b.halfmoveClock, 23);
+      expect(b.fen, '4k4/9/9/9/9/9/9/9/9/4K4 w - - 23 45');
+      final b2 = Board.fromFen(b.fen);
+      expect(b2.halfmoveClock, 23);
+    });
+
+    test('合法走法探测不污染半回合计数', () {
+      final b = Board();
+      b.makeMove(Move(7, 7, 4, 7)); // clock = 1
+      b.legalMoves(); // 内部多次 make/undo 探测
+      expect(b.halfmoveClock, 1);
+    });
+
+    test('60 回合（120 半回合）无吃子判定自然限着', () {
+      final b = Board();
+      const up = Move(0, 9, 0, 8), down = Move(0, 8, 0, 9);
+      for (var i = 0; i < 119; i++) {
+        b.makeMove(i.isEven ? up : down);
+      }
+      expect(b.halfmoveClock, 119);
+      expect(b.isNaturalDraw, isFalse);
+      b.makeMove(down); // 第 120 半回合：车回到原位，仍无吃子
+      expect(b.halfmoveClock, Board.naturalDrawHalfmoves);
+      expect(b.isNaturalDraw, isTrue);
+      // 回合计数：120 半回合 = 60 回合，回合数 61
+      expect(b.fen, endsWith('120 61'));
+    });
+  });
+
+  group('Zobrist 增量哈希', () {
+    test('走子后哈希与全量重算一致', () {
+      final b = Board();
+      b.makeMove(Move(7, 7, 4, 7));
+      expect(b.positionHash, Board.fromFen(b.fen).positionHash);
+      b.makeMove(Move(7, 0, 6, 2));
+      expect(b.positionHash, Board.fromFen(b.fen).positionHash);
+    });
+
+    test('undoMove 精确还原哈希（含吃子走法）', () {
+      final b = Board();
+      final h0 = b.positionHash;
+      final m = Move(7, 7, 4, 7);
+      b.makeMove(m);
+      expect(b.positionHash, isNot(h0));
+      b.undoMove(m, null);
+      expect(b.positionHash, h0);
+
+      final c = Board.fromFen('4k4/9/9/9/4P4/4p4/9/9/9/4K4 b - - 0 1');
+      final captured = c.pieceAt(4, 4);
+      final hc = c.positionHash;
+      c.makeMove(Move(4, 5, 4, 4));
+      c.undoMove(Move(4, 5, 4, 4), captured);
+      expect(c.positionHash, hc);
+    });
+
+    test('不同局面 / 不同行棋方哈希不同', () {
+      final red = Board();
+      final parts = Board.startFen.split(' ');
+      parts[1] = 'b';
+      expect(Board.fromFen(parts.join(' ')).positionHash,
+          isNot(red.positionHash));
+      final moved = Board()..makeMove(Move(7, 7, 4, 7));
+      expect(moved.positionHash, isNot(red.positionHash));
+    });
+
+    test('cloneFrom 保留哈希与着法计数', () {
+      final b = Board()..makeMove(Move(7, 7, 4, 7));
+      final c = Board.cloneFrom(b);
+      expect(c.positionHash, b.positionHash);
+      expect(c.halfmoveClock, b.halfmoveClock);
+      expect(c.fen, b.fen);
+    });
+  });
 }

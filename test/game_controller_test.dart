@@ -24,6 +24,10 @@ class FakeEngineClient implements EngineClient {
   Completer<EngineResult>? thinkGate;
   Completer<AnalysisResult>? analyzeGate;
 
+  /// 非空时按序应答（自然限着等需整段走法序列的用例），耗尽后回落 [thinkMoveUci]
+  List<String> thinkMoves = const [];
+  int _thinkMoveIdx = 0;
+
   /// analyze() 的固定应答
   AnalysisResult analyzeResult =
       const AnalysisResult(scoreCp: 30, bestMove: 'h2e2', pvMoves: ['h2e2']);
@@ -42,7 +46,10 @@ class FakeEngineClient implements EngineClient {
     if (failThink) throw const EngineUnavailableException('伪造引擎故障');
     final gate = thinkGate;
     if (gate != null) return gate.future;
-    return EngineResult(move: Move.fromUci(thinkMoveUci), scoreCp: thinkScoreCp);
+    final uci = _thinkMoveIdx < thinkMoves.length
+        ? thinkMoves[_thinkMoveIdx++]
+        : thinkMoveUci;
+    return EngineResult(move: Move.fromUci(uci), scoreCp: thinkScoreCp);
   }
 
   @override
@@ -90,12 +97,54 @@ Future<SharedPreferences> _freshPrefs() async {
   return SharedPreferences.getInstance();
 }
 
+/// 生成一条无吃子、无重复局面的走法序列（DFS：每步选第一条
+/// 走到未访问局面的合法无吃子走法），供自然限着用例驱动 120 半回合。
+List<Move> _wanderLine(Board board, int plies) {
+  final path = <Move>[];
+  final seen = <int>{board.positionHash};
+
+  bool dfs(Board b) {
+    if (path.length >= plies) return true;
+    for (final m in b.legalMoves()) {
+      if (b.pieceAt(m.toFile, m.toRank) != null) continue; // 无吃子
+      final captured = b.pieceAt(m.toFile, m.toRank);
+      b.makeMove(m);
+      if (seen.contains(b.positionHash)) {
+        b.undoMove(m, captured);
+        continue;
+      }
+      seen.add(b.positionHash);
+      path.add(m);
+      if (dfs(b)) return true;
+      path.removeLast();
+      seen.remove(b.positionHash);
+      b.undoMove(m, captured);
+    }
+    return false;
+  }
+
+  if (!dfs(board)) throw StateError('未找到 $plies 步的无吃子无重复序列');
+  return path;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   tearDown(() async {
+    // Windows 下归档异步写入可能仍持有句柄，删除短暂重试避免偶发 errno 32
     for (final d in _tempDirs) {
-      if (await d.exists()) await d.delete(recursive: true);
+      for (var attempt = 0; attempt < 5; attempt++) {
+        if (!await d.exists()) break;
+        try {
+          await d.delete(recursive: true);
+          break;
+        } on FileSystemException catch (e) {
+          if (attempt == 4) rethrow;
+          // ignore: avoid_print
+          print('临时目录清理重试 ${attempt + 1}/5: ${e.path}');
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      }
     }
     _tempDirs.clear();
   });
@@ -281,6 +330,25 @@ void main() {
     await c.endGameByScore();
     await c.flushArchives();
     expect(c.status, GameStatus.redWin);
+  });
+
+  test('60 回合未吃子：自然限着判和', () async {
+    // 生成 120 半回合无吃子、无重复局面的走法序列；
+    // 偶数下标为用户走法，奇数下标由伪造引擎按序应答
+    final line = _wanderLine(Board(), Board.naturalDrawHalfmoves);
+    final engine = FakeEngineClient()
+      ..thinkMoves = [for (var i = 1; i < line.length; i += 2) line[i].uci];
+    final c = await _newController(engine);
+
+    for (var i = 0; i < line.length; i += 2) {
+      if (c.status != GameStatus.playing) break;
+      final moved = c.tryMove(line[i]);
+      expect(moved, isTrue, reason: '第 ${i ~/ 2 + 1} 回合用户走法 ${line[i].uci}');
+      await _settle();
+    }
+
+    expect(c.status, GameStatus.draw);
+    expect(c.endReason, '双方 60 回合未吃子，自然限着作和');
   });
 
   test('提示失败时展示引擎不可用提示', () async {

@@ -4,6 +4,46 @@
 /// 走法格式采用 UCI 风格，如 h2e2。
 library;
 
+import 'dart:typed_data';
+
+/// Zobrist 局面哈希随机表：固定种子的 xorshift64* 生成，
+/// 同一棋盘 + 行棋方状态在任何进程/平台下哈希恒定。
+/// 供 [Board.makeMove]/[Board.undoMove] 以 O(1) 增量维护局面键，
+/// 重复局面检测不再全量解析 FEN（64 位空间内单局碰撞概率可忽略）。
+final class _Zobrist {
+  /// 键数量：7 类棋子 × 2 色 × 90 格，末位 1 个为行棋方键
+  static final Int64List _keys = _build();
+
+  /// 行棋方键：红方行棋时异或之（与 [Board._computeHash] 约定一致）
+  static final int sideKey = _keys[_keys.length - 1];
+
+  /// 棋子位于 (file, rank) 的键
+  static int key(Piece p, int file, int rank) {
+    final typeIdx = switch (p.type) {
+      PieceType.king => 0,
+      PieceType.advisor => 1,
+      PieceType.elephant => 2,
+      PieceType.horse => 3,
+      PieceType.rook => 4,
+      PieceType.cannon => 5,
+      PieceType.pawn => 6,
+    };
+    return _keys[(typeIdx * 2 + (p.isRed ? 0 : 1)) * 90 + rank * 9 + file];
+  }
+
+  static Int64List _build() {
+    final t = Int64List(14 * 90 + 1);
+    var s = 0x9E3779B97F4A7C15; // 黄金分割常数种子
+    for (var i = 0; i < t.length; i++) {
+      s ^= s >> 12;
+      s ^= s << 25;
+      s ^= s >> 27;
+      t[i] = s * 0x2545F4914F6CDD1D;
+    }
+    return t;
+  }
+}
+
 /// 棋子类型
 enum PieceType {
   king('k'),
@@ -95,6 +135,28 @@ class Board {
   /// 轮到红方走则为 true
   bool redToMove = true;
 
+  /// 半回合计数：自最近一次吃子以来的半回合数（自然限着用，吃子清零）
+  int _halfmoveClock = 0;
+
+  /// 回合数（黑方走完后 +1，标准 FEN 字段）
+  int _fullmoveNumber = 1;
+
+  /// 局面 Zobrist 哈希（棋盘 + 行棋方，不含着法计数）。
+  /// makeMove/undoMove 增量维护，_loadFen 全量重算，undoMove 不逆推半回合计数。
+  int _hash = 0;
+
+  /// 局面哈希（供重复局面检测 O(1) 取键）
+  int get positionHash => _hash;
+
+  /// 半回合计数（自最近一次吃子以来的半回合数）
+  int get halfmoveClock => _halfmoveClock;
+
+  /// 自然限着：双方连续 60 回合（120 半回合）无吃子判和（中象规则自然限着）
+  static const naturalDrawHalfmoves = 120;
+
+  /// 是否已达自然限着（60 回合无吃子）
+  bool get isNaturalDraw => _halfmoveClock >= naturalDrawHalfmoves;
+
   /// 局面 FEN
   String get fen {
     final sb = StringBuffer();
@@ -115,7 +177,7 @@ class Board {
       if (empty > 0) sb.write(empty);
       if (rank < 9) sb.write('/');
     }
-    sb.write(' ${redToMove ? 'w' : 'b'} - - 0 1');
+    sb.write(' ${redToMove ? 'w' : 'b'} - - $_halfmoveClock $_fullmoveNumber');
     return sb.toString();
   }
 
@@ -133,6 +195,9 @@ class Board {
       _squares[i] = other._squares[i];
     }
     redToMove = other.redToMove;
+    _halfmoveClock = other._halfmoveClock;
+    _fullmoveNumber = other._fullmoveNumber;
+    _hash = other._hash;
   }
 
   /// 标准初始局面 FEN（公开供重复判定等使用）
@@ -170,22 +235,65 @@ class Board {
       if (file != 9) throw ArgumentError('FEN 行长度错误: ${ranks[rank]}');
     }
     redToMove = parts.length < 2 || parts[1] == 'w';
+    // 着法计数字段（半回合数 / 回合数）：缺失或非法时取默认值，
+    // 兼容旧存档中恒为 "0 1" 的历史 FEN
+    _halfmoveClock = parts.length > 4 ? int.tryParse(parts[4]) ?? 0 : 0;
+    _fullmoveNumber = parts.length > 5 ? int.tryParse(parts[5]) ?? 1 : 1;
+    _hash = _computeHash();
   }
 
-  /// 执行走法（须为合法走法）
+  /// 全量计算局面 Zobrist 哈希（_loadFen 用；增量维护见 makeMove/undoMove）
+  int _computeHash() {
+    var h = 0;
+    for (int rank = 0; rank < 10; rank++) {
+      for (int file = 0; file < 9; file++) {
+        final p = _squares[rank * 9 + file];
+        if (p != null) h ^= _Zobrist.key(p, file, rank);
+      }
+    }
+    if (redToMove) h ^= _Zobrist.sideKey;
+    return h;
+  }
+
+  /// 执行走法（须为合法走法）。
+  /// 同步增量维护 Zobrist 哈希与半回合计数（吃子清零，其余 +1）。
   void makeMove(Move m) {
     final p = pieceAt(m.fromFile, m.fromRank);
+    final captured = pieceAt(m.toFile, m.toRank);
+    if (p != null) {
+      _hash ^= _Zobrist.key(p, m.fromFile, m.fromRank);
+      _hash ^= _Zobrist.key(p, m.toFile, m.toRank);
+    }
+    if (captured != null) {
+      _hash ^= _Zobrist.key(captured, m.toFile, m.toRank);
+      _halfmoveClock = 0;
+    } else {
+      _halfmoveClock++;
+    }
     _set(m.toFile, m.toRank, p);
     _set(m.fromFile, m.fromRank, null);
     redToMove = !redToMove;
+    _hash ^= _Zobrist.sideKey;
+    if (redToMove) _fullmoveNumber++; // 黑方走完，回合数 +1
   }
 
-  /// 撤销走法并还原被吃棋子
+  /// 撤销走法并还原被吃棋子。
+  /// Zobrist 哈希与回合数精确还原；半回合计数无法增量逆推
+  /// （走子前值未知），不在此还原——生产对局路径经 FEN 重建棋盘，
+  /// 合法性探测（isLegal）自行保存/还原计数。
   void undoMove(Move m, Piece? captured) {
     final p = pieceAt(m.toFile, m.toRank)!;
+    // 与 makeMove 的增量更新逐项异或（异或满足交换律，顺序无关）
+    _hash ^= _Zobrist.key(p, m.toFile, m.toRank);
+    _hash ^= _Zobrist.key(p, m.fromFile, m.fromRank);
+    if (captured != null) {
+      _hash ^= _Zobrist.key(captured, m.toFile, m.toRank);
+    }
     _set(m.fromFile, m.fromRank, p);
     _set(m.toFile, m.toRank, captured);
     redToMove = !redToMove;
+    _hash ^= _Zobrist.sideKey;
+    if (!redToMove) _fullmoveNumber--; // 撤销的是黑方走法
   }
 
   /// 查找指定某方将/帅的位置，返回 (file, rank)
@@ -407,15 +515,19 @@ class Board {
     return result;
   }
 
-  /// 走法是否合法（不送将）
+  /// 走法是否合法（不送将）。
+  /// 探测用 makeMove/undoMove 会推进半回合计数，这里保存/还原，
+  /// 保证合法走法生成不污染自然限着计数。
   bool isLegal(Move m) {
     final p = pieceAt(m.fromFile, m.fromRank);
     if (p == null || p.isRed != redToMove) return false;
     if (!_pieceMoves(m.fromFile, m.fromRank).contains(m)) return false;
+    final clockBefore = _halfmoveClock;
     final captured = pieceAt(m.toFile, m.toRank);
     makeMove(m);
     final bad = _inCheck(this, !redToMove); // 检查走棋方（已翻转）是否被将
     undoMove(m, captured);
+    _halfmoveClock = clockBefore;
     return !bad;
   }
 
@@ -436,14 +548,15 @@ class Board {
 /// 重复局面判和与长将判负。
 ///
 /// [positionKeys] 为局面键序列：下标 0 = 初始局面，k = 走完第 k 步后；
-/// 键须为「棋盘 FEN + 行棋方」两段（不含着法计数等无关字段）。
-/// [givesChecks][k] 表示第 k 步（0 基）走完后对方是否被将军。
+/// 键须唯一标识「棋盘 + 行棋方」组合（Zobrist 哈希或 FEN 前两段皆可，
+/// 不含着法计数等无关字段）。[givesChecks][k] 表示第 k 步（0 基）走完后
+/// 对方是否被将军。
 ///
 /// 同一局面出现 3 次即触发：取最后一个完整重复周期分析——
 /// 周期内若一方所有着法均为将军而对方并非如此，则该方长将判负；
 /// 双方均长将（或均非长将）判和。未重复 3 次返回 null（对局继续）。
 GameStatus? repetitionStatus(
-    List<String> positionKeys, List<bool> givesChecks) {
+    List<Object> positionKeys, List<bool> givesChecks) {
   if (positionKeys.length < 5) return null; // 3 次同局面至少需 4 步
   final last = positionKeys.last;
   final occurrences = <int>[];
@@ -463,7 +576,7 @@ GameStatus? repetitionStatus(
 }
 
 /// 当前行棋后局面（键序列最后一项）的出现次数，供「距判和还差一次」预警。
-int repetitionCount(List<String> positionKeys) {
+int repetitionCount(List<Object> positionKeys) {
   if (positionKeys.isEmpty) return 0;
   final last = positionKeys.last;
   var n = 0;

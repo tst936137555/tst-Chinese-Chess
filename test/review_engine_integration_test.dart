@@ -61,6 +61,7 @@ void main() {
         capturedPiece: captured,
         notation: notation,
         fenAfter: board.fen,
+        posHash: board.positionHash,
       ));
     }
 
@@ -110,6 +111,7 @@ void main() {
         capturedPiece: captured,
         notation: notation,
         fenAfter: board.fen,
+        posHash: board.positionHash,
       ));
     }
 

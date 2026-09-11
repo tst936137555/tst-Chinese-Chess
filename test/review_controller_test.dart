@@ -24,6 +24,7 @@ List<HistoryEntry> _buildHistory(List<String> ucis) {
       capturedPiece: captured?.fenChar,
       notation: notation,
       fenAfter: board.fen,
+      posHash: board.positionHash,
       givesCheck: board.inCheck,
     ));
   }

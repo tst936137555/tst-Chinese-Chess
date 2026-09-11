@@ -33,10 +33,14 @@ class ReviewScreen extends StatefulWidget {
     super.key,
     required this.history,
     required this.userPlaysRed,
+    this.engine,
   });
 
   final List<HistoryEntry> history;
   final bool userPlaysRed;
+  /// 测试注入伪造引擎；空则使用全局单例（生产路径不受影响）
+  @visibleForTesting
+  final EngineClient? engine;
 
   @override
   State<ReviewScreen> createState() => _ReviewScreenState();
@@ -49,7 +53,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   void initState() {
     super.initState();
     _review = ReviewController(
-      engine: PikafishEngine.instance,
+      engine: widget.engine ?? PikafishEngine.instance,
       history: widget.history,
       userPlaysRed: widget.userPlaysRed,
     );

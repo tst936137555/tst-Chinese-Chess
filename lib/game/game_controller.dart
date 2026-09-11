@@ -20,6 +20,7 @@ class HistoryEntry {
     required this.capturedPiece,
     required this.notation,
     required this.fenAfter,
+    required this.posHash,
     this.givesCheck = false,
   });
 
@@ -28,6 +29,10 @@ class HistoryEntry {
   final String? capturedPiece;
   final String notation;
   final String fenAfter;
+
+  /// 走完此步后的局面 Zobrist 哈希（棋盘 + 行棋方），
+  /// 供重复局面检测 O(1) 取键，不再逐条解析 FEN
+  final int posHash;
 
   /// 该步是否将军对方（供长将判定；存档回放时由 _applyMove 重算）
   final bool givesCheck;
@@ -66,11 +71,15 @@ class GameController extends ChangeNotifier {
   final File? archiveFile;
 
   /// 页面销毁后不再处理异步结果
-  bool disposed = false;
+  bool _disposed = false;
+
+  /// 是否已销毁（外部只读，测试断言用）
+  @visibleForTesting
+  bool get disposed => _disposed;
 
   @override
   void dispose() {
-    disposed = true;
+    _disposed = true;
     super.dispose();
   }
 
@@ -162,7 +171,7 @@ class GameController extends ChangeNotifier {
         movetimeMs: 3000,
       );
       // 页面已销毁或局面已变化：过期建议直接丢弃
-      if (disposed ||
+      if (_disposed ||
           (_history.isEmpty ? '' : _history.last.fenAfter) != fenAtRequest) {
         return;
       }
@@ -181,7 +190,7 @@ class GameController extends ChangeNotifier {
       debugPrint('提示获取失败: $e');
     } finally {
       hinting = false;
-      if (!disposed) notifyListeners();
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -240,6 +249,7 @@ class GameController extends ChangeNotifier {
       capturedPiece: captured?.fenChar,
       notation: notation,
       fenAfter: _board.fen,
+      posHash: _board.positionHash,
       givesCheck: givesCheck,
     ));
     _updateStatus();
@@ -249,6 +259,9 @@ class GameController extends ChangeNotifier {
       unawaited(_archiveGame());
     }
   }
+
+  /// 初始局面哈希（Zobrist 表确定性生成，跨实例一致）
+  static final int _startPosHash = Board().positionHash;
 
   void _updateStatus() {
     ruleNotice = null;
@@ -262,12 +275,13 @@ class GameController extends ChangeNotifier {
       _status = _board.redToMove ? GameStatus.blackWin : GameStatus.redWin;
       return;
     }
-    // 重复局面判和 / 长将判负（局面 = 棋盘 + 行棋方）。
+    // 重复局面判和 / 长将判负：键为 Zobrist 哈希（棋盘 + 行棋方），
+    // 逐条存于历史条目，随走法增量产生，不再全量解析 FEN。
     // 序列含初始局面，避免"绕回开局局面"的循环漏判。
-    final keys = <String>[_posKey(Board.startFen)];
+    final keys = <int>[_startPosHash];
     final checks = <bool>[];
     for (final e in _history) {
-      keys.add(_posKey(e.fenAfter));
+      keys.add(e.posHash);
       checks.add(e.givesCheck);
     }
     final rep = repetitionStatus(keys, checks);
@@ -281,7 +295,13 @@ class GameController extends ChangeNotifier {
       };
       return;
     }
-    // 预警：当前局面第 2 次出现（距判和 / 判负生效还差一次重复）
+    // 自然限着：双方连续 60 回合（120 半回合）无吃子，判和
+    if (_board.isNaturalDraw) {
+      _status = GameStatus.draw;
+      endReason = '双方 60 回合未吃子，自然限着作和';
+      return;
+    }
+    // 预警一：当前局面第 2 次出现（距判和 / 判负生效还差一次重复）
     final last = keys.last;
     var prev = -1; // 上一次出现的位置
     for (var i = 0; i < keys.length - 1; i++) {
@@ -294,11 +314,14 @@ class GameController extends ChangeNotifier {
         'b' => '黑方长将！再重复一次将判黑方负',
         _ => '局面已重复 2 次，再重复一次将判和',
       };
+      return;
+    }
+    // 预警二：接近自然限着（≥50 回合未吃子）
+    final rounds = _board.halfmoveClock ~/ 2;
+    if (rounds >= 50) {
+      ruleNotice = '双方已 $rounds 回合未吃子，累计 60 回合将判和';
     }
   }
-
-  /// 局面键：棋盘 FEN + 行棋方（不含着法计数等无关字段）
-  static String _posKey(String fen) => fen.split(' ').take(2).join(' ');
 
   /// 若轮到 AI 且对局进行中，请求引擎走棋
   Future<void> _maybeEngineMove() async {
@@ -307,7 +330,7 @@ class GameController extends ChangeNotifier {
     // 若已有一次引擎思考在跑（如恢复对局 + 新开局连续触发），复用等待
     if (_thinkToken case final token) {
       await token;
-      if (disposed || _status != GameStatus.playing) return;
+      if (_disposed || _status != GameStatus.playing) return;
       if (_board.redToMove == userPlaysRed) return;
     }
     final future = _doThink();
@@ -327,7 +350,7 @@ class GameController extends ChangeNotifier {
       final result = await engine.think(Board.cloneFrom(_board), _level);
       engineNotice = null;
       engineScore = result.scoreCp;
-      if (!disposed &&
+      if (!_disposed &&
           _status == GameStatus.playing &&
           _board.redToMove != userPlaysRed &&
           _board.fen == fenAtRequest &&
@@ -342,7 +365,7 @@ class GameController extends ChangeNotifier {
       debugPrint('引擎错误: $e');
     } finally {
       thinking = false;
-      if (!disposed) notifyListeners();
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -394,7 +417,7 @@ class GameController extends ChangeNotifier {
       unawaited(_archiveGame());
     } finally {
       ending = false;
-      if (!disposed) notifyListeners();
+      if (!_disposed) notifyListeners();
       _saveState();
     }
   }
@@ -449,7 +472,7 @@ class GameController extends ChangeNotifier {
                   'fen': e.fenAfter,
                 }).toList(),
           ));
-      if (!ok && !disposed) {
+      if (!ok && !_disposed) {
         archiveNotice = '棋谱保存失败';
         notifyListeners();
       }
@@ -463,7 +486,7 @@ class GameController extends ChangeNotifier {
   /// 并等待在飞归档落盘，避免归档被进程终止打断
   Future<void> saveNow() async {
     // 页面已销毁时状态不再有效，跳过
-    if (disposed) return;
+    if (_disposed) return;
     await _saveState();
     await flushArchives();
   }
@@ -510,19 +533,9 @@ class GameController extends ChangeNotifier {
       _status = GameStatus.playing;
       final hist = data['history'] as List;
       for (final e in hist) {
-        final uci = e['uci'] as String;
-        if (uci.length < 4) {
-          _board = Board();
-          _history = [];
-          _status = GameStatus.playing;
-          return false;
-        }
-        final m = Move(
-          uci.codeUnitAt(0) - 'a'.codeUnitAt(0),
-          9 - int.parse(uci[1]),
-          uci.codeUnitAt(2) - 'a'.codeUnitAt(0),
-          9 - int.parse(uci[3]),
-        );
+        // Move.fromUci 严格校验格式，非法字符/越界直接抛 FormatException，
+        // 由外层 catch 统一丢弃恢复（与旧手工解析的长度检查等效且更严）
+        final m = Move.fromUci(e['uci'] as String);
         if (!_board.isLegal(m)) {
           // 数据损坏时放弃恢复
           _board = Board();

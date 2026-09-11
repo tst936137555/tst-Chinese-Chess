@@ -81,10 +81,19 @@ class ReviewController extends ChangeNotifier {
   /// 控制器已销毁（销毁后不再通知监听者）
   bool _disposed = false;
 
+  /// 局面缓存：cursor 变化时才重新解析 FEN，避免 rebuild/拖动进度条时每帧重复解析
+  Board? _cachedBoard;
+  int _cachedCursor = -1;
+
   /// 当前位置的局面
   Board get board {
-    if (cursor == 0) return Board();
-    return Board.fromFen(history[cursor - 1].fenAfter);
+    if (_cachedCursor != cursor) {
+      _cachedCursor = cursor;
+      _cachedBoard = cursor == 0
+          ? Board()
+          : Board.fromFen(history[cursor - 1].fenAfter);
+    }
+    return _cachedBoard!;
   }
 
   /// 当前显示的走法（最近一步）

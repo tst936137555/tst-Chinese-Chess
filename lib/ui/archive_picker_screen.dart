@@ -34,8 +34,9 @@ List<HistoryEntry> _historyFromArchive(ArchivedGame game) {
     }
     if (!board.isLegal(m)) break;
     final fen = e['fen'] as String? ?? '';
+    final Board after;
     try {
-      Board.fromFen(fen); // 仅校验可解析
+      after = Board.fromFen(fen); // 解析即校验
     } catch (_) {
       break;
     }
@@ -44,6 +45,7 @@ List<HistoryEntry> _historyFromArchive(ArchivedGame game) {
       capturedPiece: e['captured'] as String?,
       notation: e['notation'] as String? ?? uci,
       fenAfter: fen,
+      posHash: after.positionHash,
     ));
     board.makeMove(m);
   }
@@ -188,67 +190,46 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
     ));
   }
 
+  /// 规则说明弹窗：棋谱保留规则 + 左滑删除操作说明
+  void _showRulesDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => XqDialog(
+        title: '规则说明',
+        actions: [
+          XqButton(
+            label: '我知道了',
+            variant: XqButtonVariant.primary,
+            onPressed: () => Navigator.pop(ctx),
+          ),
+        ],
+        child: const Text(
+          '· 棋谱最多保留100局，收藏上限50局，超出自动移除最早对局，收藏棋谱不会被自动移除。\n\n'
+          '· 在棋谱列表中向左滑动任意一局即可删除该棋谱，删除前会弹出确认框，删除后不可恢复。',
+          style: TextStyle(fontSize: 14, height: 1.7),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // FittedBox：空间不足时整体等比缩小，避免大字体下标题被裁切/压扁
-        title: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('复盘棋谱'),
-              Text(
-                '棋谱最多保留100局，收藏上限50局，超出自动移除最早对局，收藏棋谱不会被自动移除',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Colors.white.withValues(alpha: 0.75),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
-        ),
+        title: const Text('复盘棋谱'),
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: '清空棋谱',
-            onPressed: () async {
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => XqDialog(
-                  title: '清空棋谱',
-                  actions: [
-                    XqButton(
-                      label: '取消',
-                      variant: XqButtonVariant.tonal,
-                      onPressed: () => Navigator.pop(ctx, false),
-                    ),
-                    XqButton(
-                      label: '清空',
-                      variant: XqButtonVariant.primary,
-                      onPressed: () => Navigator.pop(ctx, true),
-                    ),
-                  ],
-                  child: const Text(
-                    '确定删除全部历史棋谱吗？此操作不可恢复。',
-                    style: TextStyle(fontSize: 14, height: 1.7),
-                  ),
-                ),
-              );
-              if (ok == true && context.mounted) {
-                final file = await GameArchive.defaultArchiveFile();
-                if (await GameArchive.clear(file)) {
-                  _load();
-                } else if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('清空失败，请重试')),
-                  );
-                }
-              }
-            },
+          // 规则说明按钮：替代原副标题小字，点击弹窗查看
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: TextButton.icon(
+              onPressed: () => _showRulesDialog(context),
+              icon: const Icon(Icons.info_outline, size: 18),
+              label: const Text('规则说明', style: TextStyle(fontSize: 13)),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+              ),
+            ),
           ),
         ],
       ),
