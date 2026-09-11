@@ -1,4 +1,4 @@
-﻿﻿﻿{
+{
   "_说明": "引擎/NNUE/字体大文件的唯一事实源：版本钉住 + 上游官方 release 直链 + SHA256 校验。文件本体不入库（见 .gitignore），由 tool/fetch_engine.ps1 按 CI 与本地共用的本清单下载放置。下载顺序：上游 archiveUrl → mirrorUrl（本仓库镜像 release，防上游下架，由 .github/workflows/engine-mirror.yml 自动转存维护）。升级引擎 = 一次性更新本清单（tag/URL/各 sha256）并本地验证。哈希为对应文件字节级 SHA256（大写十六进制）。镜像资产采用版本化命名（如 Pikafish-2026-09-06.7z）：新版本传新资产，旧资产无人引用后可删，不影响任何已存在的 clone。",
   "mirror": {
     "repo": "tst936137555/tst-Chinese-Chess",

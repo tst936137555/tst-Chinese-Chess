@@ -40,6 +40,11 @@ jobs:
           set -euo pipefail
           MANIFEST="tool/engine_manifest.json"
 
+          # 防御：剥离 manifest 开头的 UTF-8 BOM（PowerShell 5.1 的 UTF8 编码
+          # 每次写入都会加一个 BOM，累积后 jq 报 parse error；PS 自身容忍，
+          # 但 Linux 侧 jq 不容忍——统一在读取前清理）
+          python3 -c "import sys; p=sys.argv[1]; d=open(p,'rb').read().lstrip(b'\xef\xbb\xbf'); open(p,'wb').write(d)" "$MANIFEST"
+
           mirror_tag=$(jq -r '.mirror.tag' "$MANIFEST")
           mirror_repo=$(jq -r '.mirror.repo' "$MANIFEST")
           if [ "$mirror_repo" != "$GITHUB_REPOSITORY" ]; then
