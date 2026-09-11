@@ -145,12 +145,14 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(height: 26),
               // 复盘棋谱入口
-              XqButton(
-                label: '复盘棋谱',
-                icon: Icons.history,
-                variant: XqButtonVariant.outline,
-                height: 44,
-                onPressed: () => openReviewArchive(context),
+              SizedBox(
+                width: double.infinity,
+                child: XqButton(
+                  label: '复盘棋谱',
+                  icon: Icons.history,
+                  variant: XqButtonVariant.outline,
+                  onPressed: () => openReviewArchive(context),
+                ),
               ),
               const SizedBox(height: 40),
               // 版本标注

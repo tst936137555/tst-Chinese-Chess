@@ -1,6 +1,8 @@
 /// 棋盘绘制与交互组件
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -72,8 +74,11 @@ class BoardView extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       final size = constraints.biggest;
-      // 9 列 10 行，网格线间距
-      final cell = size.width / 10;
+      // 交点网格 9 列 × 10 行，四周各留 1 格：棋盘占 10 格宽 × 11 格高。
+      // 格距取宽高两个可行解的较小值：纵向空间不足（如复盘页下方有信息卡、
+      // 折线图与按钮）时按高度收缩并由父级居中，避免底线棋子与纵线号被裁切。
+      final cell = math.min(size.width / 10, size.height / 11);
+      final boardWidth = cell * 10;
       final boardHeight = cell * 11;
       return GestureDetector(
         onTapUp: (details) {
@@ -89,7 +94,7 @@ class BoardView extends StatelessWidget {
           onTapSquare(file, rank);
         },
         child: SizedBox(
-          width: size.width,
+          width: boardWidth,
           height: boardHeight,
           child: CustomPaint(
             painter: _BoardPainter(

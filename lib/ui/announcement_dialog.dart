@@ -86,31 +86,29 @@ void showAnnouncementDialog(BuildContext context) {
             style: TextStyle(fontSize: 13, height: 1.6),
           ),
           const SizedBox(height: 8),
-          Row(
+          // 上下整行排列：弹窗宽度有限，左右平分会导致「NNUE 许可证」文字被截断
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: XqButton(
-                  label: 'GPLv3 全文',
-                  variant: XqButtonVariant.outline,
-                  height: 40,
-                  onPressed: () => _showLicenseText(
-                    ctx,
-                    title: 'GNU GPL v3.0',
-                    assetPath: 'assets/licenses/COPYING-pikafish.txt',
-                  ),
+              XqButton(
+                label: 'GPLv3 全文',
+                variant: XqButtonVariant.outline,
+                height: 40,
+                onPressed: () => _showLicenseText(
+                  ctx,
+                  title: 'GNU GPL v3.0',
+                  assetPath: 'assets/licenses/COPYING-pikafish.txt',
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: XqButton(
-                  label: 'NNUE 许可证',
-                  variant: XqButtonVariant.outline,
-                  height: 40,
-                  onPressed: () => _showLicenseText(
-                    ctx,
-                    title: 'NNUE License',
-                    assetPath: 'assets/licenses/NNUE-License.md',
-                  ),
+              const SizedBox(height: 8),
+              XqButton(
+                label: 'NNUE 许可证',
+                variant: XqButtonVariant.outline,
+                height: 40,
+                onPressed: () => _showLicenseText(
+                  ctx,
+                  title: 'NNUE License',
+                  assetPath: 'assets/licenses/NNUE-License.md',
                 ),
               ),
             ],
