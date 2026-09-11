@@ -1,0 +1,108 @@
+# 引擎镜像维护：把 manifest 钉住的上游资产转存到本仓库固定 tag（engine-mirror）
+# 的 Release 附件，作为上游下架/换文件时的回退下载源（fetch_engine.ps1 按
+# manifest 的 mirrorUrl 回退引用，二者 URL 由本工作流与 manifest 共同保证一致）。
+#
+# 设计要点：
+# - 固定单 release、版本化资产名（如 Pikafish-2026-09-06.7z）：引擎升级只需
+#   更新 manifest 后重跑本工作流，新版本传新资产；旧资产无人引用后可手动删除，
+#   不影响任何已存在的 clone（manifest 只认 URL + SHA256）。
+# - 幂等：已存在同名资产（字节一致）时跳过；同名但哈希不同则 --clobber 覆盖，
+#   保证镜像与 manifest 钉住的 SHA256 永远一致。
+# - 本工作流从上游官方 release 拉取并做总包 SHA256 校验后才转存——镜像的内容
+#   必须仍然来自上游，且与 CI/本地构建实际使用的字节完全相同。
+# - 触发：manifest 变更推送到 main/master（路径过滤）+ 手动 workflow_dispatch。
+name: Engine Mirror
+
+on:
+  push:
+    branches: [main, master]
+    paths: ['tool/engine_manifest.json']
+  workflow_dispatch:
+
+concurrency:
+  group: engine-mirror
+  cancel-in-progress: false # 串行执行，避免并发对同一 release 反复 clobber
+
+permissions:
+  contents: write # 创建/更新 engine-mirror Release 需要
+
+jobs:
+  sync:
+    name: Sync pinned assets to mirror release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Sync manifest-pinned assets (download → verify SHA256 → upload)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          MANIFEST="tool/engine_manifest.json"
+
+          mirror_tag=$(jq -r '.mirror.tag' "$MANIFEST")
+          mirror_repo=$(jq -r '.mirror.repo' "$MANIFEST")
+          if [ "$mirror_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "::notice::manifest.mirror.repo ($mirror_repo) 与当前仓库 ($GITHUB_REPOSITORY) 不一致，跳过（fork 场景下无需向自己仓库转存）"
+            exit 0
+          fi
+
+          # 确保 release 存在（幂等：已存在时 create 失败即可，继续上传附件）
+          gh release create "$mirror_tag" \
+            --title "Engine mirror" \
+            --notes "由 Engine Mirror 工作流自动维护：转存 tool/engine_manifest.json 钉住的上游引擎/NNUE/字体资产，作为上游下架时的回退下载源。请勿手动改动，资产清单以 manifest 为准。" \
+            --prerelease 2>/dev/null || echo "release $mirror_tag 已存在"
+
+          upload_one() {
+            # $1=上游URL $2=SHA256(可空) $3=镜像资产名（= manifest mirrorUrl 的 basename）
+            local url="$1" sha="$2" name="$3"
+            if gh release view "$mirror_tag" --json assets -q ".[].name" | grep -Fxq "$name"; then
+              echo "[跳过] $name（镜像已存在）"
+              return 0
+            fi
+            echo "[转存] $url → $name"
+            curl -fsSL --retry 3 -o "$name" "$url"
+            if [ -n "$sha" ] && [ "$sha" != "null" ]; then
+              echo "$sha  $name" | sha256sum -c -
+            fi
+            gh release upload "$mirror_tag" "$name" --clobber
+          }
+
+          # 资产名以 manifest 的 mirrorUrl basename 为唯一事实源：
+          # 版本化命名（Pikafish-2026-09-06.7z / LXGWWenKai-v1.522-Medium.ttf）
+          # 在 manifest 中书写，本工作流照此上传，末尾校验保证二者永远一致。
+
+          # Pikafish 7z 总包（NNUE/各平台引擎/许可证均从中解出，转存总包即可）
+          upload_one "$(jq -r '.pikafish.archiveUrl' "$MANIFEST")" \
+                     "$(jq -r '.pikafish.archiveSha256' "$MANIFEST")" \
+                     "$(basename "$(jq -r '.pikafish.mirrorUrl' "$MANIFEST")")"
+
+          # 字体（独立直链，单独转存）
+          upload_one "$(jq -r '.font.url' "$MANIFEST")" \
+                     "$(jq -r '.font.sha256' "$MANIFEST")" \
+                     "$(basename "$(jq -r '.font.mirrorUrl' "$MANIFEST")")"
+
+          echo "镜像资产："
+          gh release view "$mirror_tag" --json assets -q '.[] | "  \(.name)  \(.size) bytes"'
+
+      # 收尾校验：manifest 中每个 mirrorUrl 都应能在镜像 release 中命中
+      - name: Verify manifest mirror URLs match released assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          MANIFEST="tool/engine_manifest.json"
+          mirror_tag=$(jq -r '.mirror.tag' "$MANIFEST")
+          assets=$(gh release view "$mirror_tag" --json assets -q '.[].name')
+
+          check_url() {
+            # $1=manifest 中的 mirrorUrl
+            local name; name=$(basename "$1")
+            echo "$assets" | grep -Fxq "$name" \
+              && echo "[OK] $name" \
+              || { echo "::error::镜像 release 缺少资产：$name（URL：$1）"; exit 1; }
+          }
+
+          check_url "$(jq -r '.pikafish.mirrorUrl' "$MANIFEST")"
+          check_url "$(jq -r '.font.mirrorUrl' "$MANIFEST")"
+          echo "全部 mirrorUrl 均已就位。"

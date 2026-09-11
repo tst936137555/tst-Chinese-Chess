@@ -1,13 +1,15 @@
-﻿# =============================================================================
+﻿﻿﻿# =============================================================================
 # fetch_engine.ps1 — 按 tool/engine_manifest.json 下载并校验引擎/NNUE/字体资产
 #
 # 本地与 CI 共用同一脚本、同一清单：本地验证过的字节 = CI 打包的字节（SHA256 钉死）。
 # 重复运行零成本：目标文件已存在且哈希匹配清单时直接跳过。
+# 下载顺序：上游官方直链 → 本仓库镜像 release（manifest 的 mirrorUrl，
+# 防上游下架/换文件，镜像资产由 .github/workflows/engine-mirror.yml 转存维护）。
 #
 # 用法：
-#   ./tool/fetch_engine.ps1                  # 全部资产（core + 各平台引擎 + 许可证）
-#   ./tool/fetch_engine.ps1 -Target core     # 仅 NNUE + 字体（跑测试 / iOS 所需）
-#   ./tool/fetch_engine.ps1 -Target windows  # core + Windows 引擎 + 许可证
+#   ./tool/fetch_engine.ps1                  # 全部资产（core + 各平台引擎）
+#   ./tool/fetch_engine.ps1 -Target core     # NNUE + 字体 + 许可证（跑测试 / 所有平台构建所需）
+#   ./tool/fetch_engine.ps1 -Target windows  # core + Windows 引擎
 #   ./tool/fetch_engine.ps1 -Target android  # core + Android arm64 引擎
 #   ./tool/fetch_engine.ps1 -Target macos    # core + macOS 引擎
 #   -Force                                   # 忽略本地已有文件，重新下载/解压
@@ -45,12 +47,32 @@ function Find-7z {
 $cacheDir = Join-Path ([System.IO.Path]::GetTempPath()) 'pikafish-engine-cache'
 New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
 
-# 目标 → 资产键清单（font 随所有目标安装：任何构建/测试都需要）
+# 主 URL 失败（404/下架/网络异常）时依次尝试镜像 URL；全部失败才报错。
+# Invoke-WebRequest 对 4xx/5xx 会抛异常，正常进入回退；命中任一 URL 即返回。
+function Save-Url([string[]]$urls, [string]$outFile) {
+    $errors = @()
+    foreach ($u in ($urls | Where-Object { $_ })) {
+        try {
+            Write-Host "下载 $u"
+            Invoke-WebRequest -Uri $u -OutFile $outFile
+            return
+        }
+        catch {
+            $errors += "  $u`n    $($_.Exception.Message)"
+            # 下载中途断线可能留下半截文件，清理后试下一个源
+            Remove-Item $outFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+    throw "所有下载源均失败：`n$($errors -join "`n")"
+}
+
+# 目标 → 资产键清单（font 与许可证随所有目标安装：pubspec 将 NNUE / 字体 /
+# 许可证均声明为 Flutter 资产，任何平台的构建与测试都要求文件在位）
 $targets = @{
-    core    = @('nnue', 'font')
+    core    = @('nnue', 'font', 'license-gpl', 'license-nnue')
     windows = @('nnue', 'font', 'windows', 'license-gpl', 'license-nnue')
-    android = @('nnue', 'font', 'android-arm64')
-    macos   = @('nnue', 'font', 'macos')
+    android = @('nnue', 'font', 'android-arm64', 'license-gpl', 'license-nnue')
+    macos   = @('nnue', 'font', 'macos', 'license-gpl', 'license-nnue')
     all     = @('nnue', 'font', 'windows', 'android-arm64', 'macos',
                 'license-gpl', 'license-nnue')
 }
@@ -74,8 +96,7 @@ function Get-Archive {
         }
     }
     if ($needDownload) {
-        Write-Host "下载 $($pk.archiveUrl)"
-        Invoke-WebRequest -Uri $pk.archiveUrl -OutFile $cachedArchive
+        Save-Url @($pk.archiveUrl, $pk.mirrorUrl) $cachedArchive
     }
     $h = (Get-FileHash $cachedArchive -Algorithm SHA256).Hash
     Write-Host "总包 SHA256：$h"
@@ -125,8 +146,7 @@ function Install-Artifact([string]$key, [pscustomobject]$art) {
             if ($h -ne $art.sha256) { Write-Warning '缓存文件哈希不符，重新下载'; $need = $true }
         }
         if ($need) {
-            Write-Host "下载 $($art.url)"
-            Invoke-WebRequest -Uri $art.url -OutFile $cached
+            Save-Url @($art.url, $art.mirrorUrl) $cached
         }
         $h = (Get-FileHash $cached -Algorithm SHA256).Hash
         if ($h -ne $art.sha256) {

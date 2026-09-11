@@ -6,11 +6,13 @@
 #   1. 检出精确 tag 的 Pikafish 源码（与 tool/build_android_engine.sh 同版本）
 #   2. 应用 Makefile iOS 补丁（ios/EngineShim/pikafish_ios_makefile.patch）
 #   3. 以 -DUNIVERSAL_BINARY 编译 真机(iphoneos) + 模拟器(iphonesimulator) 两个
-#      arm64 静态库切片（含 C 适配层 pikafish_shim.cpp），lipo 合成单个 fat .a
+#      arm64 静态库切片（含 C 适配层 pikafish_shim.cpp），打成 xcframework
+#      （两切片同为 arm64，lipo 无法合并，xcframework 由 Xcode 按平台选切片）
 #   4. 向 ios/Runner.xcodeproj/project.pbxproj 幂等注入链接配置
-#      （libpikafish.a + -Wl,-force_load，防止 Dart FFI 符号被链接器裁剪）
+#      （libpikafish.xcframework 挂 Frameworks + per-sdk -Wl,-force_load，
+#      防止 Dart FFI 符号被链接器裁剪）
 #
-# 产物：ios/EngineBin/libpikafish.a
+# 产物：ios/EngineBin/libpikafish.xcframework
 # 之后即可 flutter run/build ios；未运行本脚本时 iOS 按现状优雅降级
 # （引擎功能如实报 EngineUnavailableException，其余功能不受影响）。
 #
@@ -58,7 +60,7 @@ case "$(uname -s)" in
   Darwin*) ;;
   *) die "本脚本仅支持 macOS（需 Xcode 构建引擎静态库）。当前系统：$(uname -s)" ;;
 esac
-for cmd in git make xcrun ar ranlib lipo python3; do
+for cmd in git make xcrun ar ranlib python3; do
   command -v "$cmd" >/dev/null 2>&1 || die "缺少 $cmd（请安装 Xcode Command Line Tools：xcode-select --install）"
 done
 for f in "$SHIM_DIR/pikafish_shim.cpp" "$SHIM_DIR/pikafish_shim.h" \
@@ -95,7 +97,7 @@ cp "$SHIM_DIR/pikafish_shim.cpp" "$SHIM_DIR/pikafish_shim.h" "$WORK/pikafish/src
 log "已复制 C 适配层到 src/（随引擎一同编译进静态库）"
 
 # ---------------------------------------------------------------------------
-# 3. 编译两个切片并合成 fat 静态库
+# 3. 编译两个 arm64 切片并打包为 xcframework
 #    注意：两次构建共享 src/ 对象目录，第二轮前必须 clean（make 不感知旗标变化）
 # ---------------------------------------------------------------------------
 build_slice() {
@@ -115,15 +117,22 @@ SIM_A="$WORK/libpikafish-iphonesim.a"
 build_slice iphoneos "$DEVICE_A"
 build_slice iphonesimulator "$SIM_A"
 
+# 真机/模拟器切片同为 arm64，lipo 无法合并同架构切片
+# （fatal error: ... have the same specified architectures (arm64)），
+# 必须用 xcframework 让 Xcode 按目标平台自动选择切片。
 mkdir -p "$ENGINE_DIR"
-readonly ENGINE_A="$ENGINE_DIR/libpikafish.a"
-lipo -create "$DEVICE_A" "$SIM_A" -output "$ENGINE_A"
-lipo -info "$ENGINE_A" | sed 's/^/[setup_ios_engine] /'
+readonly ENGINE_XCFRAMEWORK="$ENGINE_DIR/libpikafish.xcframework"
+rm -rf "$ENGINE_XCFRAMEWORK"   # -create-xcframework 要求输出目录不存在
+xcrun xcodebuild -create-xcframework \
+  -library "$DEVICE_A" \
+  -library "$SIM_A" \
+  -output "$ENGINE_XCFRAMEWORK"
+ls "$ENGINE_XCFRAMEWORK" | sed 's/^/[setup_ios_engine]   /'
 
 cat > "$ENGINE_DIR/ENGINE_BUILD_INFO.txt" <<EOF
 Pikafish iOS 进程内引擎静态库
 tag:        $TAG
-arch:       $ARCH（真机+模拟器 arm64 双切片，lipo 合成）
+arch:       $ARCH（真机+模拟器 arm64 双切片，xcframework 分发）
 min_ios:    $MIN_IOS
 extras:     -DUNIVERSAL_BINARY（main 收编为 Stockfish::main）
 构建日期:   $(date '+%Y-%m-%d %H:%M:%S %z')
@@ -132,8 +141,12 @@ EOF
 log "已写入 $ENGINE_DIR/ENGINE_BUILD_INFO.txt"
 
 # ---------------------------------------------------------------------------
-# 4. pbxproj 幂等注入：libpikafish.a 引用 + -Wl,-force_load 链接旗标
+# 4. pbxproj 幂等注入：libpikafish.xcframework 引用 + per-sdk -force_load
 # ---------------------------------------------------------------------------
+# xcframework 挂进 Frameworks 构建阶段后由 Xcode 按目标平台自动选切片，
+# 但 Dart FFI 符号仅经 dlsym 查找、不产生未解析引用，静态库成员默认
+# 不会被链接器拉入，仍需 -force_load 强制整体链接。force_load 不识别
+# xcframework 容器，须按 sdk 指到内部切片目录（ios-arm64 / ios-arm64-simulator）。
 python3 - "$PBXPROJ" <<'PY'
 import re
 import sys
@@ -142,7 +155,7 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as f:  # 保留 BOM（若存在）
     src = f.read()
 
-if "libpikafish.a" in src:
+if "libpikafish.xcframework" in src:
     print("[setup_ios_engine] pbxproj 已注入过，跳过")
     sys.exit(0)
 
@@ -159,17 +172,17 @@ def insert_before(section_end: str, block: str) -> None:
 
 
 insert_before("/* End PBXBuildFile section */",
-              f"\t\t{BF} /* libpikafish.a in Frameworks */ = "
-              f"{{isa = PBXBuildFile; fileRef = {FR} /* libpikafish.a */; }};\n")
+              f"\t\t{BF} /* libpikafish.xcframework in Frameworks */ = "
+              f"{{isa = PBXBuildFile; fileRef = {FR} /* libpikafish.xcframework */; }};\n")
 insert_before("/* End PBXFileReference section */",
-              f"\t\t{FR} /* libpikafish.a */ = {{isa = PBXFileReference; "
-              f"lastKnownFileType = archive.ar; path = libpikafish.a; "
+              f"\t\t{FR} /* libpikafish.xcframework */ = {{isa = PBXFileReference; "
+              f"lastKnownFileType = wrapper.xcframework; path = libpikafish.xcframework; "
               f"sourceTree = \"<group>\"; }};\n")
 insert_before("/* End PBXGroup section */",
               f"\t\t{GR} /* EngineBin */ = {{\n"
               f"\t\t\tisa = PBXGroup;\n"
               f"\t\t\tchildren = (\n"
-              f"\t\t\t\t{FR} /* libpikafish.a */,\n"
+              f"\t\t\t\t{FR} /* libpikafish.xcframework */,\n"
               f"\t\t\t);\n"
               f"\t\t\tpath = EngineBin;\n"
               f"\t\t\tsourceTree = \"<group>\";\n"
@@ -180,7 +193,7 @@ m = re.search(r"mainGroup = ([0-9A-F]{24});", src)
 assert m, "未找到 mainGroup"
 main_id = m.group(1)
 mm = re.search(r"\n\t\t" + main_id +
-               r" /\* [^*]+ \*/ = \{\n\t+isa = PBXGroup;\n\t+children = \(\n",
+               r"(?: /\* [^*]+ \*/)? = \{\n\t+isa = PBXGroup;\n\t+children = \(\n",
                src)
 assert mm, "未找到 mainGroup children"
 src = src[:mm.end()] + f"\t\t\t\t{GR} /* EngineBin */,\n" + src[mm.end():]
@@ -195,10 +208,17 @@ fm = re.search(
     r" /\* Frameworks \*/ = \{\n\t+isa = PBXFrameworksBuildPhase;\n"
     r"\t+buildActionMask = [^;]+;\n\t+files = \(\n", src)
 assert fm, "未找到 Frameworks files 列表"
-src = src[:fm.end()] + f"\t\t\t\t{BF} /* libpikafish.a in Frameworks */,\n" + src[fm.end():]
+src = src[:fm.end()] + f"\t\t\t\t{BF} /* libpikafish.xcframework in Frameworks */,\n" + src[fm.end():]
 
-# Runner 目标三个配置（Debug/Release/Profile）注入 force_load
-LDFLAGS = '\t\t\t\tOTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/ios/EngineBin/libpikafish.a";\n'
+# Runner 目标三个配置（Debug/Release/Profile）按 sdk 注入 force_load：
+#   $(SRCROOT) = 含 Runner.xcodeproj 的 ios/ 目录（勿再拼一层 ios/）
+#   xcframework 内部切片目录名由 -create-xcframework 按平台约定生成
+LDFLAGS_DEVICE = ('\t\t\t\tOTHER_LDFLAGS[sdk=iphoneos*] = '
+                  '"-Wl,-force_load,$(SRCROOT)/EngineBin/libpikafish.xcframework'
+                  '/ios-arm64/libpikafish.a";\n')
+LDFLAGS_SIM = ('\t\t\t\tOTHER_LDFLAGS[sdk=iphonesimulator*] = '
+               '"-Wl,-force_load,$(SRCROOT)/EngineBin/libpikafish.xcframework'
+               '/ios-arm64-simulator/libpikafish.a";\n')
 configs = re.findall(
     r"([0-9A-F]{24}) /\* (?:Debug|Release|Profile) \*/ = \{", src)
 assert len(configs) >= 3, "未找到足够 XCBuildConfiguration"
@@ -212,16 +232,16 @@ for cid in configs:
         src)
     if cm is None:
         continue  # 项目级配置（无 baseConfigurationReference）不注入
-    src = src[:cm.end()] + LDFLAGS + src[cm.end():]
+    src = src[:cm.end()] + LDFLAGS_DEVICE + LDFLAGS_SIM + src[cm.end():]
     injected += 1
 assert injected >= 3, f"OTHER_LDFLAGS 注入数量异常: {injected}"
 
 with open(path, "w", encoding="utf-8", newline="") as f:
     f.write(src)
-print(f"[setup_ios_engine] pbxproj 注入完成（OTHER_LDFLAGS x{injected}）")
+print(f"[setup_ios_engine] pbxproj 注入完成（OTHER_LDFLAGS x{injected} 组）")
 PY
 
-grep -q "libpikafish.a" "$PBXPROJ" || die "pbxproj 注入校验失败"
+grep -q "libpikafish.xcframework" "$PBXPROJ" || die "pbxproj 注入校验失败"
 
 log "全部完成。下一步：flutter run -d <iOS 设备/模拟器>"
 log "提示：模拟器需 Apple Silicon Mac（arm64 切片）；引擎功能要求 2018 年（A12）及以后的机型。"

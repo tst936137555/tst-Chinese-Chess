@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 import 'theme.dart';
 
@@ -81,14 +82,78 @@ void showAnnouncementDialog(BuildContext context) {
           ),
           const SizedBox(height: 10),
           const Text(
-            '完整 GPLv3 许可证全文见：',
+            '完整许可证全文已随本应用打包（assets/licenses/），可离线查看：',
             style: TextStyle(fontSize: 13, height: 1.6),
           ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: XqButton(
+                  label: 'GPLv3 全文',
+                  variant: XqButtonVariant.outline,
+                  height: 40,
+                  onPressed: () => _showLicenseText(
+                    ctx,
+                    title: 'GNU GPL v3.0',
+                    assetPath: 'assets/licenses/COPYING-pikafish.txt',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: XqButton(
+                  label: 'NNUE 许可证',
+                  variant: XqButtonVariant.outline,
+                  height: 40,
+                  onPressed: () => _showLicenseText(
+                    ctx,
+                    title: 'NNUE License',
+                    assetPath: 'assets/licenses/NNUE-License.md',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           const Text(
-            'https://www.gnu.org/licenses/gpl-3.0.txt',
-            style: TextStyle(fontSize: 13, height: 1.6),
+            '在线副本：https://www.gnu.org/licenses/gpl-3.0.txt',
+            style: TextStyle(fontSize: 12, height: 1.5),
           ),
         ],
+      ),
+    ),
+  );
+}
+
+/// 加载并展示随包分发的许可证全文（assets/licenses/，可离线查看）
+Future<void> _showLicenseText(
+  BuildContext context, {
+  required String title,
+  required String assetPath,
+}) async {
+  String text;
+  try {
+    text = await rootBundle.loadString(assetPath);
+  } catch (_) {
+    text = '许可证文本加载失败：$assetPath';
+  }
+  if (!context.mounted) return;
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => XqDialog(
+      title: title,
+      width: 380,
+      actions: [
+        XqButton(
+          label: '关闭',
+          variant: XqButtonVariant.tonal,
+          onPressed: () => Navigator.of(ctx).pop(),
+        ),
+      ],
+      child: SelectableText(
+        text,
+        style: const TextStyle(fontSize: 11.5, height: 1.5),
       ),
     ),
   );

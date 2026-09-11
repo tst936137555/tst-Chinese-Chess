@@ -1,8 +1,14 @@
-﻿{
-  "_说明": "引擎/NNUE/字体大文件的唯一事实源：版本钉住 + 上游官方 release 直链 + SHA256 校验。文件本体不入库（见 .gitignore），由 tool/fetch_engine.ps1 按 CI 与本地共用的本清单下载放置。升级引擎 = 一次性更新本清单（tag/URL/各 sha256）并本地验证。哈希为对应文件字节级 SHA256（大写十六进制）。",
+﻿﻿﻿{
+  "_说明": "引擎/NNUE/字体大文件的唯一事实源：版本钉住 + 上游官方 release 直链 + SHA256 校验。文件本体不入库（见 .gitignore），由 tool/fetch_engine.ps1 按 CI 与本地共用的本清单下载放置。下载顺序：上游 archiveUrl → mirrorUrl（本仓库镜像 release，防上游下架，由 .github/workflows/engine-mirror.yml 自动转存维护）。升级引擎 = 一次性更新本清单（tag/URL/各 sha256）并本地验证。哈希为对应文件字节级 SHA256（大写十六进制）。镜像资产采用版本化命名（如 Pikafish-2026-09-06.7z）：新版本传新资产，旧资产无人引用后可删，不影响任何已存在的 clone。",
+  "mirror": {
+    "repo": "tst936137555/tst-Chinese-Chess",
+    "tag": "engine-mirror",
+    "说明": "镜像 release 所在仓库与固定 tag。资产 URL 模板：https://github.com/{repo}/releases/download/{tag}/{文件名}"
+  },
   "pikafish": {
     "tag": "Pikafish-2026-09-06",
     "archiveUrl": "https://github.com/official-pikafish/Pikafish/releases/download/Pikafish-2026-09-06/Pikafish.2026-09-06.7z",
+    "mirrorUrl": "https://github.com/tst936137555/tst-Chinese-Chess/releases/download/engine-mirror/Pikafish-2026-09-06.7z",
     "archiveSha256": "41952BBFE2520FACEB5902C69E6AB4845CC999841D2B49A95CC1BE7867A25E5B",
     "artifacts": {
       "nnue": {
@@ -28,17 +34,18 @@
       },
       "license-gpl": {
         "member": "Copying.txt",
-        "dest": "build-licenses/Copying.txt"
+        "dest": "assets/licenses/COPYING-pikafish.txt"
       },
       "license-nnue": {
         "member": "NNUE-License.md",
-        "dest": "build-licenses/NNUE-License.md"
+        "dest": "assets/licenses/NNUE-License.md"
       }
     }
   },
   "font": {
     "说明": "霞鹜文楷 Medium（OFL-1.1，许可证文本 assets/fonts/OFL.txt 入库随包分发）",
     "url": "https://github.com/lxgw/LxgwWenKai/releases/download/v1.522/LXGWWenKai-Medium.ttf",
+    "mirrorUrl": "https://github.com/tst936137555/tst-Chinese-Chess/releases/download/engine-mirror/LXGWWenKai-v1.522-Medium.ttf",
     "sha256": "D4BDEB38A39151D74D084CBA5090F8CB7D20BF83EEDB78C35939AE70B9F4E3F6",
     "dest": "assets/fonts/LXGWWenKai-Medium.ttf"
   }

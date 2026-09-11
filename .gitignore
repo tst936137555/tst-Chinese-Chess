@@ -28,6 +28,8 @@ migrate_working_dir/
 **/ios/Flutter/.last_build_id
 .dart_tool/
 .dart-tmp/
+# Kotlin/Gradle 构建缓存产物
+android/.kotlin/
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
@@ -51,7 +53,8 @@ android/key.properties
 *.keystore
 
 # 引擎 / NNUE / 字体大文件不入库：由 tool/fetch_engine.ps1 按
-# tool/engine_manifest.json 从上游官方 release 下载并做 SHA256 校验后放置；
+# tool/engine_manifest.json 从上游官方 release 下载（上游不可用时回退
+# 本仓库镜像 release engine-mirror）并做 SHA256 校验后放置；
 # Android x86_64 引擎官方不发布，由 tool/build_android_engine.sh 编译。
 # 详见 README「构建」
 /pikafish.exe
@@ -59,8 +62,12 @@ android/key.properties
 /assets/fonts/LXGWWenKai-Medium.ttf
 /android/app/src/main/jniLibs/arm64-v8a/libpikafish.so
 /android/app/src/main/jniLibs/x86_64/libpikafish.so
+# iOS 引擎 xcframework 由 tool/setup_ios_engine.sh 在 macOS 现场构建
+/ios/EngineBin/
 /macos/EngineBin/pikafish
-/build-licenses/
+# GPLv3 / NNUE 许可证全文：fetch 脚本从官方发布包取得（不入库），
+# 作为 Flutter 资产（assets/licenses/）随各平台安装包分发
+/assets/licenses/
 
 # Trae 内部工作文档
 .trae/documents/
