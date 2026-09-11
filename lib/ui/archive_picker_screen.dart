@@ -100,6 +100,8 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
   }
 
   /// 切换收藏并持久化（收藏置顶且不会被自动移除）。
+  /// 锁内重读-定位-改-存，不依赖本页持有的旧快照：归档页打开期间
+  /// 新终局归档落盘后不会被旧快照覆写丢失。
   /// 收藏数达上限时拒绝新增；保存失败时回滚列表并提示。
   Future<void> _toggleFavorite(ArchivedGame game) async {
     final updated = game.withFavorite(!game.favorite);
@@ -111,22 +113,61 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
               '收藏已达上限（$kMaxFavoriteGames 条），请先取消部分收藏')));
       return;
     }
-    // 浅拷贝快照：下面的原位修改不能污染回滚用的列表
+    // 浅拷贝快照：失败回滚用
     final before = List<ArchivedGame>.of(_games);
     setState(() {
       _games[_games.indexOf(game)] = updated;
       _resort();
     });
     final file = await GameArchive.defaultArchiveFile();
-    if (await GameArchive.saveAll(file, _games)) return;
-    // 保存失败：回滚列表并提示
+    final result = await GameArchive.toggleFavorite(file, game);
+    if (result == null) {
+      // 保存失败或条目已不在存档中：回滚列表并提示
+      if (!mounted) return;
+      setState(() {
+        _games = before;
+        _resort();
+      });
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('棋谱保存失败')));
+      return;
+    }
+    // 以文件最新内容为准（可能含并发新增的对局）
     if (!mounted) return;
     setState(() {
-      _games = before;
+      _games = result;
       _resort();
     });
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('棋谱保存失败')));
+  }
+
+  /// 删除单局棋谱（滑动确认后调用）。
+  /// 快照回滚 + 锁内重读定位删除，同 [_toggleFavorite] 范式：
+  /// 归档页打开期间新终局归档落盘后不会被旧快照覆写丢失。
+  Future<void> _removeGame(ArchivedGame game) async {
+    final key = GameArchive.keyOf(game);
+    // 浅拷贝快照：失败回滚用
+    final before = List<ArchivedGame>.of(_games);
+    setState(() {
+      _games.removeWhere((g) => GameArchive.keyOf(g) == key);
+    });
+    final file = await GameArchive.defaultArchiveFile();
+    final result = await GameArchive.remove(file, game);
+    if (!mounted) return;
+    if (result == null) {
+      // 写入失败：回滚列表并提示
+      setState(() {
+        _games = before;
+        _resort();
+      });
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('棋谱删除失败')));
+      return;
+    }
+    // 以文件最新内容为准（可能含并发新增的对局）
+    setState(() {
+      _games = result;
+      _resort();
+    });
   }
 
   /// 选中一局后，在棋谱列表之上打开复盘分析页；退出复盘时返回本列表
@@ -159,7 +200,7 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
             children: [
               const Text('复盘棋谱'),
               Text(
-                '最多保留 100 局，超出自动移除最早对局（收藏除外）',
+                '棋谱最多保留100局，收藏上限50局，超出自动移除最早对局，收藏棋谱不会被自动移除',
                 style: TextStyle(
                   fontSize: 10,
                   color: Colors.white.withValues(alpha: 0.75),
@@ -222,55 +263,91 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                     final g = _games[i];
                     final isWin = g.resultLabel == '胜';
                     final isDraw = g.resultLabel == '和';
-                    return ListTile(
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 20),
-                      leading: CircleAvatar(
-                        radius: 17,
-                        backgroundColor: isWin
-                            ? const Color(0xFF2E7D32)
-                            : isDraw
-                                ? XqColors.wood
-                                : XqColors.red,
-                        child: Text(
-                          g.resultLabel,
-                          style: const TextStyle(
-                              color: Colors.white, fontWeight: FontWeight.w700),
+                    // 左滑删除：以条目身份键（时间+执子方）标识，
+                    // 未确认（取消/点弹窗外）时弹回原位
+                    return Dismissible(
+                      key: ValueKey(GameArchive.keyOf(g)),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        color: XqColors.red,
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 24),
+                        child: const Icon(Icons.delete_outline,
+                            color: Colors.white),
+                      ),
+                      confirmDismiss: (_) => showDialog<bool>(
+                        context: context,
+                        builder: (dlgCtx) => XqDialog(
+                          title: '删除棋谱',
+                          actions: [
+                            XqButton(
+                              label: '取消',
+                              variant: XqButtonVariant.tonal,
+                              onPressed: () => Navigator.pop(dlgCtx, false),
+                            ),
+                            XqButton(
+                              label: '删除',
+                              variant: XqButtonVariant.primary,
+                              onPressed: () => Navigator.pop(dlgCtx, true),
+                            ),
+                          ],
+                          child: Text(
+                            '确定删除「${g.title}」吗？\n此操作不可恢复。',
+                            style: const TextStyle(fontSize: 14, height: 1.7),
+                          ),
                         ),
                       ),
-                      // 标题：【对局时间-执红/执黑-胜负】
-                      title: Text(
-                        g.title,
-                        style: const TextStyle(
-                            fontSize: 14, color: XqColors.inkBlack),
-                      ),
-                      subtitle: Text('${g.history.length} 步 · ${g.levelName}',
-                          style: const TextStyle(
-                              fontSize: 12, color: XqColors.wood)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // 收藏开关：置顶且不会被自动移除
-                          IconButton(
-                            icon: Icon(
-                              g.favorite
-                                  ? Icons.star_rounded
-                                  : Icons.star_border_rounded,
-                              color: g.favorite
-                                  ? const Color(0xFFF5A623)
-                                  : XqColors.wood,
-                            ),
-                            tooltip: g.favorite ? '取消收藏' : '收藏',
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            onPressed: () => _toggleFavorite(g),
+                      onDismissed: (_) => _removeGame(g),
+                      child: ListTile(
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 20),
+                        leading: CircleAvatar(
+                          radius: 17,
+                          backgroundColor: isWin
+                              ? const Color(0xFF2E7D32)
+                              : isDraw
+                                  ? XqColors.wood
+                                  : XqColors.red,
+                          child: Text(
+                            g.resultLabel,
+                            style: const TextStyle(
+                                color: Colors.white, fontWeight: FontWeight.w700),
                           ),
-                          const Icon(Icons.chevron_right,
-                              color: XqColors.wood),
-                        ],
+                        ),
+                        // 标题：【对局时间-执红/执黑-胜负】
+                        title: Text(
+                          g.title,
+                          style: const TextStyle(
+                              fontSize: 14, color: XqColors.inkBlack),
+                        ),
+                        subtitle: Text('${g.history.length} 步 · ${g.levelName}',
+                            style: const TextStyle(
+                                fontSize: 12, color: XqColors.wood)),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // 收藏开关：置顶且不会被自动移除
+                            IconButton(
+                              icon: Icon(
+                                g.favorite
+                                    ? Icons.star_rounded
+                                    : Icons.star_border_rounded,
+                                color: g.favorite
+                                    ? const Color(0xFFF5A623)
+                                    : XqColors.wood,
+                              ),
+                              tooltip: g.favorite ? '取消收藏' : '收藏',
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              onPressed: () => _toggleFavorite(g),
+                            ),
+                            const Icon(Icons.chevron_right,
+                                color: XqColors.wood),
+                          ],
+                        ),
+                        onTap: () => _openReview(context, g),
                       ),
-                      onTap: () => _openReview(context, g),
                     );
                   },
                 ),

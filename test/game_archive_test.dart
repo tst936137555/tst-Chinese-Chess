@@ -35,6 +35,31 @@ void main() {
     expect(await GameArchive.loadAll(file), isEmpty);
   });
 
+  test('并发追加全部落盘，不互相覆盖丢局', () async {
+    final results = await Future.wait(
+        [for (var i = 0; i < 20; i++) GameArchive.add(file, _game(i))]);
+    expect(results, everyElement(isTrue));
+    final all = await GameArchive.loadAll(file);
+    expect(all.length, 20, reason: '读-改-写须整体串行，否则互相覆盖');
+    // 最新在前：i=19 在首位
+    expect(all.first.time,
+        DateTime(2026, 1, 1).add(const Duration(minutes: 19)));
+  });
+
+  test('toggleFavorite：锁内重读改存，并发归档的新对局不丢失', () async {
+    expect(await GameArchive.add(file, _game(1)), isTrue);
+    // 归档页加载后持有的旧快照
+    final target = (await GameArchive.loadAll(file)).first;
+    // 页面打开期间，另一局终局归档并发落盘（文件已比快照新）
+    expect(await GameArchive.add(file, _game(2)), isTrue);
+    // 再基于旧快照切换收藏：须重读文件定位改写，不得用旧快照整体覆写
+    final toggled = await GameArchive.toggleFavorite(file, target);
+    expect(toggled, isNotNull);
+    expect(toggled!.length, 2, reason: '切换须基于文件最新内容，不得覆盖并发新增');
+    expect(toggled.where((g) => g.favorite).single.time,
+        DateTime(2026, 1, 1).add(const Duration(minutes: 1)));
+  });
+
   test('超出 100 局时移除最旧的未收藏对局', () async {
     for (var i = 0; i < 105; i++) {
       expect(await GameArchive.add(file, _game(i)), isTrue);
@@ -98,6 +123,31 @@ void main() {
   test('写入失败返回 false（临时文件路径被目录占用）', () async {
     await Directory('${file.path}.tmp').create();
     expect(await GameArchive.add(file, _game(1)), isFalse);
+  });
+
+  test('remove：锁内重读删除，并发归档的新对局不丢失', () async {
+    expect(await GameArchive.add(file, _game(1)), isTrue);
+    final target = (await GameArchive.loadAll(file)).first;
+    // 页面打开期间，另一局终局归档并发落盘（文件已比快照新）
+    expect(await GameArchive.add(file, _game(2)), isTrue);
+    final removed = await GameArchive.remove(file, target);
+    expect(removed, isNotNull);
+    expect(removed!.length, 1, reason: '删除须基于文件最新内容，不得覆盖并发新增');
+    expect(removed.single.time,
+        DateTime(2026, 1, 1).add(const Duration(minutes: 2)));
+  });
+
+  test('remove：条目不存在时幂等成功，返回当前列表', () async {
+    expect(await GameArchive.add(file, _game(1)), isTrue);
+    final all = await GameArchive.remove(file, _game(99));
+    expect(all, isNotNull);
+    expect(all!.length, 1);
+  });
+
+  test('remove：写入失败返回 null', () async {
+    expect(await GameArchive.add(file, _game(1)), isTrue);
+    await Directory('${file.path}.tmp').create();
+    expect(await GameArchive.remove(file, _game(1)), isNull);
   });
 
   test('migrateFromPrefs：正常迁移后 prefs 键被清且文件内容一致', () async {

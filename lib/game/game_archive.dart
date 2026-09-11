@@ -103,9 +103,16 @@ class GameArchive {
   static const _prefsKey = 'game_archive';
   static const _fileName = 'game_archive.json';
 
-  /// 写操作串行锁：终局归档（fire-and-forget）与收藏切换（用户点击）
-  /// 理论上可并发写同一文件，排队串行避免交错损坏。
+  /// 读-改-写串行锁：并发 add / 收藏切换 / 清空 / 迁移经 [_locked]
+  /// 排队串行，整体不可分割，避免并发追加各自读到旧快照互相覆盖丢局。
   static Future<void> _writeLock = Future.value();
+
+  /// 在写锁内执行 [action]（非重入：闭包内不得再调用拿锁的方法）
+  static Future<T> _locked<T>(Future<T> Function() action) {
+    final next = _writeLock.then<T>((_) => action());
+    _writeLock = next.then<void>((_) {}, onError: (_) {});
+    return next;
+  }
 
   /// 默认存档文件路径的解析缓存（平台通道只调一次）
   static Future<File>? _fileFuture;
@@ -148,32 +155,31 @@ class GameArchive {
   /// 追加一局（插到最前）。
   /// 未收藏对局最多 100 局、收藏对局最多 50 局：各自超出时从最旧开始移除。
   /// 返回 false = 写入失败（调用方负责向用户提示）。
-  static Future<bool> add(File file, ArchivedGame game) async {
-    final all = await loadAll(file);
-    all.insert(0, game);
-    return _trimAndSave(file, all);
-  }
+  static Future<bool> add(File file, ArchivedGame game) =>
+      _locked(() async {
+        final all = await loadAll(file);
+        all.insert(0, game);
+        return _trimAndSave(file, all);
+      });
 
   /// 整体覆写保存（收藏切换用；不做裁剪，调用方保证列表合法）。
   /// 返回 false = 写入失败（调用方负责向用户提示）。
   static Future<bool> saveAll(File file, List<ArchivedGame> games) =>
-      _writeAll(file, games);
+      _locked(() => _writeLocked(file, games));
 
   /// 清空存档（删除存档文件）。
   /// 返回 false = 删除失败（调用方负责向用户提示）。
-  static Future<bool> clear(File file) {
-    final next = _writeLock.then<bool>((_) async {
-      try {
-        if (await file.exists()) await file.delete();
-        return true;
-      } catch (e) {
-        debugPrint('棋谱清空失败: $e');
-        return false;
-      }
-    });
-    _writeLock = next.then<void>((_) {}, onError: (_) {});
-    return next;
-  }
+  static Future<bool> clear(File file) => _locked(() async {
+        try {
+          if (await file.exists()) await file.delete();
+          // 顺带清理残留的临时文件，保持目录干净
+          await _deleteQuietly(File('${file.path}.tmp'));
+          return true;
+        } catch (e) {
+          debugPrint('棋谱清空失败: $e');
+          return false;
+        }
+      });
 
   /// 一次性迁移：旧版 SharedPreferences 中的整体棋谱迁入 [target] 文件。
   /// 返回迁移条数；
@@ -181,7 +187,13 @@ class GameArchive {
   /// -1 = 旧数据不可恢复损坏（已清除 prefs 键，避免每次启动重复解析）；
   /// -2 = 写入文件失败（保留 prefs 键，下次启动重试）。
   static Future<int> migrateFromPrefs(SharedPreferences prefs,
-      {File? target}) async {
+          {File? target}) =>
+      _locked(() => _migrateLocked(prefs, target));
+
+  /// 迁移主体（须在写锁内调用）：目标文件存在性检查与写入同锁，
+  /// 避免与并发归档交错（检查时不存在、写入前被归档建立文件而被覆盖）。
+  static Future<int> _migrateLocked(
+      SharedPreferences prefs, File? target) async {
     final file = target ?? await defaultArchiveFile();
     if (await file.exists()) return 0;
     final raw = prefs.getString(_prefsKey);
@@ -207,7 +219,7 @@ class GameArchive {
       }
     }
     // 写文件全部成功后才清 prefs 键，任何失败保留旧数据下次重试
-    if (!await _writeAll(file, games)) return -2;
+    if (!await _writeLocked(file, games)) return -2;
     await prefs.remove(_prefsKey);
     return games.length;
   }
@@ -228,32 +240,87 @@ class GameArchive {
         kept.add(g);
       }
     }
-    return _writeAll(file, kept);
+    return _writeLocked(file, kept);
   }
 
-  /// 原子写入：临时文件 → 回读校验 → 改名替换。
-  /// 返回 false = 任一步失败（旧文件保持完好）。
-  static Future<bool> _writeAll(File file, List<ArchivedGame> games) {
-    final next = _writeLock.then<bool>((_) async {
-      try {
-        await file.parent.create(recursive: true);
-        final tmp = File('${file.path}.tmp');
-        final json = jsonEncode(games.map((g) => g.toJson()).toList());
-        await tmp.writeAsString(json, flush: true);
-        // 回读校验，避免半截文件替换旧档
-        if (await tmp.readAsString() != json) {
-          await tmp.delete().catchError((_) => tmp);
-          return false;
-        }
-        // 同目录 rename：原子替换既有文件
-        await tmp.rename(file.path);
-        return true;
-      } catch (e) {
-        debugPrint('棋谱写入失败: $e');
+  /// 锁内切换收藏：重读文件最新内容定位条目改写，不依赖界面持有的旧快照
+  /// （避免归档页打开期间新终局归档落盘后被旧快照覆写丢失）。
+  /// 条目以 [keyOf]（time+userRed）定位；返回切换后的最新完整列表，
+  /// 保存失败返回 null（调用方回滚界面并提示）。
+  static Future<List<ArchivedGame>?> toggleFavorite(
+      File file, ArchivedGame game) {
+    final key = keyOf(game);
+    return _locked(() async {
+      final all = await loadAll(file);
+      final idx = all.indexWhere((g) => keyOf(g) == key);
+      if (idx < 0) return null;
+      if (!game.favorite && _favCount(all) >= kMaxFavoriteGames) {
+        // 切为收藏将超上限：拒绝，返回当前列表供界面刷新
+        return all;
+      }
+      final updated = all[idx].withFavorite(!game.favorite);
+      all[idx] = updated;
+      if (!await _writeLocked(file, all)) return null;
+      return all;
+    });
+  }
+
+  /// 条目身份键：归档时间 + 执子方（同一时刻仅一局在录，不冲突）
+  static (int, bool) keyOf(ArchivedGame g) => (g.time.millisecondsSinceEpoch, g.userRed);
+
+  /// 锁内删除单条棋谱：重读文件最新内容按 [keyOf] 定位后移除，
+  /// 不依赖界面持有的旧快照（同 [toggleFavorite]，
+  /// 避免归档页打开期间新终局归档落盘后被旧快照覆写丢失）。
+  /// 条目已不存在时视为成功（幂等），返回当前最新完整列表；
+  /// 返回 null = 写入失败（调用方回滚界面并提示）。
+  static Future<List<ArchivedGame>?> remove(File file, ArchivedGame game) {
+    final key = keyOf(game);
+    return _locked(() async {
+      final all = await loadAll(file);
+      final idx = all.indexWhere((g) => keyOf(g) == key);
+      if (idx >= 0) {
+        all.removeAt(idx);
+        if (!await _writeLocked(file, all)) return null;
+      }
+      return all;
+    });
+  }
+
+  static int _favCount(List<ArchivedGame> all) {
+    var n = 0;
+    for (final g in all) {
+      if (g.favorite) n++;
+    }
+    return n;
+  }
+
+  /// 原子写入（须在写锁内调用）：临时文件 → 回读校验 → 改名替换。
+  /// 返回 false = 任一步失败（旧文件保持完好，临时文件尽力清理）。
+  static Future<bool> _writeLocked(File file, List<ArchivedGame> games) async {
+    final tmp = File('${file.path}.tmp');
+    try {
+      await file.parent.create(recursive: true);
+      final json = jsonEncode(games.map((g) => g.toJson()).toList());
+      await tmp.writeAsString(json, flush: true);
+      // 回读校验，避免半截文件替换旧档
+      if (await tmp.readAsString() != json) {
+        await _deleteQuietly(tmp);
         return false;
       }
-    });
-    _writeLock = next.then<void>((_) {}, onError: (_) {});
-    return next;
+      // 同目录 rename：原子替换既有文件
+      await tmp.rename(file.path);
+      return true;
+    } catch (e) {
+      debugPrint('棋谱写入失败: $e');
+      await _deleteQuietly(tmp);
+      return false;
+    }
+  }
+
+  /// 静默删除（不存在 / 已被外部清理 / 收尾竞态均视为成功）
+  static Future<void> _deleteQuietly(File f) async {
+    try {
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
   }
 }
