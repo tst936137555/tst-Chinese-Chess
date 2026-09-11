@@ -135,10 +135,13 @@ class _GamePageState extends State<GamePage>
     final len = c.history.length;
     final prevLen = _animatedHistoryLength;
     _animatedHistoryLength = len;
-    // 悔棋 / 新开局等长度减少或不变时不需要动画
-    if (len == 0 || len <= prevLen) {
-      // 悔棋时终止进行中的动画：否则动画会基于回退后的棋盘绘制，
-      // 终点格为空出现"棋子空洞"，或让被恢复的棋子错误滑动
+    // 长度减少（悔棋 / 新开局）时终止进行中的动画：否则动画会基于回退后的
+    // 棋盘绘制，终点格为空出现"棋子空洞"，或让被恢复的棋子错误滑动。
+    // 注意"长度不变"（len == prevLen）只是 thinking 开关等纯状态通知——
+    // 用户落子后引擎同步开始思考，thinking 通知恰好紧跟动画启动，
+    // 这里若一并 kill，用户走子动画会被立即终止（AI 走子后无后续通知
+    // 故幸存）。所以长度不变时只跳过，不动动画。
+    if (len == 0 || len < prevLen) {
       if (_animMove != null) {
         _animMove = null;
         _animCaptured = null;
