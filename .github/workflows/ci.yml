@@ -6,7 +6,9 @@
 # - 真实引擎端到端测试（test/review_engine_integration_test.dart）在无引擎
 #   环境自动跳过，仅在本机（Windows/macOS）运行。
 # - 引擎 / NNUE / 字体等大文件不入库：CI 与本地统一通过 tool/fetch_engine.ps1
-#   按 tool/engine_manifest.json 从上游官方 release 下载并做 SHA256 校验。
+#   按 tool/engine_manifest.json 从上游官方 release 下载并做 SHA256 校验；
+#   上游失败时回退本仓库镜像 release（engine-mirror，由
+#   .github/workflows/engine-mirror.yml 转存维护，防上游下架）。
 # - android-release：从仓库 secrets 还原正式签名密钥，构建签名 release APK
 #   （arm64 引擎 / NNUE / 字体由 fetch 脚本取得；x86_64 引擎官方不发布，
 #   由 tool/build_android_engine.sh 以钉住的 NDK r28c 现场编译），
@@ -51,7 +53,7 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      # pubspec 声明的 NNUE / 字体资产缺文件会导致构建失败，先经脚本取得
+      # pubspec 声明的 NNUE / 字体 / 许可证资产缺文件会导致构建失败，先经脚本取得
       - name: Install p7zip (fetch script dependency)
         run: sudo apt-get update -q && sudo apt-get install -y -q p7zip-full
 
@@ -126,11 +128,11 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      # arm64 引擎 + NNUE + 字体由 fetch 脚本取得；x86_64 官方不发布，现场编译
+      # arm64 引擎 / NNUE / 字体 / 许可证由 fetch 脚本取得；x86_64 官方不发布，现场编译
       - name: Install p7zip (fetch script dependency)
         run: sudo apt-get update -q && sudo apt-get install -y -q p7zip-full
 
-      - name: Fetch pinned engine (arm64 + NNUE + font)
+      - name: Fetch pinned engine (arm64 + NNUE + font + licenses)
         shell: pwsh
         run: ./tool/fetch_engine.ps1 -Target android
 
@@ -277,12 +279,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # 引擎与 app 主程序同目录；许可证一并拷入
-          # （GPLv3 分发合规：随包附带许可与来源信息）
+          # 引擎与 app 主程序同目录；许可证一并拷入 zip 根目录便于直接查看
+          # （GPLv3 分发合规：随包附带许可与来源信息；正文同时已作为
+          # Flutter 资产打进应用内，App「作者声明」可离线查看）
           $bundle = "build\windows\x64\runner\Release"
           Copy-Item "pikafish.exe" "$bundle\pikafish.exe"
-          Copy-Item "build-licenses\Copying.txt" "$bundle\COPYING-pikafish.txt"
-          Copy-Item "build-licenses\NNUE-License.md" "$bundle\NNUE-License.md"
+          Copy-Item "assets\licenses\COPYING-pikafish.txt" "$bundle\COPYING-pikafish.txt"
+          Copy-Item "assets\licenses\NNUE-License.md" "$bundle\NNUE-License.md"
           Get-ChildItem $bundle | Select-Object Name, Length
 
       - name: Smoke-test bundled engine
@@ -303,6 +306,12 @@ jobs:
           $p.WaitForExit(10000) | Out-Null
           if ($out -notmatch 'uciok') { throw "engine UCI handshake failed" }
           Write-Host "engine UCI handshake OK"
+
+      # 应用本体冒烟：拉起主程序，确认进程存活且主窗口创建（引擎为懒启动，
+      # 此步不覆盖引擎通道——引擎已由上一步握手自检验证）
+      - name: Smoke-test app shell (launch + window)
+        shell: pwsh
+        run: ./tool/win_smoke_ci.ps1 -AppExe "build\windows\x64\runner\Release\tst_xiangqi.exe"
 
       - name: Rename zip with version
         shell: pwsh

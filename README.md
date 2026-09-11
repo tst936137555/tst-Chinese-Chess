@@ -19,7 +19,7 @@
 | Android（arm64-v8a / x86_64） | 子进程（`libpikafish.so`） | 提供签名 APK 发布 |
 | iOS（A12 及以上） | 进程内 FFI（静态库 `libpikafish.a`） | 需 macOS 构建，引擎依赖 dotprod 指令 |
 | macOS | 子进程（随应用打包） | 引擎二进制随仓库提供 |
-| Windows | 子进程（`pikafish.exe`） | 需自行放置引擎可执行文件，见「构建」 |
+| Windows | 子进程（`pikafish.exe`） | 发布 zip 已内置引擎；本地构建需自行放置，见「构建」 |
 
 不支持 Linux 与 Web。
 
@@ -41,11 +41,11 @@ flutter run                # 调试运行到已连接设备
 各平台发布构建：
 
 - **Android**：`flutter build apk --release`；或推送 `v*` 标签触发 CI 自动构建签名 APK（见 `.github/workflows/ci.yml`）。
-- **iOS**：先在 macOS 上运行 `tool/setup_ios_engine.sh`（构建 `libpikafish.a` 静态库并注入 Xcode 工程），之后 `flutter build ios`。
+- **iOS**：先在 macOS 上运行 `tool/setup_ios_engine.sh`（构建 `libpikafish.xcframework` 静态库并注入 Xcode 工程），之后 `flutter build ios`。
 - **Windows**：`flutter build windows`，并将 [Pikafish 官方发布版](https://github.com/official-pikafish/pikafish/releases) 的 Windows 可执行文件重命名为 `pikafish.exe` 放入产物目录（开发调试时放项目根目录即可）。
 - **macOS**：`flutter build macos`（引擎二进制已在 `macos/EngineBin/`）。
 
-NNUE 权重与字体随 assets 打包，无需额外下载。
+NNUE 权重与字体随 assets 打包，无需额外下载。引擎等大文件的下载源与版本钉住在 [tool/engine_manifest.json](tool/engine_manifest.json)：优先从上游官方 release 下载，失败时回退本仓库 [镜像 release](https://github.com/tst936137555/tst-Chinese-Chess/releases/tag/engine-mirror)（由 [Engine Mirror 工作流](.github/workflows/engine-mirror.yml)自动转存维护），防上游下架导致 CI 与本地构建断供。
 
 ## 发版流程
 
@@ -71,6 +71,7 @@ flutter test
 - iOS 需 A12 芯片（2018 年机型）及以上，旧设备不支持。
 - 棋谱存档有数量上限（未收藏 100 局 / 收藏 50 局），超出自动移除最旧；存档保存在应用文档目录，卸载应用即清除。
 - 引擎崩溃或挂死时会自动重启并重试一次，仍失败则如实提示「引擎不可用」，不会伪造走法或评分。
+- Windows 发行版未做代码签名：首次运行时 SmartScreen 可能提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」即可；请仅从 GitHub Releases 获取安装包。
 
 ## 作者声明
 
@@ -136,7 +137,7 @@ flutter test
 - 许可证：SIL Open Font License 1.1（OFL-1.1）
 - 版权：Copyright 2021-2026 LXGW（保留字体名「霞鹜」「落霞孤鹜」「LXGW」等）；基于 Fontworks 开源的 Klee One 衍生（Copyright 2020 The Klee Project Authors）
 - 源码：https://github.com/lxgw/LxgwWenKai
-- 字体文件本体不入 git 仓库，由 `tool/fetch_engine.ps1` 按 `tool/engine_manifest.json` 下载（SHA256 校验）；
+- 字体文件本体不入 git 仓库，由 `tool/fetch_engine.ps1` 按 `tool/engine_manifest.json` 下载（SHA256 校验，上游不可用时回退本仓库镜像 release）；
 - 许可证全文随应用分发：`assets/fonts/OFL.txt`（入库并打包进 APK，满足 OFL「分发字体须附带许可证副本」要求）。
 
 ## 许可证
@@ -145,5 +146,7 @@ flutter test
 
 - 本仓库 [LICENSE](LICENSE)
 - https://www.gnu.org/licenses/gpl-3.0.txt
+
+GPLv3（Pikafish `Copying.txt`）与 NNUE 许可证全文由 `tool/fetch_engine.ps1` 从官方发布包取得（SHA256 校验），作为 Flutter 资产（`assets/licenses/`）随 Android / iOS / macOS / Windows 各平台安装包分发，App 内「作者声明」对话框可离线查看。
 
 霞鹜文楷字体许可证全文见 [assets/fonts/OFL.txt](assets/fonts/OFL.txt)（SIL OFL 1.1）。
