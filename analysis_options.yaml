@@ -16,6 +16,13 @@ analyzer:
     - ios/**
     - windows/**
     - macos/**
+  language:
+    # 严格模式：隐式降型转换、推断失败、裸泛型一律报告。
+    # 引擎协议解析（UCI info 行 → 动态 List 取字段）与 JSON 存档解析
+    # 是 dynamic 扩散的高危区，靠显式 cast 让类型假设可审查
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
 
 linter:
   # The lint rules applied to this project can be customized in the
@@ -25,12 +32,23 @@ linter:
   #
   # Instead of disabling a lint rule for the entire project in the
   # section below, it can also be suppressed for a single line of code
-  # or a specific dart file by using the `// ignore: name_of_lint` and
-  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
+  # or a single dart file by using the `// ignore: name_of_lint` and
+  # `// ignore_for_file: name_of_lint` syntax on the line of the file
   # producing the lint.
   rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+    # —— 捕获真实缺陷 ——
+    # 异步调用不 await 必须显式 unawaited()：区分"故意不管"与"漏等"
+    unawaited_futures: true
+    # StreamController / Sink 用完必须关闭，防资源泄漏
+    close_sinks: true
+    # StreamSubscription 必须取消
+    cancel_subscriptions: true
+    # 空 catch 块必须写注释说明为何吞异常：静默吞异常从"自觉"变为"强制留痕"
+    empty_catches: true
+    # 无副作用的孤立语句（多为漏调用或笔误）
+    unnecessary_statements: true
+    # 恒真/恒假的布尔条件
+    literal_only_boolean_expressions: true
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

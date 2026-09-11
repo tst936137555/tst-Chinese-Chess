@@ -16,10 +16,11 @@ class Sounds with ChangeNotifier {
 
   static const _prefKey = 'sound_enabled';
 
-  AudioPlayer? _player;
   final List<AudioPlayer> _pool = [];
   var _poolIndex = 0;
   SharedPreferences? _prefs;
+  /// 播放器是否已创建（load 幂等标记：重复调用只刷新设置，不重建播放器）
+  bool _initialized = false;
 
   /// 音效开关（默认开）
   bool enabled = true;
@@ -37,16 +38,20 @@ class Sounds with ChangeNotifier {
         iOS: AudioContextIOS(category: AVAudioSessionCategory.ambient),
       );
 
-  /// 初始化：读取开关设置并配置音频会话
+  /// 初始化：读取开关设置并配置音频会话。
+  /// 幂等：播放器（原生平台通道资源）只创建一次，重复调用仅刷新设置，
+  /// 防止页面重建时泄漏旧实例并导致播放池无限增长。
   Future<void> load(SharedPreferences prefs) async {
     _prefs = prefs;
     enabled = prefs.getBool(_prefKey) ?? true;
     notifyListeners();
+    // 只尝试创建一次：失败（无音频设备/测试环境）静默放弃，
+    // 也避免部分创建失败后重入导致池追加、playerId 重复
+    if (_initialized) return;
+    _initialized = true;
     try {
       // 配置混音上下文（须在创建播放器前设置）
       await AudioPlayer.global.setAudioContext(_mixContext);
-      _player = AudioPlayer(playerId: 'xiangqi_sfx');
-      await _player!.setReleaseMode(ReleaseMode.stop);
       // 预热播放池（短音效可重叠，如快速走子）
       for (var i = 0; i < 2; i++) {
         final p = AudioPlayer(playerId: 'xiangqi_sfx_$i');
@@ -54,7 +59,7 @@ class Sounds with ChangeNotifier {
         _pool.add(p);
       }
     } catch (_) {
-      // 无音频设备/测试环境时静默忽略
+      // 无音频设备/测试环境时静默忽略（已入池的播放器仍可用）
     }
   }
 
@@ -67,12 +72,10 @@ class Sounds with ChangeNotifier {
 
   /// 播放 asset 音效（忽略错误，音效失败不影响游戏）
   Future<void> _play(String asset) async {
-    if (!enabled) return;
-    final player = _player;
-    if (player == null) return;
+    if (!enabled || _pool.isEmpty) return;
     try {
       // 轮询使用播放池，避免上一次还没播完被截断
-      final p = _pool.isEmpty ? player : _pool[_poolIndex++ % _pool.length];
+      final p = _pool[_poolIndex++ % _pool.length];
       await p.stop();
       await p.play(AssetSource('sounds/$asset'));
     } catch (_) {
@@ -101,7 +104,6 @@ class Sounds with ChangeNotifier {
   @override
   void dispose() {
     super.dispose();
-    _player?.dispose();
     for (final p in _pool) {
       p.dispose();
     }

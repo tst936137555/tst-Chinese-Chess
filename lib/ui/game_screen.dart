@@ -24,6 +24,7 @@ class GamePage extends StatefulWidget {
     this.initialLevel,
     this.initialUserRed,
     this.resumeGame = false,
+    this.engine,
   });
 
   final SharedPreferences prefs;
@@ -33,6 +34,9 @@ class GamePage extends StatefulWidget {
   final bool? initialUserRed;
   /// true = 继续上局
   final bool resumeGame;
+  /// 测试注入伪造引擎；空则使用全局单例（生产路径不受影响）
+  @visibleForTesting
+  final EngineClient? engine;
 
   @override
   State<GamePage> createState() => _GamePageState();
@@ -44,6 +48,10 @@ class _GamePageState extends State<GamePage>
   (int, int)? _selected;
   List<Move> _legalTargets = [];
   GameController get c => _controller!;
+
+  /// 测试钩子：当前对局控制器（断言用）
+  @visibleForTesting
+  GameController? get controller => _controller;
 
   /// 走子动画
   AnimationController? _animController;
@@ -92,7 +100,7 @@ class _GamePageState extends State<GamePage>
 
   Future<void> _init() async {
     final controller = GameController(
-      engine: PikafishEngine.instance,
+      engine: widget.engine ?? PikafishEngine.instance,
       prefs: widget.prefs,
       initialLevel: widget.initialLevel,
     );
@@ -125,9 +133,8 @@ class _GamePageState extends State<GamePage>
   void _onGameChanged() {
     if (!mounted) return;
     // 棋谱归档失败提示：终局遮罩会盖住横幅区，改用 SnackBar 主动弹出（只提示一次）
-    final archiveNotice = c.archiveNotice;
+    final archiveNotice = c.takeArchiveNotice();
     if (archiveNotice != null) {
-      c.archiveNotice = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           ScaffoldMessenger.of(context)
@@ -140,20 +147,28 @@ class _GamePageState extends State<GamePage>
     _animatedHistoryLength = len;
     // 长度减少（悔棋 / 新开局）时终止进行中的动画：否则动画会基于回退后的
     // 棋盘绘制，终点格为空出现"棋子空洞"，或让被恢复的棋子错误滑动。
-    // 注意"长度不变"（len == prevLen）只是 thinking 开关等纯状态通知——
-    // 用户落子后引擎同步开始思考，thinking 通知恰好紧跟动画启动，
-    // 这里若一并 kill，用户走子动画会被立即终止（AI 走子后无后续通知
-    // 故幸存）。所以长度不变时只跳过，不动动画。
+    // 长度不变（len == prevLen）只是 thinking/横幅等纯状态通知——用户落子后
+    // 引擎同步开始思考，thinking 通知恰好紧跟动画启动，重复触发会让动画
+    // 从头重放、音效连响，这里只跳过，不动动画。
     if (len == 0 || len < prevLen) {
       if (_animMove != null) {
         _animMove = null;
         _animCaptured = null;
         _animController?.stop();
       }
-      return;
+    } else if (len > prevLen) {
+      final last = c.history.last;
+      _animateMove(last.move, last.capturedPieceObj);
     }
-    final last = c.history.last;
-    _animateMove(last.move, last.capturedPieceObj);
+    // 对局自然结束（将死/困毙/重复判和/结束此局）时展示结果遮罩。
+    // 结束瞬间的过渡通知（引擎仍在收尾等）由 !thinking/!ending 挡住，
+    // 待收尾完成后的通知再触发。
+    if (c.status != GameStatus.playing &&
+        !c.thinking &&
+        !c.ending &&
+        !_showEndOverlay) {
+      _showGameEnd();
+    }
   }
 
   @override
@@ -209,8 +224,8 @@ class _GamePageState extends State<GamePage>
       c.clearHints();
       setState(() {
         _selected = (file, rank);
-        _legalTargets = c.board
-            .legalMoves()
+        // 复用 controller 缓存的全量合法走法，按起点过滤即可
+        _legalTargets = c.legalMoves
             .where((m) => m.fromFile == file && m.fromRank == rank)
             .toList();
       });
@@ -261,6 +276,8 @@ class _GamePageState extends State<GamePage>
   void _showGameEnd() {
     final s = c.status;
     if (s == GameStatus.playing) return;
+    // 已展示过则跳过：_onGameChanged 与 _confirmEndGame 双路径触发时只生效一次
+    if (_showEndOverlay) return;
     final snd = Sounds.instance;
     final (title, msg) = switch (s) {
       GameStatus.redWin => (
@@ -331,22 +348,7 @@ class _GamePageState extends State<GamePage>
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        // 对局自然结束（将死/困毙/重复）时展示结果遮罩
-        // （条件不满足时直接短路，避免每帧注册回调）
-        if (c.status != GameStatus.playing &&
-            !c.thinking && !c.ending && !_showEndOverlay && mounted) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted &&
-                c.status != GameStatus.playing &&
-                !c.thinking &&
-                !c.ending &&
-                !_showEndOverlay) {
-              _showGameEnd();
-            }
-          });
-        }
-
-        // 走子动画已由 _onGameChanged 在状态通知时同步触发（渲染前）
+        // 终局遮罩由 _onGameChanged 监听通知统一触发（渲染前）
 
         final busy = c.thinking || c.hinting || c.ending;
         final targetSquares =

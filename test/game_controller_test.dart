@@ -20,6 +20,9 @@ class FakeEngineClient implements EngineClient {
   bool failThink = false;
   bool failAnalyze = false;
 
+  /// 非引擎类异常（验证通用异常同样透传给用户）
+  bool failAnalyzeGeneric = false;
+
   /// 非空时 think() 挂起直到测试放行（模拟慢思考）
   Completer<EngineResult>? thinkGate;
   Completer<AnalysisResult>? analyzeGate;
@@ -61,6 +64,7 @@ class FakeEngineClient implements EngineClient {
   }) async {
     analyzeCalls++;
     if (failAnalyze) throw const EngineUnavailableException('伪造引擎故障');
+    if (failAnalyzeGeneric) throw StateError('boom');
     final gate = analyzeGate;
     if (gate != null) return gate.future;
     return analyzeResult;
@@ -77,7 +81,7 @@ Future<void> _settle() => Future<void>.delayed(const Duration(milliseconds: 30))
 final _tempDirs = <Directory>[];
 
 Future<GameController> _newController(FakeEngineClient engine,
-    {SharedPreferences? prefs, bool userRed = true}) async {
+    {SharedPreferences? prefs, bool userRed = true, File? archiveFile}) async {
   final p = prefs ?? await _freshPrefs();
   // 存档注入临时文件，避免测试触碰平台通道（path_provider）
   final tmp = await Directory.systemTemp.createTemp('xq_gc_test');
@@ -86,10 +90,22 @@ Future<GameController> _newController(FakeEngineClient engine,
     engine: engine,
     prefs: p,
     initialLevel: DifficultyLevel.master,
-    archiveFile: File('${tmp.path}${Platform.pathSeparator}archive.json'),
+    archiveFile: archiveFile ??
+        File('${tmp.path}${Platform.pathSeparator}archive.json'),
   );
   c.userPlaysRed = userRed;
   return c;
+}
+
+/// 仅写盘失败的伪造 prefs：验证自动保存失败的用户提示路径
+class _FailingPrefs implements SharedPreferences {
+  @override
+  Future<bool> setString(String key, String value) async =>
+      throw Exception('模拟磁盘写入失败');
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError(
+      '测试未实现: ${invocation.memberName}');
 }
 
 Future<SharedPreferences> _freshPrefs() async {
@@ -158,7 +174,6 @@ void main() {
 
     expect(c.history.length, 2, reason: '用户一步 + AI 一步');
     expect(c.lastMove?.uci, 'h9g7');
-    expect(c.engineScore, -20);
     expect(c.thinking, isFalse);
     expect(c.engineNotice, isNull);
     expect(c.isUserTurn, isTrue, reason: 'AI 走完回到用户');
@@ -171,7 +186,7 @@ void main() {
     c.tryMove(Move.fromUci('h2e2'));
     await _settle();
 
-    expect(c.engineNotice, '引擎不可用，AI 暂停走棋');
+    expect(c.engineNotice, 'AI 暂停走棋：伪造引擎故障');
     expect(c.history.length, 1, reason: 'AI 未能落子');
     expect(c.thinking, isFalse);
     expect(c.status, GameStatus.playing);
@@ -316,6 +331,9 @@ void main() {
     await c.flushArchives();
     expect(c.status, GameStatus.draw);
     expect(c.ending, isFalse);
+    // 故障兜底判和须如实提示并透传具体原因，而非伪装成局势判定结果
+    expect(c.endReason, '引擎分析失败，按平局结算：伪造引擎故障');
+    expect(c.engineNotice, '引擎分析失败，按平局结算：伪造引擎故障');
   });
 
   test('结束对局：按引擎分差判定胜负', () async {
@@ -356,7 +374,7 @@ void main() {
     final c = await _newController(engine);
 
     await c.hint();
-    expect(c.engineNotice, '引擎不可用，无法获取提示');
+    expect(c.engineNotice, '无法获取提示：伪造引擎故障');
     expect(c.hinting, isFalse);
   });
 
@@ -369,5 +387,95 @@ void main() {
     c.setLevel(DifficultyLevel.beginner);
     expect(prefs.getString('level'), '入门');
     expect(c.level, DifficultyLevel.beginner);
+  });
+
+  test('自动保存失败时如实提示（不再静默吞错）', () async {
+    final c = await _newController(FakeEngineClient(), prefs: _FailingPrefs());
+
+    c.tryMove(Move.fromUci('h2e2'));
+    await _settle();
+
+    expect(c.saveNotice, contains('对局保存失败'));
+    expect(c.saveNotice, contains('模拟磁盘写入失败'));
+  });
+
+  test('自动保存仅存 uci 序列（不再冗余 fen/captured/notation/status）', () async {
+    final prefs = await _freshPrefs();
+    final c = await _newController(FakeEngineClient(), prefs: prefs);
+
+    c.tryMove(Move.fromUci('h2e2'));
+    await _settle();
+
+    final raw = prefs.getString('saved_game');
+    expect(raw, isNotNull);
+    final data = jsonDecode(raw!) as Map<String, dynamic>;
+    expect(data.containsKey('status'), isFalse);
+    expect(data['history'], [
+      {'uci': 'h2e2'},
+      {'uci': 'h9g7'},
+    ]);
+  });
+
+  test('saveNow 生命周期兜底：AI 思考中也落盘当前局面', () async {
+    final engine = FakeEngineClient();
+    engine.thinkGate = Completer<EngineResult>();
+    final prefs = await _freshPrefs();
+    final c = await _newController(engine, prefs: prefs);
+
+    c.tryMove(Move.fromUci('h2e2'));
+    await _settle();
+    await c.saveNow();
+    var data =
+        jsonDecode(prefs.getString('saved_game')!) as Map<String, dynamic>;
+    expect((data['history'] as List).length, 1, reason: 'AI 未应答时保存当前 1 步');
+
+    engine.thinkGate!
+        .complete(EngineResult(move: Move.fromUci('h9g7'), scoreCp: -20));
+    await _settle();
+    data = jsonDecode(prefs.getString('saved_game')!) as Map<String, dynamic>;
+    expect((data['history'] as List).length, 2);
+  });
+
+  test('归档棋谱不再冗余 fen 字段', () async {
+    final tmp = await Directory.systemTemp.createTemp('xq_gc_test');
+    _tempDirs.add(tmp);
+    final archive = File('${tmp.path}${Platform.pathSeparator}archive.json');
+    final c = await _newController(FakeEngineClient(), archiveFile: archive);
+
+    c.tryMove(Move.fromUci('h2e2'));
+    await _settle();
+    await c.endGameByScore();
+    await c.flushArchives();
+
+    final data = jsonDecode(await archive.readAsString()) as List;
+    final hist = (data.first as Map)['history'] as List;
+    expect(hist.first, {'uci': 'h2e2', 'captured': null, 'notation': '炮二平五'});
+  });
+
+  test('提示遇非引擎异常时同样透传给用户', () async {
+    final engine = FakeEngineClient()..failAnalyzeGeneric = true;
+    final c = await _newController(engine);
+
+    await c.hint();
+    expect(c.engineNotice, contains('无法获取提示'));
+    expect(c.engineNotice, contains('boom'));
+    expect(c.hinting, isFalse);
+  });
+
+  test('legalMoves 缓存随走子/悔棋/新局同步', () async {
+    final c = await _newController(FakeEngineClient());
+    List<String> cached() =>
+        c.legalMoves.map((m) => m.uci).toList()..sort();
+    List<String> fresh() =>
+        c.board.legalMoves().map((m) => m.uci).toList()..sort();
+
+    expect(cached(), fresh());
+    c.tryMove(Move.fromUci('h2e2'));
+    await _settle();
+    expect(cached(), fresh());
+    c.undo();
+    expect(cached(), fresh());
+    c.newGame(userRed: true);
+    expect(cached(), fresh());
   });
 }

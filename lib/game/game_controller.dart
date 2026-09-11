@@ -62,6 +62,8 @@ class GameController extends ChangeNotifier {
     } else {
       _saveSettings();
     }
+    // 初始局面即重算合法走法缓存，保证 legalMoves 读取始终有效
+    _updateStatus();
   }
 
   final EngineClient engine;
@@ -92,24 +94,83 @@ class GameController extends ChangeNotifier {
   /// 用户执红（先手）
   bool userPlaysRed = true;
 
-  /// AI 是否正在思考
-  bool thinking = false;
+  /// 字段赋值并在值变化时通知监听者（已销毁不再通知）。
+  /// 统一收口可变状态的对外赋值，杜绝"赋值后忘记 notifyListeners"造成 UI 不同步。
+  void _setAndNotify<T>(T current, T next, void Function(T) assign) {
+    if (current == next) return;
+    assign(next);
+    if (!_disposed) notifyListeners();
+  }
 
-  /// 引擎评估（红方视角厘兵值）
-  int engineScore = 0;
+  bool _thinking = false;
+
+  /// AI 是否正在思考
+  bool get thinking => _thinking;
+
+  set thinking(bool v) => _setAndNotify(_thinking, v, (x) => _thinking = x);
 
   /// 局内醒目提示（重复局面 / 长将预警），每次局面变化后在 _updateStatus 重算
-  String? ruleNotice;
+  String? _ruleNotice;
+
+  String? get ruleNotice => _ruleNotice;
+
+  set ruleNotice(String? v) =>
+      _setAndNotify(_ruleNotice, v, (x) => _ruleNotice = x);
 
   /// 终局原因说明（三次重复判和 / 长将判负），无则为 null
-  String? endReason;
+  String? _endReason;
+
+  String? get endReason => _endReason;
+
+  set endReason(String? v) =>
+      _setAndNotify(_endReason, v, (x) => _endReason = x);
 
   /// 引擎故障提示（不可用/超时等）：与规则预警同区域展示，
   /// 引擎调用成功后自动清除，新对局时重置
-  String? engineNotice;
+  String? _engineNotice;
+
+  String? get engineNotice => _engineNotice;
+
+  set engineNotice(String? v) =>
+      _setAndNotify(_engineNotice, v, (x) => _engineNotice = x);
+
+  String? _archiveNotice;
 
   /// 棋谱归档失败提示：对局结束时写入存档失败则展示（读写错误不再静默）
-  String? archiveNotice;
+  String? get archiveNotice => _archiveNotice;
+
+  set archiveNotice(String? v) =>
+      _setAndNotify(_archiveNotice, v, (x) => _archiveNotice = x);
+
+  /// 取走归档失败提示（取走即清除且不触发通知）：
+  /// UI 收到该提示的通知后转 SnackBar 展示，清除本身无需再次通知重建。
+  String? takeArchiveNotice() {
+    final n = _archiveNotice;
+    _archiveNotice = null;
+    return n;
+  }
+
+  String? _saveNotice;
+
+  /// 对局自动保存失败提示（切后台/退出后进度可能丢失，下次保存成功自动清除）
+  String? get saveNotice => _saveNotice;
+
+  void _setSaveNotice(String? v) =>
+      _setAndNotify(_saveNotice, v, (x) => _saveNotice = x);
+
+  /// 当前行棋方的全部合法走法（随局面在 _updateStatus 重算）。
+  /// 供 UI 点选棋子时按起点过滤复用，避免每次点击全盘重算。
+  List<Move> _legalMovesCache = const [];
+
+  List<Move> get legalMoves => _legalMovesCache;
+
+  /// 重置为初始局面（新局/恢复失败兜底），并重算合法走法缓存
+  void _resetToStart() {
+    _board = Board();
+    _history = [];
+    _status = GameStatus.playing;
+    _updateStatus();
+  }
 
   /// 正在恢复存档
   bool get loading => _loading;
@@ -156,10 +217,11 @@ class GameController extends ChangeNotifier {
 
   /// 提示：由最高难度引擎给出两个建议走法
   Future<void> hint() async {
-    if (thinking || _status != GameStatus.playing || !isUserTurn) return;
+    if (thinking || hinting || _status != GameStatus.playing || !isUserTurn) {
+      return;
+    }
     hinting = true;
     _hints = const [];
-    notifyListeners();
     // 记录请求时的局面：期间走子/悔棋导致局面变化（含悔棋后重走、长度不变）即作废
     final fenAtRequest = _history.isEmpty ? '' : _history.last.fenAfter;
     try {
@@ -185,12 +247,13 @@ class GameController extends ChangeNotifier {
       engineNotice = null;
     } on EngineUnavailableException catch (e) {
       debugPrint('提示获取失败: $e');
-      engineNotice = '引擎不可用，无法获取提示';
+      engineNotice = '无法获取提示：${e.message}';
     } catch (e) {
       debugPrint('提示获取失败: $e');
+      // 非引擎异常同样透传，与 endGameByScore 的如实呈现策略一致
+      engineNotice = '无法获取提示：$e';
     } finally {
       hinting = false;
-      if (!_disposed) notifyListeners();
     }
   }
 
@@ -207,19 +270,19 @@ class GameController extends ChangeNotifier {
   /// 当前提示的走法（最多两个）
   List<Move> get hints => _hints;
 
+  bool _hinting = false;
+
   /// 是否正在获取提示
-  bool hinting = false;
+  bool get hinting => _hinting;
+
+  set hinting(bool v) => _setAndNotify(_hinting, v, (x) => _hinting = x);
 
   /// 开始新对局；[userRed] 用户是否执红先行
   void newGame({bool? userRed}) {
     if (userRed != null) userPlaysRed = userRed;
-    _board = Board();
-    _history = [];
-    _status = GameStatus.playing;
-    engineScore = 0;
+    _resetToStart();
     thinking = false;
-    ruleNotice = null;
-    endReason = null;
+    engineNotice = null;
     _hints = const [];
     notifyListeners();
     _saveSettings();
@@ -266,11 +329,14 @@ class GameController extends ChangeNotifier {
   void _updateStatus() {
     ruleNotice = null;
     endReason = null;
+    // 合法走法在此统一重算并缓存（走子/悔棋/新局均会经过此处），
+    // UI 点选棋子时复用，不再每次点击全盘重算
+    final nextMoves = _board.legalMoves();
+    _legalMovesCache = nextMoves;
     if (_history.isEmpty) {
       _status = GameStatus.playing;
       return;
     }
-    final nextMoves = _board.legalMoves();
     if (nextMoves.isEmpty) {
       _status = _board.redToMove ? GameStatus.blackWin : GameStatus.redWin;
       return;
@@ -345,11 +411,9 @@ class GameController extends ChangeNotifier {
     // 记录请求时局面：期间新开局/恢复存档等导致局面变化即作废结果
     final fenAtRequest = _board.fen;
     thinking = true;
-    notifyListeners();
     try {
       final result = await engine.think(Board.cloneFrom(_board), _level);
       engineNotice = null;
-      engineScore = result.scoreCp;
       if (!_disposed &&
           _status == GameStatus.playing &&
           _board.redToMove != userPlaysRed &&
@@ -358,14 +422,14 @@ class GameController extends ChangeNotifier {
         _applyMove(result.move);
       }
     } on EngineUnavailableException catch (e) {
-      // 引擎不可用：明确告知用户，不静默卡住，也绝不伪造走法
+      // 引擎不可用：透传具体原因（含 fail-fast 时的"请重启应用"引导），
+      // 不静默卡住，也绝不伪造走法
       debugPrint('引擎错误: $e');
-      engineNotice = '引擎不可用，AI 暂停走棋';
+      engineNotice = 'AI 暂停走棋：${e.message}';
     } catch (e) {
       debugPrint('引擎错误: $e');
     } finally {
       thinking = false;
-      if (!_disposed) notifyListeners();
     }
   }
 
@@ -388,21 +452,19 @@ class GameController extends ChangeNotifier {
   /// 分差 600 以内为平局，某方超过 600 则该方获胜
   /// （600 ≈ 皮卡鱼子力尺度下净多一马/炮；绝杀分 ±9000+ 必然判胜）。
   Future<void> endGameByScore() async {
-    if (_status != GameStatus.playing) return;
+    if (_status != GameStatus.playing || ending) return;
     if (_history.isEmpty) {
       // 一步未走直接结束：无局势可评，视为平局
       _status = GameStatus.draw;
       unawaited(_archiveGame());
       notifyListeners();
-      _saveState();
+      await _saveState();
       return;
     }
     ending = true;
-    notifyListeners();
     try {
       final result = await engine.analyze(Board.cloneFrom(_board),
           depth: 12, movetimeMs: 2000);
-      engineScore = result.scoreCp;
       if (result.scoreCp > 600) {
         _status = GameStatus.redWin;
       } else if (result.scoreCp < -600) {
@@ -413,17 +475,28 @@ class GameController extends ChangeNotifier {
       unawaited(_archiveGame());
     } catch (e) {
       debugPrint('结束分析失败: $e');
+      // 如实告知：此平局是故障兜底，而非局势判定结果，并附具体原因
+      // （引擎故障透传 message，含 fail-fast 时的"请重启应用"引导；
+      // endReason 进结算弹窗，engineNotice 与其他引擎故障提示同横幅展示）
+      final reason = e is EngineUnavailableException
+          ? '引擎分析失败，按平局结算：${e.message}'
+          : '分析异常，按平局结算：$e';
+      endReason = reason;
+      engineNotice = reason;
       _status = GameStatus.draw;
       unawaited(_archiveGame());
     } finally {
       ending = false;
-      if (!_disposed) notifyListeners();
-      _saveState();
+      await _saveState();
     }
   }
 
+  bool _ending = false;
+
   /// 是否正在做结束局势分析
-  bool ending = false;
+  bool get ending => _ending;
+
+  set ending(bool v) => _setAndNotify(_ending, v, (x) => _ending = x);
 
   void _undoOne() {
     if (_history.isEmpty) return;
@@ -465,16 +538,16 @@ class GameController extends ChangeNotifier {
               GameStatus.blackWin => 'blackWin',
               _ => 'draw',
             },
+            // 仅存 uci/captured/notation：fen 可由 uci 序列重放推导，
+            // 复盘端（_historyFromArchive）以重放为准逐步重算
             history: _history.map((e) => {
                   'uci': e.move.uci,
                   'captured': e.capturedPiece,
                   'notation': e.notation,
-                  'fen': e.fenAfter,
                 }).toList(),
           ));
-      if (!ok && !_disposed) {
+      if (!ok) {
         archiveNotice = '棋谱保存失败';
-        notifyListeners();
       }
     } catch (e) {
       // 归档是后台任务：异常只记录，绝不冒泡为未处理异步错误
@@ -497,20 +570,22 @@ class GameController extends ChangeNotifier {
       // 对局已结束：棋局不可续玩，清除存档（结果已归档到复盘棋谱）
       if (_status != GameStatus.playing) {
         await _prefs.remove('saved_game');
+        _setSaveNotice(null);
         return;
       }
       await _prefs.setString('saved_game', jsonEncode({
-        'history': _history.map((e) => {
-          'uci': e.move.uci,
-          'captured': e.capturedPiece,
-          'notation': e.notation,
-          'fen': e.fenAfter,
-        }).toList(),
+        // 仅存 uci 序列：captured/notation/fen/status 均可在恢复重放时
+        // 经 _applyMove 全量重算（旧版冗余字段由重放端兼容读取）
+        'history': [for (final e in _history) {'uci': e.move.uci}],
         'userRed': userPlaysRed,
         'levelName': _level.name,
-        'status': _status.index,
       }));
-    } catch (_) {}
+      _setSaveNotice(null);
+    } catch (e) {
+      // 自动保存失败如实提示（旧版静默吞错，用户退出后进度无声丢失）
+      debugPrint('对局保存失败: $e');
+      _setSaveNotice('对局保存失败，进度可能丢失：$e');
+    }
   }
 
   /// 恢复上次对局
@@ -528,9 +603,7 @@ class GameController extends ChangeNotifier {
         (l) => l.name == data['levelName'],
         orElse: () => DifficultyLevel.medium,
       );
-      _board = Board();
-      _history = [];
-      _status = GameStatus.playing;
+      _resetToStart();
       final hist = data['history'] as List;
       for (final e in hist) {
         // Move.fromUci 严格校验格式，非法字符/越界直接抛 FormatException，
@@ -538,9 +611,7 @@ class GameController extends ChangeNotifier {
         final m = Move.fromUci(e['uci'] as String);
         if (!_board.isLegal(m)) {
           // 数据损坏时放弃恢复
-          _board = Board();
-          _history = [];
-          _status = GameStatus.playing;
+          _resetToStart();
           return false;
         }
         _applyMove(m, persist: false);
@@ -550,13 +621,12 @@ class GameController extends ChangeNotifier {
       userPlaysRed = savedUserRed;
       _level = savedLevel;
       notifyListeners();
-      _maybeEngineMove();
+      // 故意不等 AI 思考完成：恢复流程以"局面已就位"为准即返回
+      unawaited(_maybeEngineMove());
       return true;
     } catch (_) {
       // 数据损坏：丢弃恢复结果，避免留下走了一半的残缺局面
-      _board = Board();
-      _history = [];
-      _status = GameStatus.playing;
+      _resetToStart();
       return false;
     } finally {
       _loading = false;

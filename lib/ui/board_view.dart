@@ -96,21 +96,27 @@ class BoardView extends StatelessWidget {
         child: SizedBox(
           width: boardWidth,
           height: boardHeight,
-          child: CustomPaint(
-            painter: _BoardPainter(
-              board: board,
-              flip: flipBoard,
-              selected: selected,
-              legalTargets: legalTargets,
-              lastMove: lastMove,
-              checkPos: checkPos,
-              animatingMove: animatingMove,
-              animationProgress: animationProgress,
-              capturedPiece: capturedPiece,
-              suggestedMove: suggestedMove,
-              suggestedMoves: suggestedMoves,
-              quality: quality,
-              cell: cell,
+          // RepaintBoundary：走子动画期间（AnimatedBuilder 每帧新建 painter）
+          // 将重绘隔离在棋盘自身图层，避免扩散到同层的横幅/状态栏等节点
+          child: RepaintBoundary(
+            child: CustomPaint(
+              isComplex: true, // 棋盘为复杂静态内容，提示合成器缓存图层
+              willChange: animationProgress != null, // 仅动画期间预期逐帧变化
+              painter: _BoardPainter(
+                board: board,
+                flip: flipBoard,
+                selected: selected,
+                legalTargets: legalTargets,
+                lastMove: lastMove,
+                checkPos: checkPos,
+                animatingMove: animatingMove,
+                animationProgress: animationProgress,
+                capturedPiece: capturedPiece,
+                suggestedMove: suggestedMove,
+                suggestedMoves: suggestedMoves,
+                quality: quality,
+                cell: cell,
+              ),
             ),
           ),
         ),
@@ -516,8 +522,10 @@ class _BoardPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _BoardPainter old) =>
       old.cell != cell ||
-      // Board 为可变对象（makeMove 原地修改），用 fen 内容比较
-      old.board.fen != board.fen ||
+      // Board 为可变对象（makeMove 原地修改），主路径下新旧 painter 持有
+      // 同一实例，引用比较恒等；改用 O(1) Zobrist 局面哈希（走子增量维护，
+      // 重复局面检测同源）判定内容变化，避免动画每帧两次完整 FEN 序列化
+      old.board.positionHash != board.positionHash ||
       old.flip != flip ||
       old.selected != selected ||
       !listEquals(old.legalTargets, legalTargets) ||

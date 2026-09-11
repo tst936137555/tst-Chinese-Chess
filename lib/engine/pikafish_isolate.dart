@@ -79,7 +79,7 @@ class _RequestContext {
 }
 
 /// 引擎 isolate 入口：按平台选择传输层（子进程 / iOS FFI），运行引擎会话。
-Future<void> _engineIsolateEntry(List args) async {
+Future<void> _engineIsolateEntry(List<Object> args) async {
   final mainPort = args[0] as SendPort;
   final exePath = args[1] as String;
   final healthOut = args[3] as SendPort;

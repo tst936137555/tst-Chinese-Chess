@@ -38,7 +38,8 @@ class _ProcessIo implements EngineIo {
         .transform(const Utf8Decoder())
         .transform(const LineSplitter())
         .listen(onLine);
-    proc.exitCode.then(onExit);
+    // 注册退出回调即返回：退出事件本身是异步通知，无需等待
+    unawaited(proc.exitCode.then(onExit));
     return _ProcessIo._(proc);
   }
 

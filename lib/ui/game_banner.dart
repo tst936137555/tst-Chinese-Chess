@@ -15,11 +15,18 @@ Widget? buildGameRuleBanner(GameController c) {
   final inCheck = c.checkPos != null;
   final notice = c.ruleNotice;
   final engineNotice = c.engineNotice;
-  if (!inCheck && notice == null && engineNotice == null) return null;
+  final saveNotice = c.saveNotice;
+  if (!inCheck &&
+      notice == null &&
+      engineNotice == null &&
+      saveNotice == null) {
+    return null;
+  }
   final text = [
     if (inCheck) '将军！',
     ?notice,
     ?engineNotice,
+    ?saveNotice,
   ].join('　');
   final color = inCheck ? Colors.red.shade700 : Colors.orange.shade800;
   return Container(
@@ -48,7 +55,9 @@ Widget? buildGameRuleBanner(GameController c) {
         Expanded(
           child: Text(
             text,
-            maxLines: 1,
+            // 允许三行：引擎故障/保存失败提示透传具体原因（如 fail-fast 的
+            // "请重启应用"引导），单行省略号会把关键引导截掉
+            maxLines: 3,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: const TextStyle(
