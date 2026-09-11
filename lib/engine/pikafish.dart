@@ -247,7 +247,7 @@ class PikafishEngine implements EngineClient {
     } else {
       try {
         exePath = await _resolveEngineExecutable();
-        nnuePath = await _copyNnueToTmp();
+        nnuePath = await _resolveNnuePath();
       } catch (e) {
         _startFailures++;
         throw EngineUnavailableException('引擎初始化失败: $e');
@@ -447,7 +447,60 @@ class PikafishEngine implements EngineClient {
   /// NNUE 资产路径（避免散落的字符串字面量）
   static const _nnueAssetKey = 'assets/engine/pikafish.nnue';
 
-  /// 复制 NNUE 权重到引擎可访问的临时目录。
+  /// 解析 NNUE 权重路径（按平台择优，避免无谓的整块复制）：
+  /// - 桌面/iOS：直读安装包内 flutter_assets 原文件（零复制、零峰值内存）；
+  /// - Android：资产封在 APK 内，引擎子进程无法直读，走平台通道流式复制
+  ///   （MainActivity 侧 64KB 分段写盘，文件名带 lastUpdateTime 指纹）；
+  /// - 以上不可用时回退内存复制（[_copyNnueToTmp]），任何布局变化下仍可用。
+  Future<String> _resolveNnuePath() async {
+    if (Platform.isAndroid) {
+      try {
+        final path = await const MethodChannel('tst_xiangqi/engine')
+            .invokeMethod<String>('getNnuePath');
+        if (path != null && path.isNotEmpty) return path;
+      } catch (e) {
+        debugPrint('[Pikafish] NNUE 平台通道复制失败，回退内存复制: $e');
+      }
+    } else {
+      final direct = _directAssetNnuePath();
+      if (direct != null) return direct;
+    }
+    return _copyNnueToTmp();
+  }
+
+  /// 尝试定位安装包内 flutter_assets 的 NNUE 原文件（桌面 / iOS）。
+  /// 路径候选兼容不同 Flutter 版本的 bundle 布局；均不存在返回 null。
+  String? _directAssetNnuePath() {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final List<String> candidates;
+    if (Platform.isMacOS) {
+      // Contents/MacOS/exe → Contents/Frameworks/App.framework/.../flutter_assets
+      candidates = [
+        '$exeDir/../Frameworks/App.framework/Versions/A/Resources/flutter_assets/$_nnueAssetKey',
+        '$exeDir/../Frameworks/App.framework/Resources/flutter_assets/$_nnueAssetKey',
+      ];
+    } else if (Platform.isIOS) {
+      // <Bundle>/exe → <Bundle>/Frameworks/App.framework/flutter_assets
+      candidates = [
+        '$exeDir/Frameworks/App.framework/flutter_assets/$_nnueAssetKey',
+        '$exeDir/../Frameworks/App.framework/flutter_assets/$_nnueAssetKey',
+      ];
+    } else if (Platform.isWindows) {
+      // <exe 目录>/data/flutter_assets
+      candidates = [
+        '$exeDir\\data\\flutter_assets\\$_nnueAssetKey',
+        '$exeDir/data/flutter_assets/$_nnueAssetKey',
+      ];
+    } else {
+      return null;
+    }
+    for (final c in candidates) {
+      if (File(c).existsSync()) return c;
+    }
+    return null;
+  }
+
+  /// 回退路径：复制 NNUE 权重到引擎可访问的临时目录。
   ///
   /// 临时文件名携带构建指纹（主可执行文件的修改时间）：
   /// - 同一次安装内已落盘即直接复用，不再把 ~40MB 资产全量读入内存；
