@@ -61,16 +61,24 @@ jobs:
           upload_one() {
             # $1=上游URL $2=SHA256(可空) $3=镜像资产名（= manifest mirrorUrl 的 basename）
             local url="$1" sha="$2" name="$3"
-            if gh release view "$mirror_tag" --json assets -q ".[].name" | grep -Fxq "$name"; then
+            if gh release view "$mirror_tag" --json assets -q '.assets[].name' | grep -Fxq "$name"; then
               echo "[跳过] $name（镜像已存在）"
               return 0
             fi
             echo "[转存] $url → $name"
-            curl -fsSL --retry 3 -o "$name" "$url"
+            # --retry-all-errors：runner 偶发连接重置（curl exit 35）不在
+            # 默认重试范围（默认只重试超时/5xx/429），必须显式开启
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$name" "$url"
             if [ -n "$sha" ] && [ "$sha" != "null" ]; then
               echo "$sha  $name" | sha256sum -c -
             fi
-            gh release upload "$mirror_tag" "$name" --clobber
+            local i
+            for i in 1 2 3; do
+              if gh release upload "$mirror_tag" "$name" --clobber; then return 0; fi
+              echo "upload 第 $i 次失败，重试"
+              sleep 5
+            done
+            return 1
           }
 
           # 资产名以 manifest 的 mirrorUrl basename 为唯一事实源：
@@ -88,7 +96,7 @@ jobs:
                      "$(basename "$(jq -r '.font.mirrorUrl' "$MANIFEST")")"
 
           echo "镜像资产："
-          gh release view "$mirror_tag" --json assets -q '.[] | "  \(.name)  \(.size) bytes"'
+          gh release view "$mirror_tag" --json assets -q '.assets[] | "  \(.name)  \(.size) bytes"'
 
       # 收尾校验：manifest 中每个 mirrorUrl 都应能在镜像 release 中命中
       - name: Verify manifest mirror URLs match released assets
@@ -98,7 +106,7 @@ jobs:
           set -euo pipefail
           MANIFEST="tool/engine_manifest.json"
           mirror_tag=$(jq -r '.mirror.tag' "$MANIFEST")
-          assets=$(gh release view "$mirror_tag" --json assets -q '.[].name')
+          assets=$(gh release view "$mirror_tag" --json assets -q '.assets[].name')
 
           check_url() {
             # $1=manifest 中的 mirrorUrl
