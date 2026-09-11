@@ -50,29 +50,64 @@ String moveToChinese(Board board, Move m) {
   // 仕/相不需要前缀：同线时进退方向天然区分（如仕六进五/仕六退五）。
   String prefix = '';
   if (p.type != PieceType.advisor && p.type != PieceType.elephant) {
-    final ranks = <int>[];
-    for (int rank = 0; rank < 10; rank++) {
-      final q = board.pieceAt(m.fromFile, rank);
-      if (q != null && q.isRed == red && q.type == p.type) ranks.add(rank);
-    }
-    if (ranks.length >= 2) {
-      // 靠近对方的一侧为"前"：红方 rank 小在前（已按升序收集），
-      // 黑方 rank 大在前（需反转）。
-      if (!red) {
-        for (int i = 0, j = ranks.length - 1; i < j; i++, j--) {
-          final t = ranks[i];
-          ranks[i] = ranks[j];
-          ranks[j] = t;
+    // 兵跨纵线消歧（xqbase 规范第四节）：当两条纵线上均有至少两个兵时，
+    // 这两条线上的兵从行棋方视角按「先右后左、每条线从前到后」依次用
+    // 一~五标记，其余纵线上的兵不参与标记。
+    if (p.type == PieceType.pawn) {
+      final pawnsPerFile = List<List<int>>.generate(9, (_) => []);
+      for (int file = 0; file < 9; file++) {
+        for (int rank = 0; rank < 10; rank++) {
+          final q = board.pieceAt(file, rank);
+          if (q != null && q.isRed == red && q.type == PieceType.pawn) {
+            pawnsPerFile[file].add(rank);
+          }
         }
       }
-      final idx = ranks.indexOf(m.fromRank);
-      final tags = switch (ranks.length) {
-        2 => const ['前', '后'],
-        3 => const ['前', '中', '后'],
-        _ => const ['一', '二', '三', '四', '五'],
-      };
-      prefix = tags[idx];
-      fromDigit = '';
+      final multiFiles = [
+        for (int file = 0; file < 9; file++)
+          if (pawnsPerFile[file].length >= 2) file,
+      ];
+      if (multiFiles.length >= 2 && multiFiles.contains(m.fromFile)) {
+        final ordered = <int>[];
+        // 行棋方右侧的纵线先编号：红方右侧为 file 大的一端，黑方相反。
+        for (final file in red ? multiFiles.reversed : multiFiles) {
+          // 每条纵线从前到后：红方前沿为 rank 小的一端，黑方相反。
+          final ranksInOrder =
+              red ? pawnsPerFile[file] : pawnsPerFile[file].reversed;
+          for (final rank in ranksInOrder) {
+            ordered.add(file * 10 + rank);
+          }
+        }
+        final idx = ordered.indexOf(m.fromFile * 10 + m.fromRank);
+        prefix = const ['一', '二', '三', '四', '五'][idx];
+        fromDigit = '';
+      }
+    }
+    if (prefix.isEmpty) {
+      final ranks = <int>[];
+      for (int rank = 0; rank < 10; rank++) {
+        final q = board.pieceAt(m.fromFile, rank);
+        if (q != null && q.isRed == red && q.type == p.type) ranks.add(rank);
+      }
+      if (ranks.length >= 2) {
+        // 靠近对方的一侧为"前"：红方 rank 小在前（已按升序收集），
+        // 黑方 rank 大在前（需反转）。
+        if (!red) {
+          for (int i = 0, j = ranks.length - 1; i < j; i++, j--) {
+            final t = ranks[i];
+            ranks[i] = ranks[j];
+            ranks[j] = t;
+          }
+        }
+        final idx = ranks.indexOf(m.fromRank);
+        final tags = switch (ranks.length) {
+          2 => const ['前', '后'],
+          3 => const ['前', '中', '后'],
+          _ => const ['一', '二', '三', '四', '五'],
+        };
+        prefix = tags[idx];
+        fromDigit = '';
+      }
     }
   }
 

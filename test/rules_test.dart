@@ -203,6 +203,41 @@ void main() {
       expect(moveToChinese(b, Move(2, 4, 1, 4)), '中兵平八');
       expect(moveToChinese(b, Move(2, 5, 1, 5)), '后兵平八');
     });
+
+    test('跨纵线 2+2 兵按先右后左、从前到后编号（xqbase 规范实例）', () {
+      // 红兵分布在四线 (file 5) 与六线 (file 3)，各两个：
+      // 右侧四线先编号，每条线从前（红方 rank 小）到后。
+      final b = Board.fromFen('4k4/3P1P3/9/3P1P3/9/9/9/9/9/4K4 w - - 0 1');
+      expect(moveToChinese(b, Move(5, 1, 4, 1)), '一兵平五');
+      expect(moveToChinese(b, Move(5, 3, 4, 3)), '二兵平五');
+      expect(moveToChinese(b, Move(3, 1, 4, 1)), '三兵平五');
+      expect(moveToChinese(b, Move(3, 3, 4, 3)), '四兵平五');
+    });
+
+    test('黑方跨纵线 2+2 兵：先黑方右侧（file 小），每线从前（rank 大）到后', () {
+      final b = Board.fromFen('4k4/9/9/9/9/9/3p1p3/9/3p1p3/4K4 b - - 0 1');
+      expect(moveToChinese(b, Move(3, 8, 4, 8)), '一卒平5');
+      expect(moveToChinese(b, Move(3, 6, 4, 6)), '二卒平5');
+      expect(moveToChinese(b, Move(5, 8, 4, 8)), '三卒平5');
+      expect(moveToChinese(b, Move(5, 6, 4, 6)), '四卒平5');
+    });
+
+    test('跨纵线 3+2 五兵用一~五编号', () {
+      final b = Board.fromFen('4k4/3P1P3/3P1P3/5P3/9/9/9/9/9/4K4 w - - 0 1');
+      expect(moveToChinese(b, Move(5, 1, 4, 1)), '一兵平五');
+      expect(moveToChinese(b, Move(5, 2, 4, 2)), '二兵平五');
+      expect(moveToChinese(b, Move(5, 3, 4, 3)), '三兵平五');
+      expect(moveToChinese(b, Move(3, 1, 4, 1)), '四兵平五');
+      expect(moveToChinese(b, Move(3, 2, 4, 2)), '五兵平五');
+    });
+
+    test('仅一条纵线有多兵时仍用前/后，其余纵线单兵不受影响', () {
+      // 红兵 2+1：四线 (file 5) 两个、二线 (file 7) 一个
+      final b = Board.fromFen('4k4/5P1P1/9/5P3/9/9/9/9/9/4K4 w - - 0 1');
+      expect(moveToChinese(b, Move(5, 1, 4, 1)), '前兵平五');
+      expect(moveToChinese(b, Move(5, 3, 4, 3)), '后兵平五');
+      expect(moveToChinese(b, Move(7, 1, 6, 1)), '兵二平三');
+    });
   });
 
   group('UCI 走法', () {
