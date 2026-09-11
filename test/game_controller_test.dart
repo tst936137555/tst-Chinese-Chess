@@ -264,6 +264,7 @@ void main() {
     await _settle();
 
     await c.endGameByScore();
+    await c.flushArchives();
     expect(c.status, GameStatus.draw);
     expect(c.ending, isFalse);
   });
@@ -278,6 +279,7 @@ void main() {
     await _settle();
 
     await c.endGameByScore();
+    await c.flushArchives();
     expect(c.status, GameStatus.redWin);
   });
 

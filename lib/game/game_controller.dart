@@ -414,38 +414,58 @@ class GameController extends ChangeNotifier {
     debugPrint('悔棋: ${entry.notation}');
   }
 
+  /// 在飞归档任务（终局 fire-and-forget 触发）。存档写入已全局串行，
+  /// 后发起的归档必然晚于先者完成，追踪最近一次即可代表全部在飞归档。
+  Future<void>? _archivePending;
+
+  /// 等待在飞归档落盘完成（测试收尾 / 生命周期兜底用）
+  Future<void> flushArchives() => _archivePending ?? Future<void>.value();
+
   /// 归档对局（对局结束时）
-  Future<void> _archiveGame() async {
+  Future<void> _archiveGame() {
+    final op = _archiveGameNow();
+    _archivePending = op;
+    return op;
+  }
+
+  Future<void> _archiveGameNow() async {
     if (_history.isEmpty) return;
-    final ok = await GameArchive.add(
-        archiveFile ?? await GameArchive.defaultArchiveFile(),
-        ArchivedGame(
-          time: DateTime.now(),
-          userRed: userPlaysRed,
-          levelName: _level.name,
-          result: switch (_status) {
-            GameStatus.redWin => 'redWin',
-            GameStatus.blackWin => 'blackWin',
-            _ => 'draw',
-          },
-          history: _history.map((e) => {
-                'uci': e.move.uci,
-                'captured': e.capturedPiece,
-                'notation': e.notation,
-                'fen': e.fenAfter,
-              }).toList(),
-        ));
-    if (!ok && !disposed) {
-      archiveNotice = '棋谱保存失败';
-      notifyListeners();
+    try {
+      final ok = await GameArchive.add(
+          archiveFile ?? await GameArchive.defaultArchiveFile(),
+          ArchivedGame(
+            time: DateTime.now(),
+            userRed: userPlaysRed,
+            levelName: _level.name,
+            result: switch (_status) {
+              GameStatus.redWin => 'redWin',
+              GameStatus.blackWin => 'blackWin',
+              _ => 'draw',
+            },
+            history: _history.map((e) => {
+                  'uci': e.move.uci,
+                  'captured': e.capturedPiece,
+                  'notation': e.notation,
+                  'fen': e.fenAfter,
+                }).toList(),
+          ));
+      if (!ok && !disposed) {
+        archiveNotice = '棋谱保存失败';
+        notifyListeners();
+      }
+    } catch (e) {
+      // 归档是后台任务：异常只记录，绝不冒泡为未处理异步错误
+      debugPrint('棋谱归档异常: $e');
     }
   }
 
-  /// 立即保存当前对局状态（生命周期兜底：切后台/进程终止前调用）
+  /// 立即保存当前对局状态（生命周期兜底：切后台/进程终止前调用），
+  /// 并等待在飞归档落盘，避免归档被进程终止打断
   Future<void> saveNow() async {
     // 页面已销毁时状态不再有效，跳过
     if (disposed) return;
     await _saveState();
+    await flushArchives();
   }
 
   /// 保存当前局面（自动保存）
