@@ -11,6 +11,9 @@ import '../engine/rules.dart';
 import '../game/game_controller.dart';
 import '../game/sounds.dart';
 import 'board_view.dart';
+import 'game_banner.dart';
+import 'game_end_overlay.dart';
+import 'game_status_bar.dart';
 import 'review_screen.dart';
 import 'theme.dart';
 
@@ -349,7 +352,7 @@ class _GamePageState extends State<GamePage>
         final targetSquares =
             _legalTargets.map((m) => (m.toFile, m.toRank)).toList();
         final anim = _animController;
-        final banner = _buildRuleBanner(c);
+        final banner = buildGameRuleBanner(c);
         final canLower =
             DifficultyLevel.all.indexOf(c.level) > 0;
         final canRaise =
@@ -400,86 +403,7 @@ class _GamePageState extends State<GamePage>
                 Column(
                   children: [
                 // 状态栏
-                XqPanel(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                  child: Row(
-                    children: [
-                      Text(
-                        'AI：${c.level.name}',
-                        style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: XqColors.red),
-                      ),
-                      const SizedBox(width: 12),
-                      if (c.thinking)
-                        const Expanded(
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                              SizedBox(width: 8),
-                              Text('皮卡鱼思考中…',
-                                  style: TextStyle(fontSize: 15)),
-                            ],
-                          ),
-                        )
-                      else if (c.hinting)
-                        const Expanded(
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                              SizedBox(width: 8),
-                              Text('引擎计算建议中…',
-                                  style: TextStyle(fontSize: 15)),
-                            ],
-                          ),
-                        )
-                      else if (c.ending)
-                        const Expanded(
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                              SizedBox(width: 8),
-                              Text('正在分析局势判定胜负…',
-                                  style: TextStyle(fontSize: 15)),
-                            ],
-                          ),
-                        )
-                      else
-                        Expanded(
-                          child: Text(
-                            c.status == GameStatus.playing
-                                ? (c.isUserTurn
-                                    ? '轮到你走棋（${c.userPlaysRed ? "红" : "黑"}方）'
-                                    : '轮到对方走棋')
-                                : '对局结束',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                      Text(
-                        '第 ${c.history.length ~/ 2 + 1} 回合',
-                        style: const TextStyle(
-                            fontSize: 13, color: XqColors.wood),
-                      ),
-                    ],
-                  ),
-                ),
+                GameStatusBar(controller: c),
                 // 棋盘（结构固定：始终由 AnimatedBuilder 驱动，动画起止不再切换子树）。
                 // 规则横幅悬浮于棋盘区顶部空白处（Stack 覆盖层）：
                 // 出现/消失不改变布局高度，棋盘既不抖动也不被挤压。
@@ -518,31 +442,7 @@ class _GamePageState extends State<GamePage>
                   ),
                 ),
                 // 最近着法
-                SizedBox(
-                  height: 38,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: c.history.length,
-                    itemBuilder: (ctx, i) {
-                      final e = c.history[i];
-                      final isRedMove = i.isEven;
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        child: Text(
-                          '${isRedMove ? '${i ~/ 2 + 1}. ' : ''}${e.notation}',
-                          style: TextStyle(
-                            fontSize: 15,
-                            color: isRedMove
-                                ? const Color(0xFFB03020)
-                                : const Color(0xFF222222),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
+                GameMoveStrip(controller: c),
                 // 底部操作：悔棋 / 提示 / 结束
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
@@ -596,7 +496,16 @@ class _GamePageState extends State<GamePage>
               ],
             ),
             // 对局结束遮罩：结果展示 + 操作按钮（点击或 3 秒后出现）
-            if (_showEndOverlay) _buildEndOverlay(),
+            if (_showEndOverlay)
+              GameEndOverlay(
+                title: _endInfo.$1,
+                message: _endInfo.$2,
+                actionsReady: _endActionsReady,
+                onTap: _onEndOverlayTap,
+                onReview: _reviewFromOverlay,
+                onNewGame: _newGameFromOverlay,
+                onQuit: _quitToHome,
+              ),
               ],
             ),
           ),
@@ -605,161 +514,25 @@ class _GamePageState extends State<GamePage>
     );
   }
 
-  /// 局内醒目提示横幅：将军（红色）/ 重复局面与长将预警（橙色）。
-  /// 仅对局进行中显示；将军与预警可同时出现。
-  /// 返回 null 表示当前无横幅；横幅作为棋盘区 Stack 的悬浮层展示，
-  /// 不参与 Column 布局，出现/消失不引起棋盘抖动。
-  Widget? _buildRuleBanner(GameController c) {
-    if (c.status != GameStatus.playing) return null;
-    final inCheck = c.checkPos != null;
-    final notice = c.ruleNotice;
-    final engineNotice = c.engineNotice;
-    if (!inCheck && notice == null && engineNotice == null) return null;
-    final text = [
-      if (inCheck) '将军！',
-      ?notice,
-      ?engineNotice,
-    ].join('　');
-    final color = inCheck ? Colors.red.shade700 : Colors.orange.shade800;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(10),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Icon(
-            inCheck
-                ? Icons.notification_important_rounded
-                : Icons.warning_amber_rounded,
-            color: Colors.white,
-            size: 18,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+  /// 结束遮罩「复盘此局」：先收起遮罩进入复盘，返回后重新展示（按钮立即可用）
+  Future<void> _reviewFromOverlay() async {
+    setState(() => _showEndOverlay = false);
+    await openReviewLastGame(context, game: c);
+    if (mounted) {
+      setState(() {
+        _showEndOverlay = true;
+        _endActionsReady = true;
+      });
+    }
   }
 
-  /// 对局结束遮罩
-  Widget _buildEndOverlay() {
-    final (title, msg) = _endInfo;
-    return Positioned.fill(
-      child: GestureDetector(
-        // 未到时间前点击：立即出现操作按钮；已出现则不拦截
-        onTap: _onEndOverlayTap,
-        child: Container(
-          color: Colors.black.withValues(alpha: 0.55),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 结果标题
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 44,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  msg,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                ),
-                const SizedBox(height: 36),
-                // 操作按钮：点击或 3 秒后出现
-                AnimatedOpacity(
-                  opacity: _endActionsReady ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 250),
-                  child: IgnorePointer(
-                    ignoring: !_endActionsReady,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        XqButton(
-                          label: '复盘此局',
-                          icon: Icons.history,
-                          variant: XqButtonVariant.ghost,
-                          onPressed: () async {
-                            setState(() => _showEndOverlay = false);
-                            await openReviewLastGame(context, game: c);
-                            // 复盘返回后重新展示遮罩，按钮立即可用
-                            if (mounted) {
-                              setState(() {
-                                _showEndOverlay = true;
-                                _endActionsReady = true;
-                              });
-                            }
-                          },
-                        ),
-                        const SizedBox(width: 12),
-                        XqButton(
-                          label: '再来一局',
-                          icon: Icons.refresh,
-                          variant: XqButtonVariant.primary,
-                          onPressed: () {
-                            setState(() {
-                              _showEndOverlay = false;
-                              _selected = null;
-                              _legalTargets = [];
-                            });
-                            c.newGame();
-                          },
-                        ),
-                        const SizedBox(width: 12),
-                        XqButton(
-                          label: '返回主界面',
-                          icon: Icons.home_outlined,
-                          variant: XqButtonVariant.ghost,
-                          onPressed: _quitToHome,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                if (!_endActionsReady)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 20),
-                    child: Text(
-                      '点击任意处继续',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.6),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+  /// 结束遮罩「再来一局」：清空选子状态并开新局
+  void _newGameFromOverlay() {
+    setState(() {
+      _showEndOverlay = false;
+      _selected = null;
+      _legalTargets = [];
+    });
+    c.newGame();
   }
 }
