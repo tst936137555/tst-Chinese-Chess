@@ -157,7 +157,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 40),
               // 版本标注
               const Text(
-                'v1.3.5',
+                'v1.3.6',
                 style: TextStyle(
                   fontSize: 11,
                   color: XqColors.wood,
