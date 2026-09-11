@@ -20,6 +20,13 @@ add_executable(${BINARY_NAME} WIN32
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
+# Source files are UTF-8 without BOM and contain Chinese wide-string literals
+# (window title in main.cpp). Without this flag MSVC decodes them using the
+# system code page, which garbles the title on non-CJK systems (e.g. the CI
+# runner, code page 1252) and on GBK systems alike. Runner.rc is unaffected:
+# it carries #pragma code_page(65001) which rc.exe honors.
+target_compile_options(${BINARY_NAME} PRIVATE /utf-8)
+
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MAJOR=${FLUTTER_VERSION_MAJOR}")

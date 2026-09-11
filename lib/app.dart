@@ -60,12 +60,22 @@ class XiangqiApp extends StatelessWidget {
       title: '中国象棋',
       debugShowCheckedModeBanner: false,
       theme: xiangqiTheme(),
-      // 锁定应用内字体：不随系统字体大小缩放，UI 按固定设计尺寸渲染
+      // 锁定应用内字体：不随系统字体大小缩放，UI 按固定设计尺寸渲染；
+      // 桌面端竖屏适配：宽窗口/最大化时所有页面与弹窗以 520 逻辑像素
+      // 列宽居中呈现，不随窗口拉伸（列外填宣纸底色与页面无缝衔接）
       builder: (context, child) {
         return MediaQuery(
           data: MediaQuery.of(context)
               .copyWith(textScaler: TextScaler.noScaling),
-          child: child!,
+          child: ColoredBox(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: child!,
+              ),
+            ),
+          ),
         );
       },
       navigatorObservers: [wakeLockRouteObserver],

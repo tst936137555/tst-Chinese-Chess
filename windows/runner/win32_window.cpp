@@ -53,6 +53,56 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
   FreeLibrary(user32_module);
 }
 
+// Clamp the window into its monitor's work area, preserving the portrait
+// aspect ratio (height first). Covers small logical work areas on high-DPI
+// displays (e.g. a 150%-scaled 1080p laptop).
+void ClampToWorkArea(HWND window) {
+  HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfo(monitor, &info)) {
+    return;
+  }
+  RECT rect;
+  if (!GetWindowRect(window, &rect)) {
+    return;
+  }
+  LONG w = rect.right - rect.left;
+  LONG h = rect.bottom - rect.top;
+  if (w <= 0 || h <= 0) {
+    return;
+  }
+  // Portrait ratio, matching the initial size in main.cpp.
+  constexpr double kRatio = 460.0 / 820.0;
+  const LONG max_w = info.rcWork.right - info.rcWork.left;
+  const LONG max_h = info.rcWork.bottom - info.rcWork.top;
+  LONG new_h = (h > max_h) ? max_h : h;
+  LONG new_w = static_cast<LONG>(new_h * kRatio);
+  if (new_w > max_w) {
+    new_w = max_w;
+    new_h = static_cast<LONG>(new_w / kRatio);
+    if (new_h > max_h) {
+      new_h = max_h;
+    }
+  }
+  LONG left = rect.left;
+  LONG top = rect.top;
+  if (left + new_w > info.rcWork.right) {
+    left = info.rcWork.right - new_w;
+  }
+  if (left < info.rcWork.left) {
+    left = info.rcWork.left;
+  }
+  if (top + new_h > info.rcWork.bottom) {
+    top = info.rcWork.bottom - new_h;
+  }
+  if (top < info.rcWork.top) {
+    top = info.rcWork.top;
+  }
+  SetWindowPos(window, nullptr, left, top, new_w, new_h,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 }  // namespace
 
 // Manages the Win32Window's window class registration.
@@ -145,6 +195,7 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+  ClampToWorkArea(window);
 
   return OnCreate();
 }
@@ -195,6 +246,18 @@ Win32Window::MessageHandler(HWND hwnd,
       SetWindowPos(hwnd, nullptr, newRectSize->left, newRectSize->top, newWidth,
                    newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 
+      return 0;
+    }
+    case WM_GETMINMAXINFO: {
+      // Keep interactive resizing within a portrait range (logical px),
+      // matching the phone-portrait design. Maximize is not limited by
+      // track size; the Dart layer centers content for that case.
+      auto* mmi = reinterpret_cast<MINMAXINFO*>(lparam);
+      UINT dpi = FlutterDesktopGetDpiForMonitor(
+          MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST));
+      mmi->ptMinTrackSize.x = Scale(400, dpi / 96.0);
+      mmi->ptMinTrackSize.y = Scale(560, dpi / 96.0);
+      mmi->ptMaxTrackSize.x = Scale(520, dpi / 96.0);
       return 0;
     }
     case WM_SIZE: {
