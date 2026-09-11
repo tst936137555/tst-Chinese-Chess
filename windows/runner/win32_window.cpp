@@ -249,16 +249,47 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
     }
     case WM_GETMINMAXINFO: {
-      // Keep interactive resizing within a portrait range (logical px),
-      // matching the phone-portrait design. Maximize is not limited by
-      // track size; the Dart layer centers content for that case.
+      // Keep interactive resizing within a portrait minimum (logical px),
+      // matching the phone-portrait design. Do NOT cap ptMaxTrackSize here:
+      // Windows also clamps the maximized size to it, which made "maximize"
+      // produce a 520-logical-px-wide window anchored at the left edge of
+      // the work area (and dragging it restored to an even smaller size).
+      // The interactive width limit is enforced in WM_SIZING instead, which
+      // is not consulted when the window is maximized.
       auto* mmi = reinterpret_cast<MINMAXINFO*>(lparam);
       UINT dpi = FlutterDesktopGetDpiForMonitor(
           MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST));
       mmi->ptMinTrackSize.x = Scale(400, dpi / 96.0);
       mmi->ptMinTrackSize.y = Scale(560, dpi / 96.0);
-      mmi->ptMaxTrackSize.x = Scale(520, dpi / 96.0);
       return 0;
+    }
+    case WM_SIZING: {
+      // Interactive drag-resize only (maximize never sends WM_SIZING):
+      // keep the window width within the portrait column range
+      // (400-520 logical px), matching the phone-portrait UI design.
+      auto* rect = reinterpret_cast<RECT*>(lparam);
+      UINT dpi = FlutterDesktopGetDpiForMonitor(
+          MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST));
+      const LONG min_w = Scale(400, dpi / 96.0);
+      const LONG max_w = Scale(520, dpi / 96.0);
+      LONG w = rect->right - rect->left;
+      const bool drag_left_edge = (wparam == WMSZ_LEFT ||
+                                   wparam == WMSZ_TOPLEFT ||
+                                   wparam == WMSZ_BOTTOMLEFT);
+      if (w > max_w) {
+        if (drag_left_edge) {
+          rect->left = rect->right - max_w;
+        } else {
+          rect->right = rect->left + max_w;
+        }
+      } else if (w < min_w) {
+        if (drag_left_edge) {
+          rect->left = rect->right - min_w;
+        } else {
+          rect->right = rect->left + min_w;
+        }
+      }
+      return TRUE;
     }
     case WM_SIZE: {
       RECT rect = GetClientArea();
