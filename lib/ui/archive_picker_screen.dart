@@ -2,10 +2,14 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../engine/chinese_notation.dart';
 import '../engine/rules.dart';
 import '../game/game_archive.dart';
 import '../game/game_controller.dart';
+import '../game/pgn_export.dart';
+import 'help_dialog.dart';
 import 'review_screen.dart';
 import 'theme.dart';
 
@@ -18,8 +22,10 @@ Future<void> openReviewArchive(BuildContext context) {
   ));
 }
 
-/// 从存档重建历史；走法非法或局面数据损坏时截断（丢弃其后数据），
-/// 避免损坏的 fen 在复盘 build 中触发 Board.fromFen 异常
+/// 从存档重建历史：以 uci 序列重放为唯一事实来源，逐步重算
+/// 被吃子/记谱/局面哈希/将军标记（uci 非法或走法不合法时截断，丢弃其后数据）。
+/// 旧版存档中的冗余 fen 字段不参与解析——重放过程本身就是逐步校验，
+/// 比信任存储的 fen 更抗数据损坏。
 List<HistoryEntry> _historyFromArchive(ArchivedGame game) {
   final history = <HistoryEntry>[];
   final board = Board();
@@ -33,21 +39,18 @@ List<HistoryEntry> _historyFromArchive(ArchivedGame game) {
       break;
     }
     if (!board.isLegal(m)) break;
-    final fen = e['fen'] as String? ?? '';
-    final Board after;
-    try {
-      after = Board.fromFen(fen); // 解析即校验
-    } catch (_) {
-      break;
-    }
+    final captured = board.pieceAt(m.toFile, m.toRank);
+    final derivedNotation = moveToChinese(board, m);
+    board.makeMove(m);
+    final stored = e['notation'];
     history.add(HistoryEntry(
       move: m,
-      capturedPiece: e['captured'] as String?,
-      notation: e['notation'] as String? ?? uci,
-      fenAfter: fen,
-      posHash: after.positionHash,
+      capturedPiece: captured?.fenChar,
+      notation: stored is String && stored.isNotEmpty ? stored : derivedNotation,
+      fenAfter: board.fen,
+      posHash: board.positionHash,
+      givesCheck: board.inCheck,
     ));
-    board.makeMove(m);
   }
   return history;
 }
@@ -181,7 +184,10 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
       );
       return;
     }
-    await Navigator.of(context).push(MaterialPageRoute(
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      // 路由名纳入常亮白名单（app.dart WakeLockRouteObserver），
+      // 无名路由会被判定为离开对局/复盘页而关闭常亮
+      settings: const RouteSettings(name: '/review'),
       fullscreenDialog: true,
       builder: (_) => ReviewScreen(
         history: history,
@@ -190,25 +196,13 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
     ));
   }
 
-  /// 规则说明弹窗：棋谱保留规则 + 左滑删除操作说明
-  void _showRulesDialog(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => XqDialog(
-        title: '规则说明',
-        actions: [
-          XqButton(
-            label: '我知道了',
-            variant: XqButtonVariant.primary,
-            onPressed: () => Navigator.pop(ctx),
-          ),
-        ],
-        child: const Text(
-          '· 棋谱最多保留100局，收藏上限50局，超出自动移除最早对局，收藏棋谱不会被自动移除。\n\n'
-          '· 在棋谱列表中向左滑动任意一局即可删除该棋谱，删除前会弹出确认框，删除后不可恢复。',
-          style: TextStyle(fontSize: 14, height: 1.7),
-        ),
-      ),
+  /// 导出单局棋谱为 PGN 文本并复制到剪贴板（v1 最小实现）。
+  /// 剪贴板在全部平台可用，可粘贴到东萍/象棋工具或另存为 .pgn 文件；
+  /// 后续有需要再加"保存为文件/系统分享"。
+  void _exportPgn(ArchivedGame game) {
+    Clipboard.setData(ClipboardData(text: archivedGameToPgn(game)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('PGN 已复制到剪贴板，可粘贴到其他象棋工具')),
     );
   }
 
@@ -223,7 +217,7 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: TextButton.icon(
-              onPressed: () => _showRulesDialog(context),
+              onPressed: () => showRulesHelpDialog(context),
               icon: const Icon(Icons.info_outline, size: 18),
               label: const Text('规则说明', style: TextStyle(fontSize: 13)),
               style: TextButton.styleFrom(
@@ -307,6 +301,16 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            // 导出 PGN：复制到剪贴板
+                            IconButton(
+                              icon: const Icon(Icons.ios_share,
+                                  color: XqColors.wood),
+                              tooltip: '导出 PGN',
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              onPressed: () => _exportPgn(g),
+                            ),
                             // 收藏开关：置顶且不会被自动移除
                             IconButton(
                               icon: Icon(

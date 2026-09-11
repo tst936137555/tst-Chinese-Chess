@@ -10,6 +10,7 @@ import '../game/game_controller.dart';
 import '../game/review_controller.dart';
 import 'board_view.dart';
 import 'eval_chart.dart';
+import 'help_dialog.dart';
 import 'theme.dart';
 
 /// 复盘上局：使用当前 GameController 的历史
@@ -84,6 +85,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
             onPressed: () => Navigator.of(context).maybePop(),
           ),
           actions: [
+            // 规则说明：复盘交互（翻页/折线图跳转/徽标含义）与归档页共用同一弹窗
+            IconButton(
+              icon: const Icon(Icons.info_outline, size: 20),
+              tooltip: '规则说明',
+              onPressed: () => showRulesHelpDialog(context),
+            ),
             if (_review.analyzing)
               const Padding(
                 padding: EdgeInsets.all(16),
@@ -154,6 +161,10 @@ class _ReviewScreenState extends State<ReviewScreen> {
     final suggestion = (e.bestMoveUci != null && e.bestMoveUci != e.move.uci)
         ? '建议：${_uciToNotation(e.bestMoveUci!, _review.cursor)}'
         : null;
+    // 走法与引擎最佳一致：第二行给正向反馈（保持占位，防止布局跳动）
+    final consistent = (e.bestMoveUci != null && e.bestMoveUci == e.move.uci)
+        ? '与引擎最佳走法一致'
+        : null;
     final lossText = (e.loss > 100 && q != null)
         ? '亏损 ${e.loss} 厘兵'
           '${isUserMove ? '（你走的）' : ''}'
@@ -179,6 +190,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                // 棋盘棋子上已显示单字角标，此处只显示完整评语，避免重复
                 if (q != null)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -188,9 +200,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      '${q.badge} ${q.label}',
+                      q.label,
                       style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 13,
                           color: q.color,
                           fontWeight: FontWeight.w600),
                     ),
@@ -200,36 +212,53 @@ class _ReviewScreenState extends State<ReviewScreen> {
                       style: TextStyle(fontSize: 12, color: XqColors.wood)),
               ],
             ),
-            if (suggestion != null || lossText != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 3),
-                child: Row(
-                  children: [
-                    if (suggestion != null)
-                      Flexible(
-                        child: Text(
-                          suggestion,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 13, color: XqColors.red),
+            const SizedBox(height: 3),
+            // 第二行固定占位：无"建议/亏损"时显示"与引擎一致"或留空，
+            // 避免该行消失导致标题文字在卡片内上下跳动
+            SizedBox(
+              height: 18,
+              child: (suggestion != null || lossText != null)
+                  ? Row(
+                      children: [
+                        if (suggestion != null)
+                          Flexible(
+                            child: Text(
+                              suggestion,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 13, color: XqColors.red),
+                            ),
+                          ),
+                        if (suggestion != null && lossText != null)
+                          const SizedBox(width: 10),
+                        if (lossText != null)
+                          Flexible(
+                            child: Text(
+                              lossText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 12, color: XqColors.wood),
+                            ),
+                          ),
+                      ],
+                    )
+                  : consistent == null
+                      ? null
+                      : Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            consistent,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 13,
+                                color: q?.color ?? XqColors.wood,
+                                fontWeight: FontWeight.w600),
+                          ),
                         ),
-                      ),
-                    if (suggestion != null && lossText != null)
-                      const SizedBox(width: 10),
-                    if (lossText != null)
-                      Flexible(
-                        child: Text(
-                          lossText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 12, color: XqColors.wood),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+            ),
           ],
         ),
       ),
@@ -329,7 +358,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
     }
     if (!analyzed) {
       return const Text('待分析',
-          style: TextStyle(fontSize: 11, color: Colors.grey));
+          style: TextStyle(fontSize: 14, color: Colors.grey));
     }
     String text;
     if (score >= 9000) {
@@ -346,7 +375,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
       text = '均势';
     }
     return Text(text,
-        style: const TextStyle(fontSize: 11, color: Colors.grey));
+        style: const TextStyle(
+            fontSize: 14, fontWeight: FontWeight.w600, color: Colors.grey));
   }
 
   /// 底部操作按钮：上一步、下一步、退出（分析未完成时仅退出可操作）
