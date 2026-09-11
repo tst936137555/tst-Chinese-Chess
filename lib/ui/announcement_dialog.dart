@@ -137,7 +137,7 @@ Future<void> _showLicenseText(
     text = '许可证文本加载失败：$assetPath';
   }
   if (!context.mounted) return;
-  showDialog<void>(
+  await showDialog<void>(
     context: context,
     builder: (ctx) => XqDialog(
       title: title,
