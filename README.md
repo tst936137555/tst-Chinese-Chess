@@ -25,8 +25,8 @@
 
 ## 安装
 
-- **Android**：从 GitHub [Releases](https://github.com/tst936137555/tst-Chinese-Chess/releases) 下载 `tst_xiangqi-<版本>.apk` 直接安装（自 v1.3.3 起由 CI 自动构建签名）。
-- **Windows**：从 Releases 下载 `tst_xiangqi-<版本>-windows.zip`，解压后运行 `tst_xiangqi.exe`（已内置 Pikafish 引擎与许可证文件，自 v1.3.4 起由 CI 自动构建）。
+- **Android**：从 GitHub [Releases](https://github.com/tst936137555/tst-Chinese-Chess/releases) 下载 `tst_xiangqi-<版本>.apk` 直接安装（由 CI 自动构建签名，历史版本附件已清理，仅提供最新版本）。
+- **Windows**：从 Releases 下载 `tst_xiangqi-<版本>-windows.zip`，解压后运行 `tst_xiangqi.exe`（已内置 Pikafish 引擎与许可证文件，由 CI 自动构建）。
 - **iOS / macOS**：无预编译分发，请按下一节自行构建。
 
 ## 构建
