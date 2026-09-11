@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../engine/pikafish.dart';
-import '../engine/rules.dart';
 import '../game/sounds.dart';
 import 'announcement_dialog.dart';
 import 'archive_picker_screen.dart';
@@ -15,9 +14,12 @@ import 'game_screen.dart';
 import 'theme.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.prefs});
+  const HomePage({super.key, required this.prefs, this.versionLabel = ''});
 
   final SharedPreferences prefs;
+
+  /// 版本标注（如 v1.3.7），由 main 从 package_info_plus 注入；为空不显示
+  final String versionLabel;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -39,11 +41,11 @@ class _HomePageState extends State<HomePage> {
     final raw = widget.prefs.getString('saved_game');
     var has = raw != null && raw.isNotEmpty;
     if (has) {
-      // 仅进行中的对局可续玩：已结束/损坏的存档视为无存档
+      // 结构完整的存档才可续玩（损坏 JSON 视为无存档）；
+      // 存档仅在对局进行中存在（终局即清除），无需再校验状态字段
       try {
         final data = jsonDecode(raw) as Map<String, dynamic>;
-        has = GameStatus.values[data['status'] as int? ?? 0] ==
-            GameStatus.playing;
+        has = data['history'] is List;
       } catch (_) {
         has = false;
       }
@@ -154,16 +156,18 @@ class _HomePageState extends State<HomePage> {
                   onPressed: () => openReviewArchive(context),
                 ),
               ),
-              const SizedBox(height: 40),
-              // 版本标注
-              const Text(
-                'v1.3.6',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: XqColors.wood,
-                  letterSpacing: 1,
+              // 版本标注（运行时从 pubspec 读取，见 main.dart）
+              if (widget.versionLabel.isNotEmpty) ...[
+                const SizedBox(height: 40),
+                Text(
+                  widget.versionLabel,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: XqColors.wood,
+                    letterSpacing: 1,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -176,7 +180,7 @@ class _HomePageState extends State<HomePage> {
     if (resume) {
       // 继续上局：使用已保存的难度与执子方
       if (!mounted) return;
-      Navigator.of(context).push(MaterialPageRoute(
+      await Navigator.of(context).push<void>(MaterialPageRoute<void>(
         settings: const RouteSettings(name: '/game'),
         builder: (_) => GamePage(
           prefs: widget.prefs,
@@ -244,7 +248,7 @@ class _HomePageState extends State<HomePage> {
     );
     if (userRed == null || !mounted) return;
 
-    Navigator.of(context).push(MaterialPageRoute(
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
       settings: const RouteSettings(name: '/game'),
       builder: (_) => GamePage(
         prefs: widget.prefs,

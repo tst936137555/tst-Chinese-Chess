@@ -10,6 +10,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
@@ -20,5 +21,7 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   // 旧版 SharedPreferences 棋谱一次性迁移到文件（幂等；失败保留旧数据下次重试）
   await GameArchive.migrateFromPrefs(prefs);
-  runApp(XiangqiApp(prefs: prefs));
+  // 版本标注取自 pubspec（运行时读取），避免 UI 层硬编码造成双源维护
+  final versionLabel = 'v${(await PackageInfo.fromPlatform()).version}';
+  runApp(XiangqiApp(prefs: prefs, versionLabel: versionLabel));
 }

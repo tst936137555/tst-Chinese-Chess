@@ -50,9 +50,13 @@ class WakeLockRouteObserver extends RouteObserver<PageRoute<dynamic>> {
 }
 
 class XiangqiApp extends StatelessWidget {
-  const XiangqiApp({super.key, required this.prefs});
+  const XiangqiApp({super.key, required this.prefs, this.versionLabel = ''});
 
   final SharedPreferences prefs;
+
+  /// 主页版本标注（如 v1.3.7），由 main 从 package_info_plus 注入；
+  /// 为空时主页不显示版本行（widget 测试直接构造本类时不注入）
+  final String versionLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +83,7 @@ class XiangqiApp extends StatelessWidget {
         );
       },
       navigatorObservers: [wakeLockRouteObserver],
-      home: HomePage(prefs: prefs),
+      home: HomePage(prefs: prefs, versionLabel: versionLabel),
     );
   }
 }
