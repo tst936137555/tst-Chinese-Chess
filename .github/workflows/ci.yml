@@ -5,12 +5,14 @@
 #   无需真实引擎二进制，可在 Linux CI 完整运行（见 test/engine_reliability_test.dart）。
 # - 真实引擎端到端测试（test/review_engine_integration_test.dart）在无引擎
 #   环境自动跳过，仅在本机（Windows/macOS）运行。
-# - 引擎 / NNUE / 字体等大文件不入库：CI 与本地统一通过 tool/fetch_engine.ps1
+# - 引擎 / NNUE 等大文件不入库：CI 与本地统一通过 tool/fetch_engine.ps1
 #   按 tool/engine_manifest.json 从上游官方 release 下载并做 SHA256 校验；
 #   上游失败时回退本仓库镜像 release（engine-mirror，由
 #   .github/workflows/engine-mirror.yml 转存维护，防上游下架）。
+#   字体为入库子集资产（assets/fonts/XqKai-Medium-subset.ttf，由
+#   tool/subset_font.py 生成），无需下载。
 # - android-release：从仓库 secrets 还原正式签名密钥，构建签名 release APK
-#   （arm64 引擎 / NNUE / 字体由 fetch 脚本取得；x86_64 引擎官方不发布，
+#   （arm64 引擎 / NNUE 由 fetch 脚本取得；x86_64 引擎官方不发布，
 #   由 tool/build_android_engine.sh 以钉住的 NDK r28c 现场编译），
 #   产物上传为 artifact；打 v* 标签推送时额外创建 GitHub Release 并附 APK。
 #   首次使用前需配置 4 个 secrets（KEYSTORE_BASE64 / KEYSTORE_PASSWORD /
@@ -18,6 +20,10 @@
 # - windows-release：经 fetch 脚本取得钉住版本的官方 Pikafish Windows 引擎
 #   与许可证文本一并打入 zip，产物上传为 artifact；打 v* 标签推送时附到
 #   同一 GitHub Release（与 android-release 并行，创建 Release 双方容错）。
+# - windows-test：Windows 原生运行全量测试，执行 BoardView Golden 基线比对
+#   （Golden 基线统一在 Windows 生成，非 Windows 平台自动跳过）。
+# - macos-build / ios-build：Apple 平台编译检查。macOS 构建含引擎二进制；
+#   iOS 无官方引擎发布（shim 占位），仅验证可编译（--no-codesign）。
 name: CI
 
 on:
@@ -53,11 +59,11 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      # pubspec 声明的 NNUE / 字体 / 许可证资产缺文件会导致构建失败，先经脚本取得
+      # pubspec 声明的 NNUE / 许可证资产缺文件会导致构建失败，先经脚本取得
       - name: Install p7zip (fetch script dependency)
         run: sudo apt-get update -q && sudo apt-get install -y -q p7zip-full
 
-      - name: Fetch pinned assets (NNUE + font)
+      - name: Fetch pinned assets (NNUE + licenses)
         shell: pwsh
         run: ./tool/fetch_engine.ps1 -Target core
 
@@ -87,16 +93,87 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      # arm64 引擎 + NNUE + 字体（模拟器 x86_64 引擎不在 push 检查中编译）
+      # arm64 引擎 + NNUE（模拟器 x86_64 引擎不在 push 检查中编译）
       - name: Install p7zip (fetch script dependency)
         run: sudo apt-get update -q && sudo apt-get install -y -q p7zip-full
 
-      - name: Fetch pinned engine (arm64 + NNUE + font)
+      - name: Fetch pinned engine (arm64 + NNUE)
         shell: pwsh
         run: ./tool/fetch_engine.ps1 -Target android
 
       - name: flutter build apk (debug)
         run: flutter build apk --debug
+
+  windows-test:
+    name: Test (Windows, golden baselines)
+    # Golden 基线在 Windows 上生成，仅此平台可比对（golden_test.dart 其余平台跳过）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      # NNUE 资产（pubspec 声明）；字体为入库子集资产，Golden 测试直接可用
+      - name: Fetch pinned assets (NNUE + licenses)
+        shell: pwsh
+        run: ./tool/fetch_engine.ps1 -Target core
+
+      - name: flutter test
+        run: flutter test
+
+  macos-build:
+    name: macOS Debug Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      # macOS 引擎 + NNUE（fetch 脚本为 PowerShell，macOS runner 预装 pwsh）
+      - name: Fetch pinned engine (macos + NNUE)
+        shell: pwsh
+        run: ./tool/fetch_engine.ps1 -Target macos
+
+      - name: flutter build macos (debug)
+        run: flutter build macos --debug
+
+  ios-build:
+    name: iOS Build (no codesign)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      # NNUE 资产（pubspec 声明，缺文件构建失败）；iOS 无官方引擎二进制，
+      # 引擎以 shim 占位，不影响编译检查
+      - name: Fetch pinned assets (NNUE + licenses)
+        shell: pwsh
+        run: ./tool/fetch_engine.ps1 -Target core
+
+      - name: flutter build ios (debug, no codesign)
+        run: flutter build ios --debug --no-codesign
 
   android-release:
     name: Android Release (signed)
@@ -128,11 +205,11 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      # arm64 引擎 / NNUE / 字体 / 许可证由 fetch 脚本取得；x86_64 官方不发布，现场编译
+      # arm64 引擎 / NNUE / 许可证由 fetch 脚本取得；x86_64 官方不发布，现场编译
       - name: Install p7zip (fetch script dependency)
         run: sudo apt-get update -q && sudo apt-get install -y -q p7zip-full
 
-      - name: Fetch pinned engine (arm64 + NNUE + font + licenses)
+      - name: Fetch pinned engine (arm64 + NNUE + licenses)
         shell: pwsh
         run: ./tool/fetch_engine.ps1 -Target android
 
@@ -266,9 +343,9 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      # NNUE / 字体资产必须先于构建就位（pubspec 声明）；引擎 exe 与许可证
+      # NNUE 资产必须先于构建就位（pubspec 声明）；引擎 exe 与许可证
       # 文本由同一脚本按 manifest 取得并校验（总包与成员双重 SHA256）
-      - name: Fetch pinned Pikafish (engine + NNUE + font + licenses)
+      - name: Fetch pinned Pikafish (engine + NNUE + licenses)
         shell: pwsh
         run: ./tool/fetch_engine.ps1 -Target windows
 

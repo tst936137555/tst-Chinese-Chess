@@ -59,7 +59,12 @@ android/key.properties
 # 详见 README「构建」
 /pikafish.exe
 /assets/engine/pikafish.nnue
+# 完整字体不入库：仅作为 tool/subset_font.py 的子集化输入（生成 XqKai-
+# Medium-subset.ttf 入库资产）；完整版可从上游 release 或本仓库 engine-mirror
+# 镜像 release 下载，见 README「霞鹜文楷字体」
 /assets/fonts/LXGWWenKai-Medium.ttf
+# 子集化用的便携 Python 运行时（tool/subset_font.py 的本地工具链）
+/tool/.python/
 /android/app/src/main/jniLibs/arm64-v8a/libpikafish.so
 /android/app/src/main/jniLibs/x86_64/libpikafish.so
 # iOS 引擎 xcframework 由 tool/setup_ios_engine.sh 在 macOS 现场构建

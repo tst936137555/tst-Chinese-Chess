@@ -10,7 +10,7 @@
 - 引擎支持：提示（双建议）、悔棋、按局势判定胜负结束对局
 - 复盘分析：全局逐步引擎评估、局势走势折线图、走法质量分级
 - 复盘棋谱：对局自动归档（未收藏最多 100 局、收藏最多 50 局，超出自动移除最旧），支持收藏置顶
-- 中文记谱（纵线记谱法）、规则判定（将死/困毙、三次重复判和、长将判负）、音效开关
+- 中文记谱（纵线记谱法）、规则判定（将死/困毙、三次重复判和、长将判负、60 回合无吃子自然限着作和）、音效开关
 
 ## 支持平台
 
@@ -45,7 +45,7 @@ flutter run                # 调试运行到已连接设备
 - **Windows**：`flutter build windows`，并将 [Pikafish 官方发布版](https://github.com/official-pikafish/pikafish/releases) 的 Windows 可执行文件重命名为 `pikafish.exe` 放入产物目录（开发调试时放项目根目录即可）。
 - **macOS**：`flutter build macos`（引擎二进制已在 `macos/EngineBin/`）。
 
-NNUE 权重与字体随 assets 打包，无需额外下载。引擎等大文件的下载源与版本钉住在 [tool/engine_manifest.json](tool/engine_manifest.json)：优先从上游官方 release 下载，失败时回退本仓库 [镜像 release](https://github.com/tst936137555/tst-Chinese-Chess/releases/tag/engine-mirror)（由 [Engine Mirror 工作流](.github/workflows/engine-mirror.yml)自动转存维护），防上游下架导致 CI 与本地构建断供。
+NNUE 权重由 fetch 脚本按 manifest 下载；字体（霞鹜文楷子集）与许可证文本已入库随 assets 打包，无需额外下载。引擎等大文件的下载源与版本钉住在 [tool/engine_manifest.json](tool/engine_manifest.json)：优先从上游官方 release 下载，失败时回退本仓库 [镜像 release](https://github.com/tst936137555/tst-Chinese-Chess/releases/tag/engine-mirror)（由 [Engine Mirror 工作流](.github/workflows/engine-mirror.yml)自动转存维护），防上游下架导致 CI 与本地构建断供。
 
 ## 发版流程
 
@@ -63,6 +63,12 @@ flutter test
 ```
 
 全部单元测试无需真实引擎二进制与平台通道：引擎可靠性测试使用内存伪造 UCI 引擎驱动真实会话协议；真实引擎端到端测试（`review_engine_integration_test.dart`）在无引擎环境自动跳过。
+
+BoardView 渲染有 Golden 基线测试（`golden_test.dart`）：基线统一在 Windows 生成，其他平台自动跳过；CI 的 ubuntu job 跑全量逻辑测试，windows-test job 以同平台比对基线。更新基线：
+
+```bash
+flutter test --update-goldens test/golden_test.dart
+```
 
 ## 已知限制
 
@@ -131,13 +137,21 @@ flutter test
 
 ### 5. 霞鹜文楷字体（LXGW WenKai）
 
-应用全局字体使用霞鹜文楷（Medium）：
+应用全局字体使用霞鹜文楷（Medium）的子集版本：
 
-- 版本：v1.522
+- 版本：v1.522（子集基线）
 - 许可证：SIL Open Font License 1.1（OFL-1.1）
 - 版权：Copyright 2021-2026 LXGW（保留字体名「霞鹜」「落霞孤鹜」「LXGW」等）；基于 Fontworks 开源的 Klee One 衍生（Copyright 2020 The Klee Project Authors）
 - 源码：https://github.com/lxgw/LxgwWenKai
-- 字体文件本体不入 git 仓库，由 `tool/fetch_engine.ps1` 按 `tool/engine_manifest.json` 下载（SHA256 校验，上游不可用时回退本仓库镜像 release）；
+- 入库资产 `assets/fonts/XqKai-Medium-subset.ttf`（约 1.7MB）由 [tool/subset_font.py](tool/subset_font.py) 从完整字体（约 24MB，不入库）子集化生成：字符集 = ASCII + lib/test 源码扫描 + GB2312 一级常用字 + 补充集；内部家族名已改写为 `XqKai`（OFL 规定保留字体名不得用于标识修改版，pubspec 与代码引用本就使用 XqKai，行为不变）；
+- 完整版可从[上游 release](https://github.com/lxgw/LxgwWenKai/releases) 或本仓库 [镜像 release](https://github.com/tst936137555/tst-Chinese-Chess/releases/tag/engine-mirror) 下载后重新生成子集：
+
+  ```bash
+  python -m pip install fonttools
+  python tool/subset_font.py --input assets/fonts/LXGWWenKai-Medium.ttf
+  ```
+
+- 修改 UI 文案后若个别字显示为系统字体（缺字回退），重跑上述脚本并重新提交子集资产；
 - 许可证全文随应用分发：`assets/fonts/OFL.txt`（入库并打包进 APK，满足 OFL「分发字体须附带许可证副本」要求）。
 
 ## 许可证

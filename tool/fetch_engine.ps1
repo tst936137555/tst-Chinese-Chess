@@ -1,14 +1,15 @@
 # =============================================================================
-# fetch_engine.ps1 — 按 tool/engine_manifest.json 下载并校验引擎/NNUE/字体资产
+# fetch_engine.ps1 — 按 tool/engine_manifest.json 下载并校验引擎/NNUE/许可证资产
 #
 # 本地与 CI 共用同一脚本、同一清单：本地验证过的字节 = CI 打包的字节（SHA256 钉死）。
 # 重复运行零成本：目标文件已存在且哈希匹配清单时直接跳过。
 # 下载顺序：上游官方直链 → 本仓库镜像 release（manifest 的 mirrorUrl，
 # 防上游下架/换文件，镜像资产由 .github/workflows/engine-mirror.yml 转存维护）。
+# 字体不入本清单：XqKai-Medium-subset.ttf 为入库资产（tool/subset_font.py 生成）。
 #
 # 用法：
 #   ./tool/fetch_engine.ps1                  # 全部资产（core + 各平台引擎）
-#   ./tool/fetch_engine.ps1 -Target core     # NNUE + 字体 + 许可证（跑测试 / 所有平台构建所需）
+#   ./tool/fetch_engine.ps1 -Target core     # NNUE + 许可证（跑测试 / 所有平台构建所需）
 #   ./tool/fetch_engine.ps1 -Target windows  # core + Windows 引擎
 #   ./tool/fetch_engine.ps1 -Target android  # core + Android arm64 引擎
 #   ./tool/fetch_engine.ps1 -Target macos    # core + macOS 引擎
@@ -66,14 +67,15 @@ function Save-Url([string[]]$urls, [string]$outFile) {
     throw "所有下载源均失败：`n$($errors -join "`n")"
 }
 
-# 目标 → 资产键清单（font 与许可证随所有目标安装：pubspec 将 NNUE / 字体 /
-# 许可证均声明为 Flutter 资产，任何平台的构建与测试都要求文件在位）
+# 目标 → 资产键清单（许可证随所有目标安装：pubspec 将 NNUE /
+# 许可证均声明为 Flutter 资产，任何平台的构建与测试都要求文件在位。
+# 字体为入库资产，不经过本脚本）
 $targets = @{
-    core    = @('nnue', 'font', 'license-gpl', 'license-nnue')
-    windows = @('nnue', 'font', 'windows', 'license-gpl', 'license-nnue')
-    android = @('nnue', 'font', 'android-arm64', 'license-gpl', 'license-nnue')
-    macos   = @('nnue', 'font', 'macos', 'license-gpl', 'license-nnue')
-    all     = @('nnue', 'font', 'windows', 'android-arm64', 'macos',
+    core    = @('nnue', 'license-gpl', 'license-nnue')
+    windows = @('nnue', 'windows', 'license-gpl', 'license-nnue')
+    android = @('nnue', 'android-arm64', 'license-gpl', 'license-nnue')
+    macos   = @('nnue', 'macos', 'license-gpl', 'license-nnue')
+    all     = @('nnue', 'windows', 'android-arm64', 'macos',
                 'license-gpl', 'license-nnue')
 }
 $wanted = $targets[$Target]
@@ -124,37 +126,16 @@ function Install-Artifact([string]$key, [pscustomobject]$art) {
         return
     }
 
-    $src = $null
-    if ($art.member) {
-        # 来自 Pikafish 7z 总包的成员
-        if (-not $archive) {
-            $pair = Get-Archive
-            $script:archive = $pair[0]
-            $script:extractDir = $pair[1]
-            $script:sevenZip = Find-7z
-        }
-        & $sevenZip e -y "-o$extractDir" $archive $art.member | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "7z 解压失败：$($art.member)（用 7z l 检查包内成员名）" }
-        $src = Join-Path $extractDir (Split-Path $art.member -Leaf)
+    # 所有资产均来自 Pikafish 7z 总包的成员
+    if (-not $archive) {
+        $pair = Get-Archive
+        $script:archive = $pair[0]
+        $script:extractDir = $pair[1]
+        $script:sevenZip = Find-7z
     }
-    else {
-        # 直链下载（如字体）
-        $cached = Join-Path $cacheDir (Split-Path $art.url -Leaf)
-        $need = $Force -or -not (Test-Path $cached)
-        if (-not $need) {
-            $h = (Get-FileHash $cached -Algorithm SHA256).Hash
-            if ($h -ne $art.sha256) { Write-Warning '缓存文件哈希不符，重新下载'; $need = $true }
-        }
-        if ($need) {
-            Save-Url @($art.url, $art.mirrorUrl) $cached
-        }
-        $h = (Get-FileHash $cached -Algorithm SHA256).Hash
-        if ($h -ne $art.sha256) {
-            Remove-Item $cached -Force -ErrorAction SilentlyContinue
-            throw "$key SHA256 不匹配：期望 $($art.sha256)，实际 $h"
-        }
-        $src = $cached
-    }
+    & $sevenZip e -y "-o$extractDir" $archive $art.member | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "7z 解压失败：$($art.member)（用 7z l 检查包内成员名）" }
+    $src = Join-Path $extractDir (Split-Path $art.member -Leaf)
 
     if ($art.sha256) {
         $h = (Get-FileHash $src -Algorithm SHA256).Hash
@@ -169,8 +150,7 @@ function Install-Artifact([string]$key, [pscustomobject]$art) {
 }
 
 foreach ($key in $wanted) {
-    if ($key -eq 'font') { $art = $manifest.font }
-    else { $art = $manifest.pikafish.artifacts.$key }
+    $art = $manifest.pikafish.artifacts.$key
     if (-not $art) { throw "清单中不存在资产键：$key" }
     Install-Artifact $key $art
 }

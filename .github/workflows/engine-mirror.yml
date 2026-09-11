@@ -55,7 +55,7 @@ jobs:
           # 确保 release 存在（幂等：已存在时 create 失败即可，继续上传附件）
           gh release create "$mirror_tag" \
             --title "Engine mirror" \
-            --notes "由 Engine Mirror 工作流自动维护：转存 tool/engine_manifest.json 钉住的上游引擎/NNUE/字体资产，作为上游下架时的回退下载源。请勿手动改动，资产清单以 manifest 为准。" \
+            --notes "由 Engine Mirror 工作流自动维护：转存 tool/engine_manifest.json 钉住的上游引擎/NNUE 资产，作为上游下架时的回退下载源。请勿手动改动，资产清单以 manifest 为准。" \
             --prerelease 2>/dev/null || echo "release $mirror_tag 已存在"
 
           upload_one() {
@@ -82,18 +82,13 @@ jobs:
           }
 
           # 资产名以 manifest 的 mirrorUrl basename 为唯一事实源：
-          # 版本化命名（Pikafish-2026-09-06.7z / LXGWWenKai-v1.522-Medium.ttf）
-          # 在 manifest 中书写，本工作流照此上传，末尾校验保证二者永远一致。
+          # 版本化命名（Pikafish-2026-09-06.7z）在 manifest 中书写，
+          # 本工作流照此上传，末尾校验保证二者永远一致。
 
           # Pikafish 7z 总包（NNUE/各平台引擎/许可证均从中解出，转存总包即可）
           upload_one "$(jq -r '.pikafish.archiveUrl' "$MANIFEST")" \
                      "$(jq -r '.pikafish.archiveSha256' "$MANIFEST")" \
                      "$(basename "$(jq -r '.pikafish.mirrorUrl' "$MANIFEST")")"
-
-          # 字体（独立直链，单独转存）
-          upload_one "$(jq -r '.font.url' "$MANIFEST")" \
-                     "$(jq -r '.font.sha256' "$MANIFEST")" \
-                     "$(basename "$(jq -r '.font.mirrorUrl' "$MANIFEST")")"
 
           echo "镜像资产："
           gh release view "$mirror_tag" --json assets -q '.assets[] | "  \(.name)  \(.size) bytes"'
@@ -117,5 +112,4 @@ jobs:
           }
 
           check_url "$(jq -r '.pikafish.mirrorUrl' "$MANIFEST")"
-          check_url "$(jq -r '.font.mirrorUrl' "$MANIFEST")"
           echo "全部 mirrorUrl 均已就位。"

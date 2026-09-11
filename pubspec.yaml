@@ -73,12 +73,14 @@ flutter:
     # 要求随安装包附带许可证文本，由 tool/fetch_engine.ps1 从官方包取得
     - assets/licenses/
 
-  # 全局字体：霞鹜文楷（Medium 单权重，w600/w700 映射到同一文件避免合成粗体）
+  # 全局字体：霞鹜文楷子集（Medium 单权重，w600/w700 映射到同一文件避免合成
+  # 粗体）。子集化由 tool/subset_font.py 完成（24MB → 1.7MB），内部家族名已
+  # 改写为 XqKai（OFL 保留名合规），见 README「霞鹜文楷字体」一节
   fonts:
     - family: XqKai
       fonts:
-        - asset: assets/fonts/LXGWWenKai-Medium.ttf
-        - asset: assets/fonts/LXGWWenKai-Medium.ttf
+        - asset: assets/fonts/XqKai-Medium-subset.ttf
+        - asset: assets/fonts/XqKai-Medium-subset.ttf
           weight: 700
 
   # To add custom fonts to your application, add a fonts section here,
