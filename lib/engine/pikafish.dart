@@ -115,6 +115,8 @@ class DifficultyLevel {
       depth: 12,
       multiPv: 1,
       movetimeMs: 3000,
+      // 最短思考略长于困难档（800ms），避免满强度搜索秒回
+      minThinkMs: 1000,
       fullStrength: true);
 
   static const all = [beginner, easy, medium, hard, master];

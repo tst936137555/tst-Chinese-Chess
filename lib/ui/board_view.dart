@@ -65,7 +65,7 @@ class BoardView extends StatelessWidget {
   final Piece? capturedPiece;
   /// 引擎建议走法（复盘时绘制绿色箭头）
   final Move? suggestedMove;
-  /// 多个建议走法（提示功能：最优①绿色、次优②蓝色，编号标于箭杆中点）
+  /// 多个建议走法（提示功能：最优"优"绿色、次优"良"蓝色，角标标于箭杆中点）
   final List<Move> suggestedMoves;
   /// 走法质量（复盘时在目标棋子右上角绘制角标）
   final MoveQuality? quality;
@@ -211,14 +211,14 @@ class _BoardPainter extends CustomPainter {
   /// 引擎建议走法箭头（复盘单箭头 / 提示双箭头，绘制于棋子上层）
   void _drawSuggestion(Canvas canvas) {
     if (suggestedMoves.isNotEmpty) {
-      // 提示：最优①（绿色）、次优②（蓝色），编号标在箭杆中点
+      // 提示：最优"优"（绿色）、次优"良"（蓝色），角标标在箭杆中点
       for (var i = 0; i < suggestedMoves.length && i < 2; i++) {
         final color = i == 0
             ? const Color(0xFF2E7D32) // 绿
             : const Color(0xFF1565C0); // 蓝
         final m = suggestedMoves[i];
         _drawArrow(canvas, m, color);
-        _drawHintBadge(canvas, m, '${i + 1}', color);
+        _drawHintBadge(canvas, m, i == 0 ? '优' : '良', color);
       }
       return;
     }
@@ -255,7 +255,7 @@ class _BoardPainter extends CustomPainter {
     canvas.drawPath(headPath, arrowPaint);
   }
 
-  /// 提示编号角标（①/②）：绘制于箭杆中点，白边彩底圆牌
+  /// 提示角标（优/良）：绘制于箭杆中点，白边彩底圆牌（复盘质量角标不受影响）
   void _drawHintBadge(Canvas canvas, Move m, String label, Color color) {
     final from = point(m.fromFile, m.fromRank);
     final to = point(m.toFile, m.toRank);

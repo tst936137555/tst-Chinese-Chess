@@ -479,10 +479,25 @@ class GameController extends ChangeNotifier {
     _maybeEngineMove();
   }
 
-  /// 结束对局：引擎分析当前局势，按分差判定胜负
-  /// 分差 600 以内为平局，某方超过 600 则该方获胜
-  /// （600 ≈ 皮卡鱼子力尺度下净多一马/炮；绝杀分 ±9000+ 必然判胜）。
-  Future<void> endGameByScore() async {
+  /// 结束判定的分差标准（厘兵）：某方超过该值判胜，以内为平局
+  static const endScoreCp = 500;
+
+  /// 结束前的局势预览：与结算同一标准分析当前局面（红方视角，厘兵）。
+  /// 深度 12 + 3s 与大师档/复盘分析同一评判标准，慢设备由时间上限兜底。
+  /// 一步未走（无局势可评）返回 0；失败时抛出原始异常由调用方展示。
+  Future<int> analyzeEndingScore() async {
+    if (_history.isEmpty) return 0;
+    final result = await engine.analyze(Board.cloneFrom(_board),
+        depth: 12, movetimeMs: 3000);
+    return result.scoreCp;
+  }
+
+  /// 结束对局：按局势评分判定胜负
+  /// 分差 [endScoreCp] 以内为平局，某方超过则该方获胜
+  /// （绝杀分 ±9000+ 必然判胜）。
+  /// [scoreCp] 为结束弹窗中已算好的局势评分，传入则跳过重复分析；
+  /// 省略时现场分析（弹窗预览分析失败后的兜底路径）。
+  Future<void> endGameByScore({int? scoreCp}) async {
     if (_status != GameStatus.playing || ending) return;
     if (_history.isEmpty) {
       // 一步未走直接结束：无局势可评，视为平局
@@ -494,11 +509,13 @@ class GameController extends ChangeNotifier {
     }
     ending = true;
     try {
-      final result = await engine.analyze(Board.cloneFrom(_board),
-          depth: 12, movetimeMs: 2000);
-      if (result.scoreCp > 600) {
+      final score = scoreCp ??
+          (await engine.analyze(Board.cloneFrom(_board),
+                  depth: 12, movetimeMs: 3000))
+              .scoreCp;
+      if (score > endScoreCp) {
         _status = GameStatus.redWin;
-      } else if (result.scoreCp < -600) {
+      } else if (score < -endScoreCp) {
         _status = GameStatus.blackWin;
       } else {
         _status = GameStatus.draw;

@@ -229,7 +229,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
       );
     }
     final e = _review.entries[_review.cursor - 1];
-    final isUserMove = (_review.cursor - 1).isEven == widget.userPlaysRed;
     final q = e.quality;
     final suggestion = (e.bestMoveUci != null && e.bestMoveUci != e.move.uci)
         ? '建议：${_uciToNotation(e.bestMoveUci!, _review.cursor)}'
@@ -240,7 +239,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
         : null;
     final lossText = (e.loss > 100 && q != null)
         ? '亏损 ${e.loss} 厘兵'
-          '${isUserMove ? '（你走的）' : ''}'
         : null;
 
     return XqPanel(
