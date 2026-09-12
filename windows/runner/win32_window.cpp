@@ -184,10 +184,31 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  // 打开时在监视器工作区居中：以请求原点定位显示器，按外框尺寸
+  // （DPI 缩放后）计算居中坐标；工作区过小时贴左上边，
+  // 随后的 ClampToWorkArea 继续兜底收缩。
+  LONG left = Scale(origin.x, scale_factor);
+  LONG top = Scale(origin.y, scale_factor);
+  const LONG window_width = Scale(size.width, scale_factor);
+  const LONG window_height = Scale(size.height, scale_factor);
+  MONITORINFO monitor_info{};
+  monitor_info.cbSize = sizeof(monitor_info);
+  if (GetMonitorInfo(monitor, &monitor_info)) {
+    const LONG work_w = monitor_info.rcWork.right - monitor_info.rcWork.left;
+    const LONG work_h = monitor_info.rcWork.bottom - monitor_info.rcWork.top;
+    left = monitor_info.rcWork.left + (work_w - window_width) / 2;
+    top = monitor_info.rcWork.top + (work_h - window_height) / 2;
+    if (left < monitor_info.rcWork.left) {
+      left = monitor_info.rcWork.left;
+    }
+    if (top < monitor_info.rcWork.top) {
+      top = monitor_info.rcWork.top;
+    }
+  }
+
   HWND window = CreateWindow(
       window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      left, top, window_width, window_height,
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {

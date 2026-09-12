@@ -125,6 +125,19 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
+  /// 当前浏览局面是否已终局（行棋方被将死/困毙，无子可动）：
+  /// 终局局面不允许「当前局面续下」。
+  /// 结果按 cursor 缓存，避免每次 rebuild 重复做走法生成探测。
+  bool _cachedPosOver = false;
+  int _cachedPosOverCursor = -1;
+  bool get isPositionOver {
+    if (_cachedPosOverCursor != cursor) {
+      _cachedPosOverCursor = cursor;
+      _cachedPosOver = board.statusAfterMove() != GameStatus.playing;
+    }
+    return _cachedPosOver;
+  }
+
   bool get canBack => cursor > 0;
   bool get canForward => cursor < history.length;
   bool get isAtEnd => cursor == history.length;

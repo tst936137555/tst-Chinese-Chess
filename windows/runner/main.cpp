@@ -27,8 +27,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   // Portrait window in logical px (~9:16), matching the phone-portrait UI
-  // design. Create() scales it by the monitor DPI; ClampToWorkArea keeps it
-  // inside the work area on high-DPI/small displays.
+  // design. The origin only picks the target monitor; Create() centers the
+  // DPI-scaled window in that monitor's work area, and ClampToWorkArea keeps
+  // it inside on high-DPI/small displays.
   Win32Window::Size size(460, 820);
   if (!window.Create(L"tst自用象棋", origin, size)) {
     return EXIT_FAILURE;

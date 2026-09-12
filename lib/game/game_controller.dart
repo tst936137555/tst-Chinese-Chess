@@ -484,9 +484,10 @@ class GameController extends ChangeNotifier {
 
   /// 结束前的局势预览：与结算同一标准分析当前局面（红方视角，厘兵）。
   /// 深度 12 + 3s 与大师档/复盘分析同一评判标准，慢设备由时间上限兜底。
-  /// 一步未走（无局势可评）返回 0；失败时抛出原始异常由调用方展示。
+  /// 标准开局一步未走（局面无变化）返回 0；复盘续下/残局的起始局面
+  /// 可能明显失衡，须真实评估当前摆盘局面。失败时抛出原始异常由调用方展示。
   Future<int> analyzeEndingScore() async {
-    if (_history.isEmpty) return 0;
+    if (_history.isEmpty && _startFen == Board.startFen) return 0;
     final result = await engine.analyze(Board.cloneFrom(_board),
         depth: 12, movetimeMs: 3000);
     return result.scoreCp;
@@ -499,8 +500,10 @@ class GameController extends ChangeNotifier {
   /// 省略时现场分析（弹窗预览分析失败后的兜底路径）。
   Future<void> endGameByScore({int? scoreCp}) async {
     if (_status != GameStatus.playing || ending) return;
-    if (_history.isEmpty) {
-      // 一步未走直接结束：无局势可评，视为平局
+    if (_history.isEmpty && _startFen == Board.startFen) {
+      // 标准开局一步未走直接结束：初始局面均势，视为平局。
+      // 复盘续下/残局 0 步时起始局面可能明显失衡，不走此捷径，
+      // 落到下方按当前摆盘局面正常分析结算。
       _status = GameStatus.draw;
       unawaited(_archiveGame());
       notifyListeners();

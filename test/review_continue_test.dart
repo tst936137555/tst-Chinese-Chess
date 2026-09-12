@@ -17,6 +17,7 @@ import 'package:tst_xiangqi/game/game_archive.dart';
 import 'package:tst_xiangqi/game/game_controller.dart';
 import 'package:tst_xiangqi/game/review_controller.dart';
 import 'package:tst_xiangqi/ui/game_end_overlay.dart';
+import 'package:tst_xiangqi/ui/review_screen.dart';
 
 import 'game_controller_test.dart';
 
@@ -308,6 +309,131 @@ void main() {
     expect(review.cursor, 2);
     expect(engine.analyzeCalls - callsBefore, 2,
         reason: '续跑只评估剩余局面，不重复消耗引擎时间');
+  });
+
+  testWidgets('当前局面续下：一方被将死时禁止续走', (tester) async {
+    // 将死局面：黑帅宫底被红车正面将军，另两车封死两侧全部逃点
+    // （黑方无子可动，轮黑行棋）
+    const matedFen = '4k4/9/9/3RRR3/9/9/9/9/9/4K4 b';
+    // 自校验：该局面确为终局（黑被将死 → 红胜）
+    expect(Board.fromFen(matedFen).statusAfterMove(), GameStatus.redWin);
+
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+
+    Future<TextButton> pumpButton(
+        String startFen, List<HistoryEntry> history) async {
+      // UniqueKey 强制重建 State：同一测试连续 pumpWidget 时，
+      // 同类型无键 widget 会复用旧 State（initState 不重跑，控制器
+      // 仍持有上一个局面的 startFen/历史）
+      await tester.pumpWidget(MaterialApp(
+        key: UniqueKey(),
+        home: ReviewScreen(
+          history: history,
+          userPlaysRed: true,
+          startFen: startFen,
+          prefs: prefs,
+          engine: _FenRecordingEngine(),
+        ),
+      ));
+      // 等自动分析完成（伪造引擎立即返回）：分析完成后加载圈消失，
+      // 无连续动画帧，pumpAndSettle 正常收敛
+      await tester.pumpAndSettle();
+      final finder = find.widgetWithText(TextButton, '当前局面续下');
+      expect(finder, findsOneWidget);
+      return tester.widget<TextButton>(finder);
+    }
+
+    // 将死局面：按钮禁用
+    final mated = await pumpButton(matedFen, const []);
+    expect(mated.onPressed, isNull, reason: '一方被将死时不允许续走');
+
+    // 普通局面（行棋方有合法走法）：按钮可用
+    final normal = await pumpButton(
+        Board.startFen, _buildHistoryFrom(Board.startFen, ['h2e2']));
+    expect(normal.onPressed, isNotNull);
+  });
+
+  test('复盘续下 0 步直接结束：按自定义起始局面评分结算，不无视局面判和', () async {
+    final engine = FakeEngineClient()
+      ..analyzeResult = const AnalysisResult(
+          scoreCp: 1200, bestMove: 'h2e2', pvMoves: ['h2e2']);
+    final prefs = await _freshPrefs();
+    final c = await _newController(engine, prefs: prefs, mode: GameMode.review);
+    addTearDown(c.dispose);
+
+    // 自定义起始局面红方先行（轮玩家执红），一步未走直接结束
+    const redUpFen = '4k4/9/9/9/9/9/9/9/9/4KR3 w';
+    c.newGame(userRed: true, startFen: redUpFen, mode: GameMode.review);
+    await _settle();
+    expect(c.history, isEmpty, reason: '轮玩家（红）行棋，AI 不先走');
+
+    // 弹窗预览评分：真实分析当前摆盘局面，不再恒回 0
+    expect(await c.analyzeEndingScore(), 1200);
+
+    await c.endGameByScore();
+    expect(c.status, GameStatus.redWin,
+        reason: '红优 1200 厘兵应判红胜，而非无视局面直接判和');
+  });
+
+  test('普通对局 0 步直接结束：维持均势判和捷径，不消耗引擎分析', () async {
+    final engine = FakeEngineClient()
+      ..analyzeResult = const AnalysisResult(
+          scoreCp: 1200, bestMove: 'h2e2', pvMoves: ['h2e2']);
+    final c = await _newController(engine);
+    addTearDown(c.dispose);
+
+    c.newGame(userRed: true);
+    await _settle();
+    expect(c.history, isEmpty);
+
+    await c.endGameByScore();
+    expect(c.status, GameStatus.draw);
+    expect(engine.analyzeCalls, 0, reason: '标准开局无局势可评，不应发起分析');
+  });
+
+  testWidgets('当前局面续下：前后导航切换将死/非将死局面，按钮状态跟随', (tester) async {
+    // 起始局面：红三车，黑仅剩将且未被将军（红方行棋，有合法走法）；
+    // 车a6-e6 横移至宫顶线正面将军，d/f 两车封死两侧逃点 → 黑被将死
+    const startFen = '4k4/9/9/R8/3R1R3/9/9/9/9/3K5 w';
+    final history = _buildHistoryFrom(startFen, ['a6e6']);
+    // 自校验：走子前可继续（playing），走子后黑被将死（redWin）
+    expect(Board.fromFen(startFen).statusAfterMove(), GameStatus.playing);
+    expect(
+        Board.fromFen(history.last.fenAfter).statusAfterMove(), GameStatus.redWin);
+
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await tester.pumpWidget(MaterialApp(
+      home: ReviewScreen(
+        history: history,
+        userPlaysRed: true,
+        startFen: startFen,
+        prefs: prefs,
+        engine: _FenRecordingEngine(),
+      ),
+    ));
+    await tester.pumpAndSettle(); // 自动分析完成，cursor 停在末尾（将死局面）
+
+    Future<TextButton> readButton() async {
+      await tester.pumpAndSettle();
+      return tester.widget<TextButton>(
+          find.widgetWithText(TextButton, '当前局面续下'));
+    }
+
+    // 分析结束停在将死局面：禁用
+    expect((await readButton()).onPressed, isNull,
+        reason: '将死局面不允许续走');
+
+    // 上一步回退到非终局局面：恢复可用（isPositionOver 按 cursor 重算）
+    await tester.tap(find.text('上一步'));
+    expect((await readButton()).onPressed, isNotNull,
+        reason: '回退到非终局局面后应恢复可续走');
+
+    // 下一步回到将死局面：再次禁用
+    await tester.tap(find.text('下一步'));
+    expect((await readButton()).onPressed, isNull,
+        reason: '再前进到将死局面应再次禁用');
   });
 
   testWidgets('续下对局结束遮罩不提供「再来一局」', (tester) async {

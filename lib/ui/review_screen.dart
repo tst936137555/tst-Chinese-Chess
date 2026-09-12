@@ -148,10 +148,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
             onPressed: () => Navigator.of(context).maybePop(),
           ),
           actions: [
-            // 当前局面续下：分析进行中禁用（分析完成/出错后均可点），
-            // 从当前浏览到的局面（cursor 处）继续对弈
+            // 当前局面续下：分析进行中或当前局面已终局（将死/困毙，
+            // 行棋方无子可动）时禁用；从当前浏览到的局面（cursor 处）继续对弈
             TextButton(
-              onPressed: _review.analyzing ? null : _startFromPosition,
+              onPressed:
+                  _review.analyzing || _review.isPositionOver
+                      ? null
+                      : _startFromPosition,
               style: TextButton.styleFrom(
                 foregroundColor: Colors.white,
                 textStyle: const TextStyle(fontSize: 13),
