@@ -250,35 +250,42 @@ class _EvalChartPainter extends CustomPainter {
     }
   }
 
+  /// 已排版 TextPainter 缓存（键：文本/颜色/字号/字重）。
+  /// x 轴步数标签随局面增长会新增条目，单条体积小、
+  /// 与 board_view 同策略不做主动清理。
+  static final Map<(String, Color, double, FontWeight), TextPainter>
+      _labelCache = {};
+
+  static TextPainter _cachedLabel(String s, Color c, double size) {
+    final key = (s, c, size, FontWeight.w400);
+    return _labelCache[key] ??= TextPainter(
+      text: TextSpan(
+        text: s,
+        style: TextStyle(
+          color: c,
+          fontSize: size,
+          fontFamily: xqFontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+  }
+
   /// 轴标签
   void _drawLabels(Canvas canvas, Size size, double Function(int) xOf,
       double left, double right, double bottom, double cy) {
-    TextPainter tp(String s, Color c, double size, {bool bold = false}) =>
-        TextPainter(
-          text: TextSpan(
-            text: s,
-            style: TextStyle(
-              color: c,
-              fontSize: size,
-              fontWeight: bold ? FontWeight.w700 : null,
-              fontFamily: xqFontFamily,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-
     // y 轴刻度：±500 / 0（厘兵）
-    final y500 = tp('+500', Colors.grey, 9)..layout();
+    final y500 = _cachedLabel('+500', Colors.grey, 9);
     y500.paint(canvas, Offset(left - y500.width - 3, cy - (bottom - cy) * 0.5 - y500.height / 2));
-    final ym500 = tp('-500', Colors.grey, 9)..layout();
+    final ym500 = _cachedLabel('-500', Colors.grey, 9);
     ym500.paint(canvas, Offset(left - ym500.width - 3, cy + (bottom - cy) * 0.5 - ym500.height / 2));
-    final y0 = tp('0', Colors.grey, 9)..layout();
+    final y0 = _cachedLabel('0', Colors.grey, 9);
     y0.paint(canvas, Offset(left - y0.width - 3, cy - y0.height / 2));
 
     // x 轴：首/中/尾步数
     final n = scores.length;
     void xLabel(int i) {
-      final t = tp('$i', Colors.grey, 9)..layout();
+      final t = _cachedLabel('$i', Colors.grey, 9);
       final x = (xOf(i) - t.width / 2).clamp(0.0, size.width - t.width);
       t.paint(canvas, Offset(x, bottom + 3));
     }

@@ -153,7 +153,8 @@ class _HomePageState extends State<HomePage> {
                   label: '复盘棋谱',
                   icon: Icons.history,
                   variant: XqButtonVariant.outline,
-                  onPressed: () => openReviewArchive(context),
+                  onPressed: () =>
+                      openReviewArchive(context, prefs: widget.prefs),
                 ),
               ),
               // 版本标注（运行时从 pubspec 读取，见 main.dart）

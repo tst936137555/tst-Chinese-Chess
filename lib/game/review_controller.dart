@@ -51,6 +51,7 @@ class ReviewController extends ChangeNotifier {
     required this.engine,
     required this.history,
     required this.userPlaysRed,
+    this.startFen = Board.startFen,
   }) {
     _buildEntries();
   }
@@ -58,6 +59,13 @@ class ReviewController extends ChangeNotifier {
   final EngineClient engine;
   final List<HistoryEntry> history;
   final bool userPlaysRed;
+
+  /// 复盘基准局面 FEN：普通对局为标准开局；复盘续下
+  /// 的棋谱从自定义局面开始，重放与分析都以此为基准
+  final String startFen;
+
+  /// 起始局面 Board（懒解析缓存，cursor 0 与建议记谱共用）
+  late final Board _startBoard = Board.fromFen(startFen);
 
   /// 当前浏览位置（0 = 初始局面，i = 走完第 i 步后）
   int cursor = 0;
@@ -89,12 +97,16 @@ class ReviewController extends ChangeNotifier {
   Board get board {
     if (_cachedCursor != cursor) {
       _cachedCursor = cursor;
-      _cachedBoard = cursor == 0
-          ? Board()
-          : Board.fromFen(history[cursor - 1].fenAfter);
+      _cachedBoard = cursor == 0 ? _startBoard : Board.fromFen(history[cursor - 1].fenAfter);
     }
     return _cachedBoard!;
   }
+
+  /// 指定步数之前（即该步走出前）的局面，供建议走法转中文记谱：
+  /// cursor ≤ 1 时即本局起始局面（复盘续下为自定义局面）。
+  Board boardBefore(int cursor) => cursor <= 1
+      ? _startBoard
+      : Board.fromFen(history[cursor - 2].fenAfter);
 
   /// 当前显示的走法（最近一步）
   Move? get currentMove =>
@@ -171,17 +183,19 @@ class ReviewController extends ChangeNotifier {
 
   /// 逐步分析整局（走法前后各评估一次）。
   /// 深度 12 + 3s 与大师档/提示同一评判标准，慢设备由时间上限兜底。
+  /// 已完整分析的步（quality 已填）自动跳过：从对局续下返回复盘后
+  /// 再次调用只补算剩余步，不重复消耗引擎时间。
   Future<void> analyzeAll({int depth = 12}) async {
     if (analyzing || entries.isEmpty) return;
     _cancelled = false;
     analyzing = true;
-    analyzedCount = 0;
     analysisError = null;
     notifyListeners();
 
     try {
-      // 局面序列：posBoards[0] = 初始局面，posBoards[i] = 第 i 步后
-      final posBoards = <Board>[Board()];
+      // 局面序列：posBoards[0] = 本局起始局面，posBoards[i] = 第 i 步后
+      // （复盘续下为自定义起始局面，非标准开局）
+      final posBoards = <Board>[Board.fromFen(startFen)];
       for (final h in history) {
         posBoards.add(Board.fromFen(h.fenAfter));
       }
@@ -197,6 +211,12 @@ class ReviewController extends ChangeNotifier {
       }
 
       for (int i = 0; i < entries.length; i++) {
+        // 续跑：已分析的步直接同步游标，不重复评估
+        if (entries[i].quality != null) {
+          analyzedCount = i + 1;
+          cursor = i + 1;
+          continue;
+        }
         if (_cancelled) break;
         final e = entries[i];
 

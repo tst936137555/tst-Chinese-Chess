@@ -155,6 +155,41 @@ class _BoardPainter extends CustomPainter {
   final MoveQuality? quality;
   final double cell;
 
+  /// 已排版 TextPainter 缓存（键：文本/颜色/字号/字重/行高/字距）。
+  /// 走子动画期间棋盘逐帧全量重绘（willChange 使光栅缓存失效），
+  /// 此前每帧对全部棋子与标注重新执行文本测量（约 30+ 次布局/帧）；
+  /// 这些内容帧间不变，缓存后仅首次排版、后续直接复用绘制。
+  /// 仅限同参数恒定的绘制：渐隐中的被吃棋子透明度逐帧变化，不走此缓存。
+  /// 棋盘尺寸（cell）变化会新增少量条目，单条体积小、无需主动清理。
+  static final Map<(String, Color, double, FontWeight, double?, double?),
+      TextPainter> _textPainterCache = {};
+
+  /// 取缓存的已排版 TextPainter，不存在则排版一次并放入缓存
+  static TextPainter _cachedTextPainter(
+    String text, {
+    required Color color,
+    required double fontSize,
+    FontWeight fontWeight = FontWeight.w400,
+    double? height,
+    double? letterSpacing,
+  }) {
+    final key = (text, color, fontSize, fontWeight, height, letterSpacing);
+    return _textPainterCache[key] ??= TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: color,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          height: height,
+          letterSpacing: letterSpacing,
+          fontFamily: xqFontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+  }
+
   /// 屏幕坐标（file/rank -> 像素中心点）
   Offset point(int file, int rank) {
     final f = flip ? 8 - file : file;
@@ -234,19 +269,11 @@ class _BoardPainter extends CustomPainter {
     canvas.drawCircle(center, radius + 1.5, Paint()..color = Colors.white);
     canvas.drawCircle(center, radius, Paint()..color = color);
 
-    final tp = TextPainter(
-      text: TextSpan(
-        text: label,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: radius * 1.3,
-          fontWeight: FontWeight.w700,
-          height: 1.0,
-          fontFamily: xqFontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final tp = _cachedTextPainter(label,
+        color: Colors.white,
+        fontSize: radius * 1.3,
+        fontWeight: FontWeight.w700,
+        height: 1.0);
     tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
   }
 
@@ -273,18 +300,10 @@ class _BoardPainter extends CustomPainter {
     );
 
     // 角标单字（优/良/平/差/错）
-    final tp = TextPainter(
-      text: TextSpan(
-        text: q.badge,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: radius * 1.35,
-          fontWeight: FontWeight.w700,
-          fontFamily: xqFontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final tp = _cachedTextPainter(q.badge,
+        color: Colors.white,
+        fontSize: radius * 1.35,
+        fontWeight: FontWeight.w700);
     tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
   }
 
@@ -329,47 +348,29 @@ class _BoardPainter extends CustomPainter {
 
   void _drawMarkings(Canvas canvas) {
     // 楚河汉界
-    final tp = TextPainter(
-      text: const TextSpan(
-        text: '楚 河          汉 界',
-        style: TextStyle(
-          color: Color(0xFF5B3A1E),
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 6,
-          fontFamily: xqFontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    );
-    tp.layout();
+    final tp = _cachedTextPainter('楚 河          汉 界',
+        color: const Color(0xFF5B3A1E),
+        fontSize: 20,
+        fontWeight: FontWeight.bold,
+        letterSpacing: 6);
     tp.paint(canvas, Offset((cell * 10 - tp.width) / 2, cell * 5.5 - tp.height / 2));
 
     // 纵线号：红方一~九（右侧）、黑方 1~9（左侧）
     const redDigits = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
-    TextPainter tpHelper(String s, Color c, double size) => TextPainter(
-          text: TextSpan(
-            text: s,
-            style: TextStyle(
-              color: c,
-              fontSize: size,
-              fontFamily: xqFontFamily,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
 
     for (int f = 0; f < 9; f++) {
       // 红方数字（红方底线外侧；翻转后红方底线在屏幕顶部，偏移改向上）
       final redIdx = 8 - f;
-      final t1 = tpHelper(redDigits[redIdx], const Color(0xFF8B2F1F), 13);
+      final t1 = _cachedTextPainter(redDigits[redIdx],
+          color: const Color(0xFF8B2F1F), fontSize: 13);
       final redP = point(f, 9);
       t1.paint(canvas, Offset(
         redP.dx - t1.width / 2,
         flip ? redP.dy - cell * 0.62 - t1.height : redP.dy + cell * 0.62,
       ));
       // 黑方数字（黑方底线外侧；翻转后黑方底线在屏幕底部，偏移改向下）
-      final t2 = tpHelper('${f + 1}', const Color(0xFF333333), 12);
+      final t2 = _cachedTextPainter('${f + 1}',
+          color: const Color(0xFF333333), fontSize: 12);
       final blackP = point(f, 0);
       t2.paint(canvas, Offset(
         blackP.dx - t2.width / 2,
@@ -501,21 +502,27 @@ class _BoardPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1,
     );
-    // 文字
+    // 文字：常规棋子（不透明）复用排版缓存；渐隐中的被吃棋子
+    // alpha 逐帧变化，不能进缓存，保持即时排版
     final name = (p.isRed ? _redNames : _blackNames)[p.type]!;
-    final tp = TextPainter(
-      text: TextSpan(
-        text: name,
-        style: TextStyle(
-          color: (p.isRed ? const Color(0xFFB03020) : const Color(0xFF222222))
-              .withValues(alpha: opacity),
-          fontSize: radius,
-          fontWeight: FontWeight.bold,
-          fontFamily: xqFontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final color =
+        (p.isRed ? const Color(0xFFB03020) : const Color(0xFF222222))
+            .withValues(alpha: opacity);
+    final tp = opacity == 1.0
+        ? _cachedTextPainter(name,
+            color: color, fontSize: radius, fontWeight: FontWeight.bold)
+        : TextPainter(
+            text: TextSpan(
+              text: name,
+              style: TextStyle(
+                color: color,
+                fontSize: radius,
+                fontWeight: FontWeight.bold,
+                fontFamily: xqFontFamily,
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout();
     tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
   }
 

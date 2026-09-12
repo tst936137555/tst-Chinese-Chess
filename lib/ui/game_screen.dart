@@ -24,6 +24,8 @@ class GamePage extends StatefulWidget {
     this.initialLevel,
     this.initialUserRed,
     this.resumeGame = false,
+    this.startFen,
+    this.gameMode = GameMode.normal,
     this.engine,
   });
 
@@ -34,6 +36,10 @@ class GamePage extends StatefulWidget {
   final bool? initialUserRed;
   /// true = 继续上局
   final bool resumeGame;
+  /// 自定义起始局面 FEN（复盘续下）；空 = 标准开局
+  final String? startFen;
+  /// 对局来源模式（归档标题前缀）
+  final GameMode gameMode;
   /// 测试注入伪造引擎；空则使用全局单例（生产路径不受影响）
   @visibleForTesting
   final EngineClient? engine;
@@ -103,6 +109,7 @@ class _GamePageState extends State<GamePage>
       engine: widget.engine ?? PikafishEngine.instance,
       prefs: widget.prefs,
       initialLevel: widget.initialLevel,
+      mode: widget.gameMode,
     );
     if (widget.resumeGame) {
       final restored = await controller.restoreGame();
@@ -112,7 +119,11 @@ class _GamePageState extends State<GamePage>
       }
     }
     if (widget.initialUserRed != null) {
-      controller.newGame(userRed: widget.initialUserRed);
+      controller.newGame(
+        userRed: widget.initialUserRed,
+        startFen: widget.startFen,
+        mode: widget.gameMode,
+      );
     } else if (!widget.resumeGame && controller.history.isEmpty) {
       controller.newGame();
     }
@@ -497,7 +508,8 @@ class _GamePageState extends State<GamePage>
                 ),
               ],
             ),
-            // 对局结束遮罩：结果展示 + 操作按钮（点击或 3 秒后出现）
+            // 对局结束遮罩：结果展示 + 操作按钮（点击或 3 秒后出现）；
+            // 复盘续下无「再来一局」语义（重玩同一续下局面易误解），仅普通对局提供
             if (_showEndOverlay)
               GameEndOverlay(
                 title: _endInfo.$1,
@@ -505,8 +517,12 @@ class _GamePageState extends State<GamePage>
                 actionsReady: _endActionsReady,
                 onTap: _onEndOverlayTap,
                 onReview: _reviewFromOverlay,
-                onNewGame: _newGameFromOverlay,
+                onNewGame:
+                    c.mode == GameMode.normal ? _newGameFromOverlay : null,
                 onQuit: _quitToHome,
+                // 续下局的返回按钮回到的是栈下的复盘分析页，按钮文字相应调整
+                quitLabel:
+                    c.mode == GameMode.normal ? '返回主界面' : '返回复盘',
               ),
               ],
             ),
@@ -519,7 +535,7 @@ class _GamePageState extends State<GamePage>
   /// 结束遮罩「复盘此局」：先收起遮罩进入复盘，返回后重新展示（按钮立即可用）
   Future<void> _reviewFromOverlay() async {
     setState(() => _showEndOverlay = false);
-    await openReviewLastGame(context, game: c);
+    await openReviewLastGame(context, game: c, prefs: widget.prefs);
     if (mounted) {
       setState(() {
         _showEndOverlay = true;

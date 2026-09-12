@@ -2,33 +2,38 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../engine/chinese_notation.dart';
 import '../engine/rules.dart';
 import '../game/game_archive.dart';
 import '../game/game_controller.dart';
-import '../game/pgn_export.dart';
 import 'help_dialog.dart';
 import 'review_screen.dart';
 import 'theme.dart';
 
 /// 复盘棋谱：打开存档列表选择一局
-Future<void> openReviewArchive(BuildContext context) {
+Future<void> openReviewArchive(
+  BuildContext context, {
+  required SharedPreferences prefs,
+}) {
   return Navigator.of(context).push(MaterialPageRoute(
     settings: const RouteSettings(name: '/archive'),
     fullscreenDialog: true,
-    builder: (_) => const ArchivePickerScreen(),
+    builder: (_) => ArchivePickerScreen(prefs: prefs),
   ));
 }
 
 /// 从存档重建历史：以 uci 序列重放为唯一事实来源，逐步重算
 /// 被吃子/记谱/局面哈希/将军标记（uci 非法或走法不合法时截断，丢弃其后数据）。
-/// 旧版存档中的冗余 fen 字段不参与解析——重放过程本身就是逐步校验，
-/// 比信任存储的 fen 更抗数据损坏。
+/// 重放基准为存档的起始局面（复盘续下为自定义局面，普通对局
+/// 为标准开局）；旧版存档中的冗余 fen 字段不参与解析——重放过程本身
+/// 就是逐步校验，比信任存储的 fen 更抗数据损坏。
 List<HistoryEntry> _historyFromArchive(ArchivedGame game) {
   final history = <HistoryEntry>[];
-  final board = Board();
+  final board = game.startFen == null
+      ? Board()
+      : Board.fromFen(game.startFen!);
   for (final e in game.history) {
     final uci = e['uci'] as String? ?? '';
     if (uci.length < 4) break;
@@ -57,7 +62,10 @@ List<HistoryEntry> _historyFromArchive(ArchivedGame game) {
 
 /// 存档选择页
 class ArchivePickerScreen extends StatefulWidget {
-  const ArchivePickerScreen({super.key});
+  const ArchivePickerScreen({super.key, required this.prefs});
+
+  /// 「当前局面续下」透传给复盘页创建对局用
+  final SharedPreferences prefs;
 
   @override
   State<ArchivePickerScreen> createState() => _ArchivePickerScreenState();
@@ -192,18 +200,10 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
       builder: (_) => ReviewScreen(
         history: history,
         userPlaysRed: game.userRed,
+        startFen: game.startFen ?? Board.startFen,
+        prefs: widget.prefs,
       ),
     ));
-  }
-
-  /// 导出单局棋谱为 PGN 文本并复制到剪贴板（v1 最小实现）。
-  /// 剪贴板在全部平台可用，可粘贴到东萍/象棋工具或另存为 .pgn 文件；
-  /// 后续有需要再加"保存为文件/系统分享"。
-  void _exportPgn(ArchivedGame game) {
-    Clipboard.setData(ClipboardData(text: archivedGameToPgn(game)));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('PGN 已复制到剪贴板，可粘贴到其他象棋工具')),
-    );
   }
 
   @override
@@ -301,16 +301,6 @@ class _ArchivePickerScreenState extends State<ArchivePickerScreen> {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            // 导出 PGN：复制到剪贴板
-                            IconButton(
-                              icon: const Icon(Icons.ios_share,
-                                  color: XqColors.wood),
-                              tooltip: '导出 PGN',
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                              onPressed: () => _exportPgn(g),
-                            ),
                             // 收藏开关：置顶且不会被自动移除
                             IconButton(
                               icon: Icon(

@@ -49,6 +49,18 @@ class HistoryEntry {
   }
 }
 
+/// 对局来源模式：普通开局 / 复盘续下。
+/// 决定棋谱归档的标题前缀（（复盘））与偏好写入策略：
+/// 仅普通模式才把难度/执子写入全局偏好，避免特殊模式污染默认设置。
+enum GameMode {
+  normal(''),
+  review('复盘');
+
+  const GameMode(this.label);
+  /// 模式名（归档标题前缀用），普通模式为空串
+  final String label;
+}
+
 /// 对局控制器（ChangeNotifier）
 class GameController extends ChangeNotifier {
   GameController({
@@ -56,10 +68,13 @@ class GameController extends ChangeNotifier {
     required this._prefs,
     DifficultyLevel? initialLevel,
     this.archiveFile,
-  })  : _level = initialLevel ?? DifficultyLevel.medium {
+    GameMode mode = GameMode.normal,
+  })  : _level = initialLevel ?? DifficultyLevel.medium,
+        _mode = mode {
     if (initialLevel == null) {
       _loadSettings();
-    } else {
+    } else if (mode == GameMode.normal) {
+      // 非普通模式的指定难度不写入全局偏好（复盘续下沿用原设置）
       _saveSettings();
     }
     // 初始局面即重算合法走法缓存，保证 legalMoves 读取始终有效
@@ -71,6 +86,10 @@ class GameController extends ChangeNotifier {
 
   /// 存档文件（测试注入临时文件用；null 时用应用支持目录默认文件）
   final File? archiveFile;
+
+  /// 对局来源模式（归档标题前缀与偏好写入策略，见 [GameMode]）
+  GameMode _mode;
+  GameMode get mode => _mode;
 
   /// 页面销毁后不再处理异步结果
   bool _disposed = false;
@@ -90,6 +109,15 @@ class GameController extends ChangeNotifier {
   GameStatus _status = GameStatus.playing;
   DifficultyLevel _level = DifficultyLevel.medium;
   bool _loading = false;
+
+  /// 本局起始局面 FEN（复盘续下为自定义局面，新开局为标准开局）
+  String _startFen = Board.startFen;
+
+  /// 本局起始局面的 Zobrist 哈希（重复局面判定基准，随 [_resetToStart] 更新）
+  int _startPosHash = Board().positionHash;
+
+  /// 本局起始局面 FEN（供复盘页沿用同一基准局面）
+  String get startFen => _startFen;
 
   /// 用户执红（先手）
   bool userPlaysRed = true;
@@ -164,9 +192,11 @@ class GameController extends ChangeNotifier {
 
   List<Move> get legalMoves => _legalMovesCache;
 
-  /// 重置为初始局面（新局/恢复失败兜底），并重算合法走法缓存
+  /// 重置为本局起始局面（新局/恢复失败兜底），并重算合法走法缓存
   void _resetToStart() {
-    _board = Board();
+    _board = Board.fromFen(_startFen);
+    // 重复局面判定基准随起始局面更新（复盘续下非标准开局）
+    _startPosHash = _board.positionHash;
     _history = [];
     _status = GameStatus.playing;
     _updateStatus();
@@ -277,9 +307,12 @@ class GameController extends ChangeNotifier {
 
   set hinting(bool v) => _setAndNotify(_hinting, v, (x) => _hinting = x);
 
-  /// 开始新对局；[userRed] 用户是否执红先行
-  void newGame({bool? userRed}) {
+  /// 开始新对局；[userRed] 用户是否执红先行，
+  /// [startFen] 自定义起始局面（复盘续下），[mode] 对局来源模式
+  void newGame({bool? userRed, String? startFen, GameMode? mode}) {
     if (userRed != null) userPlaysRed = userRed;
+    if (startFen != null) _startFen = startFen;
+    if (mode != null) _mode = mode;
     _resetToStart();
     thinking = false;
     engineNotice = null;
@@ -323,9 +356,6 @@ class GameController extends ChangeNotifier {
     }
   }
 
-  /// 初始局面哈希（Zobrist 表确定性生成，跨实例一致）
-  static final int _startPosHash = Board().positionHash;
-
   void _updateStatus() {
     ruleNotice = null;
     endReason = null;
@@ -343,7 +373,8 @@ class GameController extends ChangeNotifier {
     }
     // 重复局面判和 / 长将判负：键为 Zobrist 哈希（棋盘 + 行棋方），
     // 逐条存于历史条目，随走法增量产生，不再全量解析 FEN。
-    // 序列含初始局面，避免"绕回开局局面"的循环漏判。
+    // 序列含本局起始局面（随 _resetToStart 更新，复盘续下非标准开局），
+    // 避免"绕回开局局面"的循环漏判。
     final keys = <int>[_startPosHash];
     final checks = <bool>[];
     for (final e in _history) {
@@ -501,9 +532,9 @@ class GameController extends ChangeNotifier {
   void _undoOne() {
     if (_history.isEmpty) return;
     final entry = _history.removeLast();
-    // 从历史 FEN 恢复
+    // 从历史 FEN 恢复（历史清空则回到本局起始局面，复盘续下非标准开局）
     if (_history.isEmpty) {
-      _board = Board();
+      _board = Board.fromFen(_startFen);
     } else {
       _board = Board.fromFen(_history.last.fenAfter);
     }
@@ -539,7 +570,10 @@ class GameController extends ChangeNotifier {
               _ => 'draw',
             },
             // 仅存 uci/captured/notation：fen 可由 uci 序列重放推导，
-            // 复盘端（_historyFromArchive）以重放为准逐步重算
+            // 复盘端（_historyFromArchive）以重放为准逐步重算；
+            // 自定义起始局面（复盘续下）必须存 startFen 作为重放基准
+            startFen: _startFen == Board.startFen ? null : _startFen,
+            mode: _mode.name,
             history: _history.map((e) => {
                   'uci': e.move.uci,
                   'captured': e.capturedPiece,
@@ -575,10 +609,13 @@ class GameController extends ChangeNotifier {
       }
       await _prefs.setString('saved_game', jsonEncode({
         // 仅存 uci 序列：captured/notation/fen/status 均可在恢复重放时
-        // 经 _applyMove 全量重算（旧版冗余字段由重放端兼容读取）
+        // 经 _applyMove 全量重算（旧版冗余字段由重放端兼容读取）；
+        // 自定义起始局面与模式随档保存（旧档缺失字段恢复为标准开局/普通模式）
         'history': [for (final e in _history) {'uci': e.move.uci}],
         'userRed': userPlaysRed,
         'levelName': _level.name,
+        'startFen': _startFen,
+        'mode': _mode.name,
       }));
       _setSaveNotice(null);
     } catch (e) {
@@ -589,8 +626,12 @@ class GameController extends ChangeNotifier {
   }
 
   /// 恢复上次对局
-  /// 失败时棋盘重置为初始局面并返回 false，难度与执子设置保持原值
+  /// 失败时棋盘重置为原起始局面并返回 false，难度/执子/起始局面/模式保持原值
   Future<bool> restoreGame() async {
+    // 失败回滚用：起始局面与模式在重放前就得位（_resetToStart 依赖），
+    // 损坏时恢复原值，避免半截恢复污染控制器状态
+    final prevStartFen = _startFen;
+    final prevMode = _mode;
     try {
       _loading = true;
       notifyListeners();
@@ -603,6 +644,12 @@ class GameController extends ChangeNotifier {
         (l) => l.name == data['levelName'],
         orElse: () => DifficultyLevel.medium,
       );
+      // 起始局面与模式随档恢复（旧档缺失时为标准开局/普通模式）
+      _startFen = data['startFen'] as String? ?? Board.startFen;
+      _mode = GameMode.values.firstWhere(
+        (m) => m.name == data['mode'],
+        orElse: () => GameMode.normal,
+      );
       _resetToStart();
       final hist = data['history'] as List;
       for (final e in hist) {
@@ -611,6 +658,8 @@ class GameController extends ChangeNotifier {
         final m = Move.fromUci(e['uci'] as String);
         if (!_board.isLegal(m)) {
           // 数据损坏时放弃恢复
+          _startFen = prevStartFen;
+          _mode = prevMode;
           _resetToStart();
           return false;
         }
@@ -626,6 +675,8 @@ class GameController extends ChangeNotifier {
       return true;
     } catch (_) {
       // 数据损坏：丢弃恢复结果，避免留下走了一半的残缺局面
+      _startFen = prevStartFen;
+      _mode = prevMode;
       _resetToStart();
       return false;
     } finally {
@@ -648,8 +699,12 @@ class GameController extends ChangeNotifier {
 
   Future<void> _saveSettings() async {
     try {
-      await _prefs.setString('level', _level.name);
-      await _prefs.setBool('userRed', userPlaysRed);
+      // 仅普通对弈写全局难度/执子偏好：复盘续下沿用原设置，
+      // 不应覆盖用户普通对弈的默认选择
+      if (_mode == GameMode.normal) {
+        await _prefs.setString('level', _level.name);
+        await _prefs.setBool('userRed', userPlaysRed);
+      }
       await _saveState();
     } catch (_) {}
   }

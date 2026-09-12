@@ -1,7 +1,10 @@
 /// 复盘：复盘上局入口与复盘分析界面（存档选择见 archive_picker_screen.dart）。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../engine/chinese_notation.dart';
 import '../engine/pikafish.dart';
@@ -10,6 +13,7 @@ import '../game/game_controller.dart';
 import '../game/review_controller.dart';
 import 'board_view.dart';
 import 'eval_chart.dart';
+import 'game_screen.dart';
 import 'help_dialog.dart';
 import 'theme.dart';
 
@@ -17,6 +21,7 @@ import 'theme.dart';
 Future<void> openReviewLastGame(
   BuildContext context, {
   required GameController game,
+  required SharedPreferences prefs,
 }) {
   return Navigator.of(context).push(MaterialPageRoute(
     settings: const RouteSettings(name: '/review'),
@@ -24,6 +29,8 @@ Future<void> openReviewLastGame(
     builder: (_) => ReviewScreen(
       history: game.history,
       userPlaysRed: game.userPlaysRed,
+      startFen: game.startFen,
+      prefs: prefs,
     ),
   ));
 }
@@ -34,11 +41,17 @@ class ReviewScreen extends StatefulWidget {
     super.key,
     required this.history,
     required this.userPlaysRed,
+    this.startFen = Board.startFen,
+    required this.prefs,
     this.engine,
   });
 
   final List<HistoryEntry> history;
   final bool userPlaysRed;
+  /// 复盘基准局面：复盘续下的棋谱从自定义局面开始
+  final String startFen;
+  /// 「当前局面续下」创建对局页所需偏好（与全应用同一实例）
+  final SharedPreferences prefs;
   /// 测试注入伪造引擎；空则使用全局单例（生产路径不受影响）
   @visibleForTesting
   final EngineClient? engine;
@@ -57,6 +70,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
       engine: widget.engine ?? PikafishEngine.instance,
       history: widget.history,
       userPlaysRed: widget.userPlaysRed,
+      startFen: widget.startFen,
     );
     // 进入复盘自动开始引擎分析
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -69,6 +83,55 @@ class _ReviewScreenState extends State<ReviewScreen> {
     _review.cancelAnalysis();
     _review.dispose();
     super.dispose();
+  }
+
+  /// 「当前局面续下」：从当前浏览到的局面开始新对局。
+  /// 先取消复盘分析（引擎客户端内部队列串行化，与对局页引擎调用不冲突），
+  /// 选执子后压入对局页；返回后恢复剩余分析（已分析步自动跳过）。
+  Future<void> _startFromPosition() async {
+    if (_review.analyzing) return;
+    _review.cancelAnalysis();
+    final userRed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => XqDialog(
+        title: '选择执子',
+        actions: [
+          XqButton(
+            label: '执黑',
+            variant: XqButtonVariant.tonal,
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          XqButton(
+            label: '执红',
+            variant: XqButtonVariant.primary,
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(top: 2),
+          child: Text(
+            '从当前局面继续对弈。',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, height: 1.7),
+          ),
+        ),
+      ),
+    );
+    if (userRed == null || !mounted) return;
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      // 路由名纳入常亮白名单（app.dart WakeLockRouteObserver）
+      settings: const RouteSettings(name: '/game'),
+      builder: (_) => GamePage(
+        prefs: widget.prefs,
+        initialUserRed: userRed,
+        startFen: _review.board.fen,
+        gameMode: GameMode.review,
+      ),
+    ));
+    // 从对局返回复盘：补算剩余步（analyzeAll 自动跳过已分析步），
+    // 发后不管（页面自持状态），避免本函数挂起等待整个分析流程
+    if (mounted) unawaited(_review.analyzeAll());
   }
 
   @override
@@ -85,6 +148,16 @@ class _ReviewScreenState extends State<ReviewScreen> {
             onPressed: () => Navigator.of(context).maybePop(),
           ),
           actions: [
+            // 当前局面续下：分析进行中禁用（分析完成/出错后均可点），
+            // 从当前浏览到的局面（cursor 处）继续对弈
+            TextButton(
+              onPressed: _review.analyzing ? null : _startFromPosition,
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                textStyle: const TextStyle(fontSize: 13),
+              ),
+              child: const Text('当前局面续下'),
+            ),
             // 规则说明：复盘交互（翻页/折线图跳转/徽标含义）与归档页共用同一弹窗
             IconButton(
               icon: const Icon(Icons.info_outline, size: 20),
@@ -270,10 +343,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
     if (uci == '0000' || uci.length < 4) return uci;
     try {
       final m = Move.fromUci(uci);
-      final boardBefore = cursor <= 1
-          ? Board()
-          : Board.fromFen(_review.history[cursor - 2].fenAfter);
-      return moveToChinese(boardBefore, m);
+      return moveToChinese(_review.boardBefore(cursor), m);
     } catch (_) {
       return uci;
     }

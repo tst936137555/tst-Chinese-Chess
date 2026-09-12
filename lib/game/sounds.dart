@@ -103,9 +103,15 @@ class Sounds with ChangeNotifier {
 
   @override
   void dispose() {
-    super.dispose();
+    // 先释放原生播放器资源，最后再调 super.dispose()
+    // （ChangeNotifier 约定：dispose 后不得再通知监听者）
     for (final p in _pool) {
       p.dispose();
     }
+    _pool.clear();
+    // 复位幂等标记并清空池：实例若被复用，load() 可重新建池，
+    // 而非静默跳过初始化后在残留的已释放播放器上播放
+    _initialized = false;
+    super.dispose();
   }
 }

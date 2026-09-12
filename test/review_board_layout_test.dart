@@ -4,6 +4,7 @@
 // （红方底线棋子被切半、红方纵线号不可见）。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:tst_xiangqi/engine/pikafish.dart';
 import 'package:tst_xiangqi/engine/rules.dart';
@@ -56,10 +57,13 @@ Future<void> _pumpReview(WidgetTester tester, Size windowSize) async {
   tester.view.physicalSize = windowSize;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
+  SharedPreferences.setMockInitialValues({});
+  final prefs = await SharedPreferences.getInstance();
   await tester.pumpWidget(MaterialApp(
     home: ReviewScreen(
       history: _sampleHistory(),
       userPlaysRed: true,
+      prefs: prefs,
       engine: _FakeEngine(),
     ),
   ));

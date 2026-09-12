@@ -25,6 +25,8 @@ class ArchivedGame {
     required this.result,
     required this.history,
     this.favorite = false,
+    this.startFen,
+    this.mode = 'normal',
   });
 
   final DateTime time;
@@ -39,6 +41,14 @@ class ArchivedGame {
   /// 是否已收藏：置顶显示，且不占 100 局名额、不会被自动移除
   final bool favorite;
 
+  /// 起始局面 FEN：null = 标准开局；复盘续下为自定义局面，
+  /// 复盘重放以此为基准
+  final String? startFen;
+
+  /// 对局来源模式：normal / review（复盘续下），
+  /// 标题前缀（（复盘））由此生成；旧档缺省为 normal
+  final String mode;
+
   /// 复制并修改收藏状态
   ArchivedGame withFavorite(bool favorite) => ArchivedGame(
         time: time,
@@ -47,6 +57,8 @@ class ArchivedGame {
         result: result,
         history: history,
         favorite: favorite,
+        startFen: startFen,
+        mode: mode,
       );
 
   String get resultLabel {
@@ -60,7 +72,8 @@ class ArchivedGame {
     }
   }
 
-  /// 棋谱标题：【对局时间-玩家执红、执黑-当局胜负情况】
+  /// 棋谱标题：【对局时间-玩家执红、执黑-当局胜负情况】；
+  /// 非普通对局在原题前加模式名（（复盘））
   String get title {
     String two(int v) => v.toString().padLeft(2, '0');
     final t = time;
@@ -72,7 +85,11 @@ class ArchivedGame {
       'blackWin' => '黑方胜',
       _ => '平局',
     };
-    return '【$timeStr-$side-$outcome】';
+    final modePrefix = switch (mode) {
+      'review' => '（复盘）',
+      _ => '',
+    };
+    return '$modePrefix【$timeStr-$side-$outcome】';
   }
 
   Map<String, dynamic> toJson() => {
@@ -82,6 +99,8 @@ class ArchivedGame {
         'result': result,
         'history': history,
         'favorite': favorite,
+        'startFen': startFen,
+        'mode': mode,
       };
 
   static ArchivedGame fromJson(Map<String, dynamic> json) => ArchivedGame(
@@ -93,6 +112,8 @@ class ArchivedGame {
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList(),
         favorite: json['favorite'] as bool? ?? false,
+        startFen: json['startFen'] as String?,
+        mode: json['mode'] as String? ?? 'normal',
       );
 }
 

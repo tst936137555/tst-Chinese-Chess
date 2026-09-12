@@ -15,8 +15,9 @@ class GameEndOverlay extends StatelessWidget {
     required this.actionsReady,
     required this.onTap,
     required this.onReview,
-    required this.onNewGame,
+    this.onNewGame,
     required this.onQuit,
+    this.quitLabel = '返回主界面',
   });
 
   /// 结果标题与文案
@@ -27,8 +28,11 @@ class GameEndOverlay extends StatelessWidget {
   /// 未就绪时点击遮罩：立即出现操作按钮
   final VoidCallback onTap;
   final VoidCallback onReview;
-  final VoidCallback onNewGame;
+  /// 「再来一局」回调；null = 不提供该选项（复盘续下无"再来一局"语义）
+  final VoidCallback? onNewGame;
   final VoidCallback onQuit;
+  /// 退出按钮文字；复盘续下返回的是复盘分析页，按钮相应显示「返回复盘」
+  final String quitLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -76,16 +80,18 @@ class GameEndOverlay extends StatelessWidget {
                           variant: XqButtonVariant.ghost,
                           onPressed: onReview,
                         ),
+                        if (onNewGame != null) ...[
+                          const SizedBox(width: 12),
+                          XqButton(
+                            label: '再来一局',
+                            icon: Icons.refresh,
+                            variant: XqButtonVariant.primary,
+                            onPressed: onNewGame,
+                          ),
+                        ],
                         const SizedBox(width: 12),
                         XqButton(
-                          label: '再来一局',
-                          icon: Icons.refresh,
-                          variant: XqButtonVariant.primary,
-                          onPressed: onNewGame,
-                        ),
-                        const SizedBox(width: 12),
-                        XqButton(
-                          label: '返回主界面',
+                          label: quitLabel,
                           icon: Icons.home_outlined,
                           variant: XqButtonVariant.ghost,
                           onPressed: onQuit,
