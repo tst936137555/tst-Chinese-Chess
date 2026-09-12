@@ -1,4 +1,7 @@
 /// 对局控制器：管理棋局状态、悔棋、保存恢复、AI 走棋调度。
+///
+/// 存档持久化与棋谱归档实现拆分于 game_controller.persistence.dart（part）；
+/// 数据类型（HistoryEntry / GameMode）拆分于 game_types.dart（此处转出保持兼容）。
 library;
 
 import 'dart:async';
@@ -12,54 +15,11 @@ import '../engine/chinese_notation.dart';
 import '../engine/pikafish.dart';
 import '../engine/rules.dart';
 import 'game_archive.dart';
+import 'game_types.dart';
 
-/// 历史记录条目
-class HistoryEntry {
-  const HistoryEntry({
-    required this.move,
-    required this.capturedPiece,
-    required this.notation,
-    required this.fenAfter,
-    required this.posHash,
-    this.givesCheck = false,
-  });
+export 'game_types.dart';
 
-  final Move move;
-  /// 被吃棋子（FEN 字符），供吃子动画使用
-  final String? capturedPiece;
-  final String notation;
-  final String fenAfter;
-
-  /// 走完此步后的局面 Zobrist 哈希（棋盘 + 行棋方），
-  /// 供重复局面检测 O(1) 取键，不再逐条解析 FEN
-  final int posHash;
-
-  /// 该步是否将军对方（供长将判定；存档回放时由 _applyMove 重算）
-  final bool givesCheck;
-
-  /// 被吃棋子的 Piece 对象（按 FEN 字符还原）
-  Piece? get capturedPieceObj {
-    final c = capturedPiece;
-    if (c == null) return null;
-    final isRed = c == c.toUpperCase();
-    final type = PieceType.values.firstWhere(
-      (t) => t.letter == c.toLowerCase(),
-    );
-    return Piece(isRed, type);
-  }
-}
-
-/// 对局来源模式：普通开局 / 复盘续下。
-/// 决定棋谱归档的标题前缀（（复盘））与偏好写入策略：
-/// 仅普通模式才把难度/执子写入全局偏好，避免特殊模式污染默认设置。
-enum GameMode {
-  normal(''),
-  review('复盘');
-
-  const GameMode(this.label);
-  /// 模式名（归档标题前缀用），普通模式为空串
-  final String label;
-}
+part 'game_controller.persistence.dart';
 
 /// 对局控制器（ChangeNotifier）
 class GameController extends ChangeNotifier {
@@ -561,92 +521,10 @@ class GameController extends ChangeNotifier {
     debugPrint('悔棋: ${entry.notation}');
   }
 
-  /// 在飞归档任务（终局 fire-and-forget 触发）。存档写入已全局串行，
-  /// 后发起的归档必然晚于先者完成，追踪最近一次即可代表全部在飞归档。
-  Future<void>? _archivePending;
-
-  /// 等待在飞归档落盘完成（测试收尾 / 生命周期兜底用）
-  Future<void> flushArchives() => _archivePending ?? Future<void>.value();
-
-  /// 归档对局（对局结束时）
-  Future<void> _archiveGame() {
-    final op = _archiveGameNow();
-    _archivePending = op;
-    return op;
-  }
-
-  Future<void> _archiveGameNow() async {
-    if (_history.isEmpty) return;
-    try {
-      final ok = await GameArchive.add(
-          archiveFile ?? await GameArchive.defaultArchiveFile(),
-          ArchivedGame(
-            time: DateTime.now(),
-            userRed: userPlaysRed,
-            levelName: _level.name,
-            result: switch (_status) {
-              GameStatus.redWin => 'redWin',
-              GameStatus.blackWin => 'blackWin',
-              _ => 'draw',
-            },
-            // 仅存 uci/captured/notation：fen 可由 uci 序列重放推导，
-            // 复盘端（_historyFromArchive）以重放为准逐步重算；
-            // 自定义起始局面（复盘续下）必须存 startFen 作为重放基准
-            startFen: _startFen == Board.startFen ? null : _startFen,
-            mode: _mode.name,
-            history: _history.map((e) => {
-                  'uci': e.move.uci,
-                  'captured': e.capturedPiece,
-                  'notation': e.notation,
-                }).toList(),
-          ));
-      if (!ok) {
-        archiveNotice = '棋谱保存失败';
-      }
-    } catch (e) {
-      // 归档是后台任务：异常只记录，绝不冒泡为未处理异步错误
-      debugPrint('棋谱归档异常: $e');
-    }
-  }
-
-  /// 立即保存当前对局状态（生命周期兜底：切后台/进程终止前调用），
-  /// 并等待在飞归档落盘，避免归档被进程终止打断
-  Future<void> saveNow() async {
-    // 页面已销毁时状态不再有效，跳过
-    if (_disposed) return;
-    await _saveState();
-    await flushArchives();
-  }
-
-  /// 保存当前局面（自动保存）
-  Future<void> _saveState() async {
-    try {
-      // 对局已结束：棋局不可续玩，清除存档（结果已归档到复盘棋谱）
-      if (_status != GameStatus.playing) {
-        await _prefs.remove('saved_game');
-        _setSaveNotice(null);
-        return;
-      }
-      await _prefs.setString('saved_game', jsonEncode({
-        // 仅存 uci 序列：captured/notation/fen/status 均可在恢复重放时
-        // 经 _applyMove 全量重算（旧版冗余字段由重放端兼容读取）；
-        // 自定义起始局面与模式随档保存（旧档缺失字段恢复为标准开局/普通模式）
-        'history': [for (final e in _history) {'uci': e.move.uci}],
-        'userRed': userPlaysRed,
-        'levelName': _level.name,
-        'startFen': _startFen,
-        'mode': _mode.name,
-      }));
-      _setSaveNotice(null);
-    } catch (e) {
-      // 自动保存失败如实提示（旧版静默吞错，用户退出后进度无声丢失）
-      debugPrint('对局保存失败: $e');
-      _setSaveNotice('对局保存失败，进度可能丢失：$e');
-    }
-  }
-
   /// 恢复上次对局
   /// 失败时棋盘重置为原起始局面并返回 false，难度/执子/起始局面/模式保持原值
+  ///
+  /// （保留在类内：直接调用受保护的 notifyListeners，扩展成员无法调用）
   Future<bool> restoreGame() async {
     // 失败回滚用：起始局面与模式在重放前就得位（_resetToStart 依赖），
     // 损坏时恢复原值，避免半截恢复污染控制器状态
@@ -705,27 +583,8 @@ class GameController extends ChangeNotifier {
     }
   }
 
-  Future<void> _loadSettings() async {
-    try {
-      final levelName = _prefs.getString('level');
-      if (levelName != null) {
-        for (final l in DifficultyLevel.all) {
-          if (l.name == levelName) _level = l;
-        }
-      }
-      userPlaysRed = _prefs.getBool('userRed') ?? true;
-    } catch (_) {}
-  }
-
-  Future<void> _saveSettings() async {
-    try {
-      // 仅普通对弈写全局难度/执子偏好：复盘续下沿用原设置，
-      // 不应覆盖用户普通对弈的默认选择
-      if (_mode == GameMode.normal) {
-        await _prefs.setString('level', _level.name);
-        await _prefs.setBool('userRed', userPlaysRed);
-      }
-      await _saveState();
-    } catch (_) {}
-  }
+  /// 在飞归档任务（终局 fire-and-forget 触发）。存档写入已全局串行，
+  /// 后发起的归档必然晚于先者完成，追踪最近一次即可代表全部在飞归档。
+  /// 归档/保存/恢复方法体拆分于 game_controller.persistence.dart（part 扩展）。
+  Future<void>? _archivePending;
 }

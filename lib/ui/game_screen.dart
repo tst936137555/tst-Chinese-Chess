@@ -11,6 +11,7 @@ import '../engine/rules.dart';
 import '../game/game_controller.dart';
 import '../game/sounds.dart';
 import 'board_view.dart';
+import 'end_game_dialog.dart';
 import 'game_banner.dart';
 import 'game_end_overlay.dart';
 import 'game_status_bar.dart';
@@ -264,7 +265,7 @@ class _GamePageState extends State<GamePage>
     try {
       final result = await showDialog<(bool, int?)>(
         context: context,
-        builder: (ctx) => _EndGameDialog(controller: c),
+        builder: (ctx) => EndGameDialog(controller: c),
       );
       if (result != null && result.$1) {
         await c.endGameByScore(scoreCp: result.$2);
@@ -352,175 +353,187 @@ class _GamePageState extends State<GamePage>
       listenable: controller,
       builder: (context, _) {
         // 终局遮罩由 _onGameChanged 监听通知统一触发（渲染前）
-
-        final busy = c.thinking || c.hinting || c.ending;
-        final targetSquares =
-            _legalTargets.map((m) => (m.toFile, m.toRank)).toList();
-        final anim = _animController;
-        final banner = buildGameRuleBanner(c);
-        final canLower =
-            DifficultyLevel.all.indexOf(c.level) > 0;
-        final canRaise =
-            DifficultyLevel.all.indexOf(c.level) <
-                DifficultyLevel.all.length - 1;
-
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('对局'),
-            centerTitle: true,
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back),
-              tooltip: '返回',
-              onPressed: () => Navigator.of(context).maybePop(),
-            ),
-            actions: [
-              // 降难度
-              IconButton(
-                icon: const Icon(Icons.remove_circle_outline),
-                tooltip: '降低难度',
-                onPressed: canLower && !busy ? c.lowerLevel : null,
-              ),
-              // 当前难度文字
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: Center(
-                  child: Text(
-                    c.level.name,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              // 升难度
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline),
-                tooltip: '提升难度',
-                onPressed: canRaise && !busy ? c.raiseLevel : null,
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
+          appBar: _buildAppBar(),
           body: SafeArea(
             child: Stack(
               children: [
                 Column(
                   children: [
-                // 状态栏
-                GameStatusBar(controller: c),
-                // 棋盘（结构固定：始终由 AnimatedBuilder 驱动，动画起止不再切换子树）。
-                // 规则横幅悬浮于棋盘区顶部空白处（Stack 覆盖层）：
-                // 出现/消失不改变布局高度，棋盘既不抖动也不被挤压。
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: AnimatedBuilder(
-                            animation: anim!,
-                            builder: (context, _) => BoardView(
-                              board: c.board,
-                              onTapSquare: _onTapSquare,
-                              flipBoard: c.flipBoard,
-                              selected: _selected,
-                              legalTargets: targetSquares,
-                              lastMove: c.lastMove,
-                              checkPos: c.checkPos,
-                              animatingMove: _animMove,
-                              animationProgress: anim.value,
-                              capturedPiece: _animCaptured,
-                              suggestedMoves: c.hints,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (banner != null)
-                        Positioned(
-                          left: 12,
-                          right: 12,
-                          top: 4,
-                          child: banner,
-                        ),
-                    ],
-                  ),
+                    // 状态栏
+                    GameStatusBar(controller: c),
+                    // 棋盘（结构固定：始终由 AnimatedBuilder 驱动，动画起止不再切换子树）
+                    Expanded(child: _buildBoardArea()),
+                    // 最近着法
+                    GameMoveStrip(controller: c),
+                    // 底部操作：悔棋 / 提示 / 结束
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                      child: _buildActionRow(),
+                    ),
+                  ],
                 ),
-                // 最近着法
-                GameMoveStrip(controller: c),
-                // 底部操作：悔棋 / 提示 / 结束
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: XqButton(
-                          label: '悔棋',
-                          icon: Icons.undo,
-                          variant: XqButtonVariant.tonal,
-                          onPressed: (c.history.isEmpty ||
-                                  c.thinking ||
-                                  c.status != GameStatus.playing)
-                              ? null
-                              : () {
-                                  c.undo();
-                                  c.clearHints();
-                                  setState(() {
-                                    _selected = null;
-                                    _legalTargets = [];
-                                  });
-                                },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: XqButton(
-                          label: c.hinting ? '提示中…' : '提示',
-                          icon: Icons.lightbulb_outline,
-                          variant: XqButtonVariant.tonal,
-                          onPressed: (busy || !c.isUserTurn ||
-                                  c.status != GameStatus.playing)
-                              ? null
-                              : () => c.hint(),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: XqButton(
-                          label: '结束',
-                          icon: Icons.stop_circle_outlined,
-                          variant: XqButtonVariant.primary,
-                          onPressed: busy || c.status != GameStatus.playing
-                              ? null
-                              : _confirmEndGame,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            // 对局结束遮罩：结果展示 + 操作按钮（点击或 3 秒后出现）；
-            // 复盘续下无「再来一局」语义（重玩同一续下局面易误解），仅普通对局提供
-            if (_showEndOverlay)
-              GameEndOverlay(
-                title: _endInfo.$1,
-                message: _endInfo.$2,
-                actionsReady: _endActionsReady,
-                onTap: _onEndOverlayTap,
-                onReview: _reviewFromOverlay,
-                onNewGame:
-                    c.mode == GameMode.normal ? _newGameFromOverlay : null,
-                onQuit: _quitToHome,
-                // 续下局的返回按钮回到的是栈下的复盘分析页，按钮文字相应调整
-                quitLabel:
-                    c.mode == GameMode.normal ? '返回主界面' : '返回复盘',
-              ),
+                // 对局结束遮罩：结果展示 + 操作按钮（点击或 3 秒后出现）
+                if (_showEndOverlay) _buildEndOverlay(),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  /// 顶部栏：返回 + 难度升降调节
+  PreferredSizeWidget _buildAppBar() {
+    final busy = c.thinking || c.hinting || c.ending;
+    final canLower = DifficultyLevel.all.indexOf(c.level) > 0;
+    final canRaise = DifficultyLevel.all.indexOf(c.level) <
+        DifficultyLevel.all.length - 1;
+    return AppBar(
+      title: const Text('对局'),
+      centerTitle: true,
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        tooltip: '返回',
+        onPressed: () => Navigator.of(context).maybePop(),
+      ),
+      actions: [
+        // 降难度
+        IconButton(
+          icon: const Icon(Icons.remove_circle_outline),
+          tooltip: '降低难度',
+          onPressed: canLower && !busy ? c.lowerLevel : null,
+        ),
+        // 当前难度文字
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Center(
+            child: Text(
+              c.level.name,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+        // 升难度
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline),
+          tooltip: '提升难度',
+          onPressed: canRaise && !busy ? c.raiseLevel : null,
+        ),
+        const SizedBox(width: 8),
+      ],
+    );
+  }
+
+  /// 棋盘区：走子动画驱动棋盘重绘。
+  /// 规则横幅悬浮于棋盘区顶部空白处（Stack 覆盖层）：
+  /// 出现/消失不改变布局高度，棋盘既不抖动也不被挤压。
+  Widget _buildBoardArea() {
+    final anim = _animController!;
+    final banner = buildGameRuleBanner(c);
+    final targetSquares =
+        _legalTargets.map((m) => (m.toFile, m.toRank)).toList();
+    return Stack(
+      children: [
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: AnimatedBuilder(
+              animation: anim,
+              builder: (context, _) => BoardView(
+                board: c.board,
+                onTapSquare: _onTapSquare,
+                flipBoard: c.flipBoard,
+                selected: _selected,
+                legalTargets: targetSquares,
+                lastMove: c.lastMove,
+                checkPos: c.checkPos,
+                animatingMove: _animMove,
+                animationProgress: anim.value,
+                capturedPiece: _animCaptured,
+                suggestedMoves: c.hints,
+              ),
+            ),
+          ),
+        ),
+        if (banner != null)
+          Positioned(
+            left: 12,
+            right: 12,
+            top: 4,
+            child: banner,
+          ),
+      ],
+    );
+  }
+
+  /// 底部操作行：悔棋 / 提示 / 结束
+  Widget _buildActionRow() {
+    final busy = c.thinking || c.hinting || c.ending;
+    return Row(
+      children: [
+        Expanded(
+          child: XqButton(
+            label: '悔棋',
+            icon: Icons.undo,
+            variant: XqButtonVariant.tonal,
+            onPressed: (c.history.isEmpty ||
+                    c.thinking ||
+                    c.status != GameStatus.playing)
+                ? null
+                : () {
+                    c.undo();
+                    c.clearHints();
+                    setState(() {
+                      _selected = null;
+                      _legalTargets = [];
+                    });
+                  },
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: XqButton(
+            label: c.hinting ? '提示中…' : '提示',
+            icon: Icons.lightbulb_outline,
+            variant: XqButtonVariant.tonal,
+            onPressed: (busy || !c.isUserTurn ||
+                    c.status != GameStatus.playing)
+                ? null
+                : () => c.hint(),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: XqButton(
+            label: '结束',
+            icon: Icons.stop_circle_outlined,
+            variant: XqButtonVariant.primary,
+            onPressed: busy || c.status != GameStatus.playing
+                ? null
+                : _confirmEndGame,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 对局结束遮罩：结果展示 + 操作按钮（点击或 3 秒后出现）；
+  /// 复盘续下无「再来一局」语义（重玩同一续下局面易误解），仅普通对局提供
+  Widget _buildEndOverlay() {
+    return GameEndOverlay(
+      title: _endInfo.$1,
+      message: _endInfo.$2,
+      actionsReady: _endActionsReady,
+      onTap: _onEndOverlayTap,
+      onReview: _reviewFromOverlay,
+      onNewGame: c.mode == GameMode.normal ? _newGameFromOverlay : null,
+      onQuit: _quitToHome,
+      // 续下局的返回按钮回到的是栈下的复盘分析页，按钮文字相应调整
+      quitLabel: c.mode == GameMode.normal ? '返回主界面' : '返回复盘',
     );
   }
 
@@ -544,133 +557,5 @@ class _GamePageState extends State<GamePage>
       _legalTargets = [];
     });
     c.newGame();
-  }
-}
-
-/// 结束此局确认弹窗：打开时立即分析当前局势，展示评分与即将判定的胜负和。
-///
-/// 弹出值：(是否结束, 预评分)；预评分为 null 表示分析失败，
-/// 由 [GameController.endGameByScore] 兜底现场分析（失败按平局结算并提示原因）。
-class _EndGameDialog extends StatefulWidget {
-  const _EndGameDialog({required this.controller});
-
-  final GameController controller;
-
-  @override
-  State<_EndGameDialog> createState() => _EndGameDialogState();
-}
-
-class _EndGameDialogState extends State<_EndGameDialog> {
-  int? _score;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _analyze();
-  }
-
-  Future<void> _analyze() async {
-    try {
-      final s = await widget.controller.analyzeEndingScore();
-      if (!mounted) return;
-      setState(() => _score = s);
-    } catch (e) {
-      if (!mounted) return;
-      // 引擎故障透传原始信息（含 fail-fast 时的"请重启应用"引导）
-      setState(() =>
-          _error = e is EngineUnavailableException ? e.message : '$e');
-    }
-  }
-
-  /// 评分展示（红方视角厘兵，±9000 以上为绝杀分，与复盘走势图同一口径）
-  String _scoreText(int score) {
-    if (score >= 9000) return '红方绝杀（${10000 - score} 步）';
-    if (score <= -9000) return '黑方绝杀（${10000 + score} 步）';
-    if (score > 0) return '红方 +$score 厘兵';
-    if (score < 0) return '黑方 +${-score} 厘兵';
-    return '均势';
-  }
-
-  /// 即将判定（与 GameController.endGameByScore 同一分差标准）
-  String _verdictText(int score) {
-    if (score > GameController.endScoreCp) return '红方获胜';
-    if (score < -GameController.endScoreCp) return '黑方获胜';
-    return '平局';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ready = _score != null || _error != null;
-    return XqDialog(
-      title: '结束此局',
-      actions: [
-        XqButton(
-          label: '继续下',
-          variant: XqButtonVariant.tonal,
-          onPressed: () => Navigator.of(context).pop((false, null)),
-        ),
-        XqButton(
-          label: '结束',
-          variant: XqButtonVariant.primary,
-          onPressed: ready
-              ? () => Navigator.of(context).pop((true, _score))
-              : null,
-        ),
-      ],
-      child: _score != null
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('当前评分：${_scoreText(_score!)}',
-                    style: const TextStyle(fontSize: 15, height: 1.7)),
-                const SizedBox(height: 4),
-                Text('即将判定：${_verdictText(_score!)}',
-                    style: const TextStyle(
-                        fontSize: 15,
-                        height: 1.7,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                Text(
-                  '确认结束将按上述结果结算本局。',
-                  style: TextStyle(fontSize: 13, color: XqColors.wood),
-                ),
-              ],
-            )
-          : _error != null
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('局势分析失败：$_error',
-                        style: TextStyle(
-                            fontSize: 14,
-                            height: 1.7,
-                            color: Colors.red.shade700)),
-                    const SizedBox(height: 8),
-                    Text(
-                      '结束此局将按平局结算。',
-                      style: TextStyle(fontSize: 13, color: XqColors.wood),
-                    ),
-                  ],
-                )
-              : const SizedBox(
-                  height: 56,
-                  child: Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                            width: 18,
-                            height: 18,
-                            child:
-                                CircularProgressIndicator(strokeWidth: 2)),
-                        SizedBox(width: 10),
-                        Text('正在分析当前局势…',
-                            style: TextStyle(fontSize: 14)),
-                      ],
-                    ),
-                  ),
-                ),
-    );
   }
 }
