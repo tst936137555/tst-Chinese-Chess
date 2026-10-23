@@ -12,6 +12,7 @@ concurrency:
 jobs:
   desktop:
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
@@ -86,6 +87,7 @@ jobs:
   android:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         target: [aarch64-linux-android, x86_64-linux-android]
     steps:
@@ -95,6 +97,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          # The legacy 'tools' package in the action's defaults is no longer available.
+          packages: platform-tools
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
@@ -129,6 +134,7 @@ jobs:
   ios:
     runs-on: macos-latest
     strategy:
+      fail-fast: false
       matrix:
         target: [aarch64-apple-ios, aarch64-apple-ios-sim]
     steps:
