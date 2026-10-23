@@ -20,6 +20,79 @@ pub enum Score {
     Mate(i32),
     Terminal(i32),
 }
+
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+mod process_tests {
+    use super::*;
+    #[test]
+    #[ignore = "subprocess fixture, invoked only by pipe failure tests"]
+    fn idle_child() {
+        let mode = std::env::var("XIANGQI_FAULT_CHILD").expect("only launched by parent");
+        if mode == "exit" {
+            std::process::exit(7);
+        }
+        if mode == "half" {
+            print!("uci");
+            std::io::stdout().flush().unwrap();
+        }
+        if mode == "noise" {
+            println!("info string still alive");
+        }
+        std::thread::sleep(Duration::from_secs(30));
+    }
+    fn child(mode: &str) -> Process {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "engine::process_tests::idle_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("XIANGQI_FAULT_CHILD", mode);
+        Process::spawn(command).unwrap()
+    }
+    #[test]
+    fn full_stdin_pipe_obeys_deadline_and_cancellation() {
+        for cancel in [false, true] {
+            let mut process = child("idle");
+            let token = Arc::new(AtomicU64::new(0));
+            let stop = token.clone();
+            let stopper = std::thread::spawn(move || {
+                if cancel {
+                    std::thread::sleep(Duration::from_millis(80));
+                    stop.store(1, Ordering::Release);
+                }
+            });
+            let start = Instant::now();
+            let result = process.send_until(
+                &"x".repeat(2 * 1024 * 1024),
+                start + Duration::from_millis(300),
+                &token,
+                0,
+            );
+            assert!(result.is_err());
+            drop(process);
+            stopper.join().unwrap();
+            assert!(start.elapsed() < Duration::from_secs(3));
+        }
+    }
+    #[test]
+    fn handshake_exit_partial_line_and_noise_share_one_deadline() {
+        for mode in ["exit", "half", "noise"] {
+            let mut session = Session::with_transport(Box::new(child(mode)));
+            let start = Instant::now();
+            session.deadline = Some(start + Duration::from_millis(300));
+            assert!(
+                session
+                    .handshake(Path::new("test.nnue"), &AtomicU64::new(0), 0)
+                    .is_err()
+            );
+            drop(session);
+            assert!(start.elapsed() < Duration::from_secs(3));
+        }
+    }
+}
 impl Score {
     pub fn is_valid(self) -> bool {
         match self {
@@ -82,6 +155,54 @@ pub fn score_loss(before: Score, after: Score, mover: Side) -> Option<i32> {
                 None
             }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveAssessment {
+    Centipawns(i32),
+    MissedMate,
+    AllowsMate,
+    EscapedMate,
+    FoundMate,
+    MateContinuation,
+}
+impl MoveAssessment {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Centipawns(loss) => crate::game::move_quality(loss, false),
+            Self::MissedMate => "错失杀棋",
+            Self::AllowsMate => "陷入杀棋",
+            Self::EscapedMate => "化解杀棋",
+            Self::FoundMate => "找到杀棋",
+            Self::MateContinuation => "杀棋延续",
+        }
+    }
+    pub fn badge(self) -> &'static str {
+        match self.label() {
+            "优秀" => "优",
+            "良好" => "良",
+            "平庸" => "平",
+            "较差" => "差",
+            "错招" | "错失杀棋" | "陷入杀棋" => "错",
+            _ => "杀",
+        }
+    }
+}
+pub fn assess_move(before: Score, after: Score, mover: Side) -> MoveAssessment {
+    let a = before.red_relative(mover);
+    let b = after.red_relative(mover);
+    let forced = |s: Score| match s {
+        Score::Cp(_) => 0,
+        Score::Mate(n) | Score::Terminal(n) => n.signum(),
+    };
+    match (forced(a), forced(b)) {
+        (x, -1) if x != -1 => MoveAssessment::AllowsMate,
+        (-1, x) if x != -1 => MoveAssessment::EscapedMate,
+        (1, 0) => MoveAssessment::MissedMate,
+        (0, 1) => MoveAssessment::FoundMate,
+        (0, 0) => MoveAssessment::Centipawns(a.value().saturating_sub(b.value()).max(0)),
+        _ => MoveAssessment::MateContinuation,
     }
 }
 #[derive(Clone)]
@@ -156,6 +277,7 @@ pub struct Request {
 pub struct Reply {
     pub id: u64,
     pub result: Result<Analysis, String>,
+    pub failure_kind: Option<crate::diagnostics::FailureKind>,
 }
 struct Mailbox {
     request: Option<Request>,
@@ -210,10 +332,13 @@ impl Engine {
                 }
                 let mut result = Err("引擎不可用".into());
                 let mut failure_kind = crate::diagnostics::FailureKind::Other;
+                // One deadline includes cold start, handshake, all writes and both attempts.
+                let deadline =
+                    Instant::now() + Duration::from_millis(req.ms.clamp(1, 60_000) + 15_000);
                 for _ in 0..2 {
                     result = (|| {
                         if session.is_none() {
-                            session = Some(Session::open(&token, req.id).map_err(
+                            session = Some(Session::open(&token, req.id, deadline).map_err(
                                 |(kind, message)| {
                                     failure_kind = kind;
                                     message
@@ -221,6 +346,7 @@ impl Engine {
                             )?);
                         }
                         let current = session.as_mut().unwrap();
+                        current.deadline = Some(deadline);
                         let result = current.search(&req, &token);
                         failure_kind = current.failure_kind;
                         result
@@ -233,7 +359,13 @@ impl Engine {
                         break;
                     }
                     session = None;
-                    if token.load(Ordering::Acquire) != req.id {
+                    if token.load(Ordering::Acquire) != req.id
+                        || Instant::now() >= deadline
+                        || matches!(
+                            failure_kind,
+                            crate::diagnostics::FailureKind::RestartRequired
+                        )
+                    {
                         break;
                     }
                 }
@@ -244,7 +376,13 @@ impl Engine {
                     );
                 }
                 if token.load(Ordering::Acquire) == req.id
-                    && replies.send(Reply { id: req.id, result }).is_err()
+                    && replies
+                        .send(Reply {
+                            id: req.id,
+                            failure_kind: result.as_ref().err().map(|_| failure_kind),
+                            result,
+                        })
+                        .is_err()
                 {
                     return;
                 }
@@ -324,12 +462,22 @@ impl Drop for Engine {
 pub trait Transport: Send {
     fn send(&mut self, line: &str) -> Result<(), String>;
     fn receive(&mut self, timeout: Duration) -> Result<Option<String>, String>;
+    fn send_until(
+        &mut self,
+        line: &str,
+        _deadline: Instant,
+        _token: &AtomicU64,
+        _id: u64,
+    ) -> Result<(), String> {
+        self.send(line)
+    }
 }
 pub struct Session {
     io: Box<dyn Transport>,
     game_id: Option<String>,
     assets: String,
     failure_kind: crate::diagnostics::FailureKind,
+    deadline: Option<Instant>,
 }
 impl Session {
     pub fn with_transport(io: Box<dyn Transport>) -> Self {
@@ -338,17 +486,24 @@ impl Session {
             game_id: None,
             assets: "test-transport".into(),
             failure_kind: crate::diagnostics::FailureKind::Protocol,
+            deadline: None,
         }
     }
-    fn open(token: &AtomicU64, id: u64) -> Result<Self, (crate::diagnostics::FailureKind, String)> {
+    fn open(
+        token: &AtomicU64,
+        id: u64,
+        deadline: Instant,
+    ) -> Result<Self, (crate::diagnostics::FailureKind, String)> {
         let asset_error = |e| (crate::diagnostics::FailureKind::Assets, e);
         let nnue = crate::platform::nnue_path().map_err(asset_error)?;
         #[cfg(any(target_os = "ios", target_os = "android"))]
-        let io = mobile::Ffi::open().map_err(asset_error)?;
+        let io = mobile::Ffi::open()
+            .map_err(|message| (crate::diagnostics::FailureKind::RestartRequired, message))?;
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         let io = Process::open(&crate::platform::engine_path().map_err(asset_error)?)
             .map_err(asset_error)?;
         let mut session = Self::with_transport(Box::new(io));
+        session.deadline = Some(deadline);
         session.assets = crate::persistence::asset_fingerprint().map_err(asset_error)?;
         session
             .handshake(&nnue, token, id)
@@ -356,17 +511,24 @@ impl Session {
         Ok(session)
     }
     pub fn handshake(&mut self, nnue: &Path, token: &AtomicU64, id: u64) -> Result<(), String> {
+        let end = self
+            .deadline
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(20));
         let path = nnue.to_str().ok_or("NNUE 路径编码无效")?;
         if path.contains(['\r', '\n']) {
             return Err("NNUE 路径包含换行".into());
         }
-        self.io.send("uci")?;
+        self.send("uci", end, token, id)?;
         self.wait_for("uciok", Duration::from_secs(10), token, id)?;
-        self.io.send("setoption name Threads value 1")?;
-        self.io.send("setoption name Hash value 32")?;
-        self.io
-            .send(&format!("setoption name EvalFile value {path}"))?;
-        self.io.send("isready")?;
+        self.send("setoption name Threads value 1", end, token, id)?;
+        self.send("setoption name Hash value 32", end, token, id)?;
+        self.send(
+            &format!("setoption name EvalFile value {path}"),
+            end,
+            token,
+            id,
+        )?;
+        self.send("isready", end, token, id)?;
         self.wait_for("readyok", Duration::from_secs(10), token, id)
     }
     fn wait_for(
@@ -376,7 +538,8 @@ impl Session {
         token: &AtomicU64,
         id: u64,
     ) -> Result<(), String> {
-        let end = Instant::now() + timeout;
+        let end = (Instant::now() + timeout)
+            .min(self.deadline.unwrap_or_else(|| Instant::now() + timeout));
         loop {
             if let Some(line) = self.next(end, token, id)?
                 && line.trim() == expected
@@ -384,6 +547,25 @@ impl Session {
                 return Ok(());
             }
         }
+    }
+    fn send(&mut self, line: &str, end: Instant, token: &AtomicU64, id: u64) -> Result<(), String> {
+        self.check_deadline(end, token, id)?;
+        if let Err(error) = self.io.send_until(line, end, token, id) {
+            self.check_deadline(end, token, id)?;
+            return Err(error);
+        }
+        self.check_deadline(end, token, id)
+    }
+    fn check_deadline(&mut self, end: Instant, token: &AtomicU64, id: u64) -> Result<(), String> {
+        if crate::platform::suspended() || token.load(Ordering::Acquire) != id {
+            self.failure_kind = crate::diagnostics::FailureKind::Cancelled;
+            return Err("搜索已取消".into());
+        }
+        if Instant::now() >= end {
+            self.failure_kind = crate::diagnostics::FailureKind::Timeout;
+            return Err("引擎请求总时限已到".into());
+        }
+        Ok(())
     }
     fn next(&mut self, end: Instant, token: &AtomicU64, id: u64) -> Result<Option<String>, String> {
         if crate::platform::suspended() {
@@ -403,17 +585,22 @@ impl Session {
     pub fn search(&mut self, req: &Request, token: &AtomicU64) -> Result<Analysis, String> {
         self.failure_kind = crate::diagnostics::FailureKind::Protocol;
         let started = Instant::now();
+        let end = self
+            .deadline
+            .unwrap_or_else(|| started + Duration::from_millis(req.ms.clamp(1, 60_000) + 5000));
         if let Some(ctx) = &req.context
             && self.game_id.as_ref() != Some(&ctx.game_id)
         {
-            self.io.send("ucinewgame")?;
+            self.send("ucinewgame", end, token, req.id)?;
             self.game_id = Some(ctx.game_id.clone());
         }
-        self.io.send(&format!(
-            "setoption name MultiPV value {}",
-            req.pv.clamp(1, 5)
-        ))?;
-        self.io.send("isready")?;
+        self.send(
+            &format!("setoption name MultiPV value {}", req.pv.clamp(1, 5)),
+            end,
+            token,
+            req.id,
+        )?;
+        self.send("isready", end, token, req.id)?;
         self.wait_for("readyok", Duration::from_secs(5), token, req.id)?;
         let position = if let Some(ctx) = &req.context {
             if ctx.moves.len() > crate::game::MAX_PLIES {
@@ -438,13 +625,17 @@ impl Session {
         } else {
             format!("position fen {}", req.board.fen())
         };
-        self.io.send(&position)?;
-        self.io.send(&format!(
-            "go depth {} movetime {}",
-            req.depth.clamp(1, 64),
-            req.ms.clamp(1, 60_000)
-        ))?;
-        let end = Instant::now() + Duration::from_millis(req.ms.clamp(1, 60_000) + 5000);
+        self.send(&position, end, token, req.id)?;
+        self.send(
+            &format!(
+                "go depth {} movetime {}",
+                req.depth.clamp(1, 64),
+                req.ms.clamp(1, 60_000)
+            ),
+            end,
+            token,
+            req.id,
+        )?;
         let mut iterations: BTreeMap<u32, BTreeMap<usize, Variation>> = BTreeMap::new();
         let expected = req.pv.clamp(1, 5).min(req.board.legal_moves().len());
         loop {
@@ -532,6 +723,9 @@ pub fn parse_info(line: &str, board: &Board) -> Option<Variation> {
     }
     let at = |key| words.iter().position(|&w| w == key);
     let depth = words.get(at("depth")? + 1)?.parse().ok()?;
+    if !(1..=64).contains(&depth) {
+        return None;
+    }
     let index = at("multipv")
         .and_then(|i| words.get(i + 1)?.parse().ok())
         .unwrap_or(1);
@@ -563,7 +757,8 @@ pub fn parse_info(line: &str, board: &Board) -> Option<Variation> {
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 struct Process {
     child: std::process::Child,
-    input: std::process::ChildStdin,
+    input: mpsc::SyncSender<(String, mpsc::Sender<Result<(), String>>)>,
+    writer: Option<std::thread::JoinHandle<()>>,
     rx: Receiver<String>,
 }
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -582,6 +777,13 @@ impl Process {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x08000000);
         }
+        Self::spawn(cmd)
+    }
+    fn spawn(mut cmd: std::process::Command) -> Result<Self, String> {
+        use std::process::Stdio;
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("启动引擎失败：{e}"))?;
         if let Some(stderr) = child.stderr.take() {
             std::thread::spawn(move || {
@@ -599,7 +801,20 @@ impl Process {
                 }
             });
         }
-        let input = child.stdin.take().ok_or("引擎输入不可用")?;
+        let mut stdin = child.stdin.take().ok_or("引擎输入不可用")?;
+        let (input, writes) = mpsc::sync_channel::<(String, mpsc::Sender<Result<(), String>>)>(1);
+        let writer = std::thread::spawn(move || {
+            while let Ok((line, done)) = writes.recv() {
+                let result = writeln!(stdin, "{line}")
+                    .and_then(|()| stdin.flush())
+                    .map_err(|e| format!("引擎写入失败：{e}"));
+                let failed = result.is_err();
+                let _ = done.send(result);
+                if failed {
+                    break;
+                }
+            }
+        });
         let output = child.stdout.take().ok_or("引擎输出不可用")?;
         let (tx, rx) = mpsc::sync_channel(256);
         std::thread::spawn(move || {
@@ -620,15 +835,48 @@ impl Process {
                 }
             }
         });
-        Ok(Self { child, input, rx })
+        Ok(Self {
+            child,
+            input,
+            writer: Some(writer),
+            rx,
+        })
     }
 }
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 impl Transport for Process {
     fn send(&mut self, line: &str) -> Result<(), String> {
-        writeln!(self.input, "{line}")
-            .and_then(|()| self.input.flush())
-            .map_err(|e| format!("引擎写入失败：{e}"))
+        self.send_until(
+            line,
+            Instant::now() + Duration::from_secs(5),
+            &AtomicU64::new(0),
+            0,
+        )
+    }
+    fn send_until(
+        &mut self,
+        line: &str,
+        deadline: Instant,
+        token: &AtomicU64,
+        id: u64,
+    ) -> Result<(), String> {
+        let (done, result) = mpsc::channel();
+        self.input
+            .try_send((line.into(), done))
+            .map_err(|_| "引擎写入队列不可用")?;
+        loop {
+            if crate::platform::suspended() || token.load(Ordering::Acquire) != id {
+                return Err("搜索已取消".into());
+            }
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or("引擎写入超时")?;
+            match result.recv_timeout(remaining.min(Duration::from_millis(40))) {
+                Ok(result) => return result,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => return Err("引擎写入线程已退出".into()),
+            }
+        }
     }
     fn receive(&mut self, timeout: Duration) -> Result<Option<String>, String> {
         match self.rx.recv_timeout(timeout) {
@@ -643,6 +891,12 @@ impl Drop for Process {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // Closing the sender wakes an idle writer; killing the child unblocks a full pipe.
+        let (replacement, _) = mpsc::sync_channel(1);
+        drop(std::mem::replace(&mut self.input, replacement));
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
     }
 }
 

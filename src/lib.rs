@@ -1,4 +1,6 @@
+pub mod accessibility;
 pub mod audio;
+pub mod calibration;
 pub mod diagnostics;
 pub mod engine;
 pub mod game;

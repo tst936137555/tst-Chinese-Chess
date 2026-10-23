@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const MAX_PLIES: usize = 4096;
+pub const MAX_REVISION: u64 = u64::MAX - 1_000_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -163,7 +164,8 @@ impl Game {
         if self.lineage.len() > 256 {
             self.lineage.remove(0);
         }
-        self.revision += 1;
+        // Imported counters are bounded; public callers cannot cause a panic either.
+        self.revision = self.revision.saturating_add(1).min(MAX_REVISION);
     }
     pub fn play(&mut self, m: Move) -> Result<(), String> {
         if self.outcome != Outcome::Playing {
@@ -503,6 +505,9 @@ impl Record {
     }
     /// Shared by readers, importers and transaction commits.
     pub fn validate_metadata(&self) -> Result<(), String> {
+        if self.revision > MAX_REVISION {
+            return Err("棋谱修订号超出有效范围，原文件已保留".into());
+        }
         if self.history.len() > MAX_PLIES {
             return Err("棋谱超过 4096 步".into());
         }

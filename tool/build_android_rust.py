@@ -14,6 +14,7 @@ import zipfile
 from build_info import version_info
 from release_manifest import provenance
 from android_input import with_name_input
+from android_accessibility import with_accessibility
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = "com.tst.xiangqi.rust"
@@ -55,7 +56,7 @@ def main():
     env[f"CARGO_TARGET_{key}_RUSTFLAGS"] = f"-C link-arg=--target={target}29 -C link-arg=--sysroot={tools / 'sysroot'} -C link-arg=-Wl,-z,max-page-size=16384"
     # The sysroot argument may contain spaces. Cargo's encoded flag form is unambiguous.
     env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(["-C", f"link-arg=--target={target}29", "-C", f"link-arg=--sysroot={tools / 'sysroot'}", "-C", "link-arg=-Wl,-z,max-page-size=16384"])
-    run(["cargo", "build", "--lib", "--release", "--locked", "--target", target], env=env)
+    run(["cargo", "rustc", "--lib", "--crate-type=cdylib", "--release", "--locked", "--target", target], env=env)
     metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", target], cwd=ROOT, env=env))
     mq = next(Path(p["manifest_path"]).parent for p in metadata["packages"] if p["name"] == "miniquad")
     sources = work / "java"
@@ -76,8 +77,9 @@ def main():
     main_activity = main_activity.replace("        super.onBackPressed();", "        QuadNative.xiangqiBack();")
     # Include display cutouts, including landscape notches, in the template's safe padding.
     main_activity = main_activity.replace("insets.getInsets(WindowInsets.Type.systemBars())", "insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout())")
-    (sources / "MainActivity.java").write_text(with_name_input(main_activity), encoding="utf-8")
+    (sources / "MainActivity.java").write_text(with_accessibility(with_name_input(main_activity)), encoding="utf-8")
     quad_native = (mq / "java/QuadNative.java").read_text(encoding="utf-8")
+    quad_native = quad_native.replace("public class QuadNative {", "public class QuadNative {\n    public native static void xiangqiAccessibilityActivate(int id);\n    public native static void xiangqiNameEdit(String text,int start,int end);")
     quad_native = quad_native.replace("public class QuadNative {", "public class QuadNative {\n    public native static void xiangqiInit();\n    public native static void xiangqiObserve(String path);\n    public native static void xiangqiViewOrigin(int x,int y);\n    public native static void xiangqiPaused(boolean paused);\n    public native static void xiangqiBack();\n    public native static void xiangqiSmoke(String path);")
     (sources / "QuadNative.java").write_text(quad_native, encoding="utf-8")
     java_home = Path(os.environ["JAVA_HOME"]) if os.environ.get("JAVA_HOME") else None

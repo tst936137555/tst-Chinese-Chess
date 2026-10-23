@@ -17,7 +17,7 @@ fn main() -> Result<(), String> {
     let store = Storage::new(dir.path().join("state.json"));
     let mut game = Game::default();
     let mut seed = 936137555u64;
-    for _ in 0..100 {
+    for _ in 0..300 {
         if game.outcome != Outcome::Playing {
             break;
         }
@@ -40,6 +40,18 @@ fn main() -> Result<(), String> {
     let data = store.load()?;
     let load_ms = start.elapsed().as_secs_f64() * 1000.;
     saves.sort_by(f64::total_cmp);
+    let mut preferences = Vec::new();
+    let mut full_rewrites = Vec::new();
+    for sample in 0..20 {
+        let mut settings = data.settings.clone();
+        settings.music_volume = sample as f32 / 20.;
+        let start = Instant::now();
+        store.save_settings(settings)?;
+        preferences.push(start.elapsed().as_secs_f64() * 1000.);
+        let start = Instant::now();
+        store.update(|_| Ok(()))?;
+        full_rewrites.push(start.elapsed().as_secs_f64() * 1000.);
+    }
     let engine = Engine::new();
     let mut search = Vec::new();
     for (case, game) in [("opening", Game::default()), ("midgame", game)] {
@@ -62,7 +74,7 @@ fn main() -> Result<(), String> {
             search.push(serde_json::json!({"case":case,"level":level.name,"requestedDepth":level.depth,"actualDepth":a.variations.first().map(|v|v.depth),"wallMs":t.elapsed().as_secs_f64()*1000.,"searchMs":a.elapsed_ms,"budgetMs":level.ms,"uniqueCandidates":a.variations.len(),"tolerance":level.tolerance,"best":a.best.to_string(),"legal":game.board.is_legal(a.best)}));
         }
     }
-    let result = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"seed":936137555u64,"plies":game_plies(&data),"archivesRetained":data.archives.len(),"storage150":{"p50Ms":saves[75],"p95Ms":saves[142],"maxMs":saves[149],"loadMs":load_ms,"bytes":std::fs::metadata(&store.path).map_err(|e|e.to_string())?.len()},"search":search,"diagnostics":tst_xiangqi::diagnostics::snapshot(),"scope":"desktop release storage and search; not ELO, device memory or battery benchmark"});
+    let result = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"device":std::env::var("XIANGQI_BENCH_DEVICE").unwrap_or_else(|_|"unspecified local host".into()),"debugAssertions":cfg!(debug_assertions),"assets":tst_xiangqi::persistence::asset_fingerprint()?,"seed":936137555u64,"plies":game_plies(&data),"archivesRetained":data.archives.len(),"storage150":{"p50Ms":saves[75],"p95Ms":saves[142],"maxMs":saves[149],"loadMs":load_ms,"bytes":std::fs::metadata(&store.path).map_err(|e|e.to_string())?.len()},"preferences":summary(preferences),"fullLibraryTransaction":summary(full_rewrites),"search":search,"diagnostics":tst_xiangqi::diagnostics::snapshot(),"scope":"local temporary data; cold first engine and warm later searches; storage library grows during 150 saves; no ELO/device battery claim"});
     if let Some(parent) = std::path::Path::new(&output).parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -71,6 +83,10 @@ fn main() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     println!("{output}");
     Ok(())
+}
+fn summary(mut samples: Vec<f64>) -> serde_json::Value {
+    samples.sort_by(f64::total_cmp);
+    serde_json::json!({"samples":samples.len(),"p50Ms":samples[samples.len()/2],"p95Ms":samples[samples.len()*95/100],"minMs":samples[0],"maxMs":samples[samples.len()-1],"rawMs":samples})
 }
 fn game_plies(d: &tst_xiangqi::storage::Data) -> usize {
     d.archives.first().map_or(0, |r| r.history.len())

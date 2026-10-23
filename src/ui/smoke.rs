@@ -30,6 +30,7 @@ impl Smoke {
         self.root.join("state.json")
     }
     pub(super) fn boot(&self, stage: &str) {
+        eprintln!("smoke startup: {stage}");
         let _ = std::fs::write(self.root.join("startup.txt"), stage);
     }
     pub(super) fn setup(&mut self, app: &mut App) {
@@ -38,6 +39,7 @@ impl Smoke {
         if phase != 0 {
             return;
         }
+        self.boot(&format!("scene-{stage}/29"));
         app.cancel();
         app.modal = None;
         app.animation = None;
@@ -289,6 +291,7 @@ impl Smoke {
             let board = &app.review.as_ref().unwrap().game.start;
             let mv = board.legal_moves()[0];
             app.engine.smoke_reply(crate::engine::Reply {
+                failure_kind: None,
                 id: 9_000_001,
                 result: Ok(Analysis {
                     best: mv,
@@ -510,7 +513,7 @@ impl Smoke {
             } else {
                 "assets unavailable"
             };
-            let result = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"realEngine":engine,"scenes":29,"frames":self.frame,"elapsedMs":self.started.elapsed().as_millis(),"input":"internal hit-testing; OS input tested separately","archives":"resignation saved","cursor":"controlled asynchronous reply applied without moving cursor","renderTarget":[app.scene.target.texture.width(),app.scene.target.texture.height()],"performance":crate::diagnostics::snapshot()});
+            let result = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"realEngine":engine,"deviceScale":screen_dpi_scale(),"scenes":29,"frames":self.frame,"elapsedMs":self.started.elapsed().as_millis(),"input":"internal hit-testing; OS input tested separately","archives":"resignation saved","cursor":"controlled asynchronous reply applied without moving cursor","renderTarget":[app.scene.target.texture.width(),app.scene.target.texture.height()],"performance":crate::diagnostics::snapshot()});
             std::fs::write(
                 self.root.join("result.json"),
                 serde_json::to_vec_pretty(&result).unwrap(),

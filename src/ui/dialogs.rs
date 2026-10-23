@@ -89,6 +89,9 @@ impl App {
                 }
             }
             Modal::Rename(id, mut edit) => {
+                if let Some((text, start, end)) = crate::text_input::take_native_edit() {
+                    edit.replace_native(text, start, end);
+                }
                 let archived = self.data.archives.iter().any(|r| r.id == id);
                 self.center(
                     if archived {
@@ -168,7 +171,33 @@ impl App {
                 let field_y = if compact_name { 60. } else { 72. };
                 let actions_y = if compact_name { 146. } else { 218. };
                 let field = Rect::new(x + 24., y + field_y, w - 116., 54.);
+                let unit = self.width / self.viewport.w;
+                let native_rect = [
+                    self.viewport.x + field.x / unit,
+                    self.viewport.y + field.y / unit,
+                    field.w / unit,
+                    field.h / unit,
+                ];
+                let selection = edit.selection();
+                crate::platform::name_editor(
+                    &edit.text,
+                    selection.start,
+                    selection.end,
+                    native_rect,
+                    self.name_keyboard,
+                );
+                macroquad::miniquad::window::set_ime_position(
+                    ((native_rect[0] + native_rect[2]) * screen_dpi_scale()) as i32,
+                    ((native_rect[1] + native_rect[3]) * screen_dpi_scale()) as i32,
+                );
                 self.panel(field, PAPER);
+                self.semantic("名称输入".into(), field, true);
+                if let Some(element) = self.accessible.last_mut() {
+                    element.value = Some(edit.text.clone());
+                    if self.name_keyboard {
+                        self.accessibility_focus = Some(element.id);
+                    }
+                }
                 let chars: Vec<_> = edit.text.chars().collect();
                 let prefix = |a: usize, b: usize| chars[a..b].iter().collect::<String>();
                 let text_width = field.w - 24.;
@@ -217,6 +246,21 @@ impl App {
                     );
                 }
                 self.text(&prefix(start, end), text_x, field.y + 34., 20., INK);
+                if !cfg!(target_os = "ios")
+                    && matches!(
+                        self.font.display_text(&edit.text),
+                        std::borrow::Cow::Owned(_)
+                    )
+                {
+                    self.fit_text(
+                        "部分字符显示为 Unicode 编号，原文会完整保存",
+                        x + 24.,
+                        y + field_y + 74.,
+                        w - 48.,
+                        12.,
+                        MUTED,
+                    );
+                }
                 if self.name_keyboard && ((get_time() * 2.) as u64).is_multiple_of(2) {
                     let cursor_x =
                         text_x + self.font.measure(&prefix(start, edit.cursor), 20.).width;
@@ -257,6 +301,7 @@ impl App {
                     true,
                     true,
                 ) || (self.name_keyboard && is_key_pressed(KeyCode::Enter))
+                    || crate::text_input::take_native_done()
                 {
                     self.enqueue(Command::Rename(id, edit.text));
                     self.finish_rename();
@@ -633,6 +678,19 @@ impl App {
                 self.modal = Some(Modal::Difficulty);
                 for (i, l) in LEVELS.iter().enumerate() {
                     let ry = y + 110. + i as f32 * 59.;
+                    self.semantic(
+                        format!(
+                            "{}难度{}",
+                            l.name,
+                            if self.settings.level == i {
+                                "，已选中"
+                            } else {
+                                ""
+                            }
+                        ),
+                        Rect::new(x + 24., ry, w - 48., 50.),
+                        true,
+                    );
                     let selected = self.settings.level == i;
                     if self.button("", Rect::new(x + 24., ry, w - 48., 50.), false, true) {
                         self.settings.level = i;
@@ -664,7 +722,7 @@ impl App {
                     self.text(descriptions[i], x + w - 124., ry + 30., 16., MUTED);
                 }
                 self.center(
-                    "红方先行 · 进局后也可调整难度",
+                    "简化裁决：长将负、重复和；未判长捉",
                     self.width / 2.,
                     y + 438.,
                     15.,
@@ -1077,6 +1135,7 @@ impl App {
         };
     }
     pub(super) fn modal_text(&mut self, text: &str, x: f32, y: f32, w: f32, h: f32, size: f32) {
+        self.semantic(text.to_owned(), Rect::new(x, y, w, h), false);
         let text_width = (w - 22.).max(1.);
         let cache_key = format!("{text_width}:{size}:{}:{text}", self.font.raster_key(size));
         if !self.text_cache.contains_key(&cache_key) {

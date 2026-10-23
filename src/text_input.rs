@@ -22,6 +22,11 @@ impl From<&str> for NameEdit {
     }
 }
 impl NameEdit {
+    pub fn replace_native(&mut self, text: String, start: usize, end: usize) {
+        *self = text.into();
+        self.move_to(start, false);
+        self.move_to(end, start != end);
+    }
     pub fn selection(&self) -> std::ops::Range<usize> {
         let anchor = self.anchor.unwrap_or(self.cursor);
         anchor.min(self.cursor)..anchor.max(self.cursor)
@@ -88,6 +93,41 @@ impl NameEdit {
             .take(range.len())
             .collect()
     }
+}
+
+static NATIVE_EDIT: std::sync::Mutex<Option<(String, usize, usize)>> = std::sync::Mutex::new(None);
+static NATIVE_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn native_edit(text: String, start: usize, end: usize) {
+    if let Ok(mut edit) = NATIVE_EDIT.lock() {
+        *edit = Some((text, start, end));
+    }
+}
+pub fn take_native_edit() -> Option<(String, usize, usize)> {
+    NATIVE_EDIT.lock().ok()?.take()
+}
+pub fn native_done() {
+    NATIVE_DONE.store(true, std::sync::atomic::Ordering::Release);
+}
+pub fn take_native_done() -> bool {
+    NATIVE_DONE.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+/// # Safety
+/// `text` must point to a valid NUL-terminated UTF-8 string for this call.
+pub unsafe extern "C" fn xq_name_changed(text: *const std::ffi::c_char, start: u32, end: u32) {
+    if !text.is_null() {
+        let text = unsafe { std::ffi::CStr::from_ptr(text) }
+            .to_string_lossy()
+            .into_owned();
+        native_edit(text, start as usize, end as usize);
+    }
+}
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn xq_name_done() {
+    native_done();
 }
 #[cfg(test)]
 mod tests {

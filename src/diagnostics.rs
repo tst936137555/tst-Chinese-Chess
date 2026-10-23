@@ -28,15 +28,15 @@ pub fn snapshot() -> String {
         .lock()
         .map(|m| {
             m.iter()
-                .map(|(key, values)| {
-                    let mut sorted = values.clone();
+                .map(|(key, metric)| {
+                    let mut sorted: Vec<_> = metric.recent.iter().copied().collect();
                     sorted.sort_by(f64::total_cmp);
                     format!(
-                        "{key}: samples={} p50={:.3} p95={:.3} max={:.3}",
+                        "{key}: recent_samples={} p50={:.3} p95={:.3} max={:.3}; lifetime_samples={} mean={:.3} max={:.3}",
                         sorted.len(),
                         sorted[sorted.len() / 2],
                         sorted[(sorted.len() * 95 / 100).min(sorted.len() - 1)],
-                        sorted[sorted.len() - 1]
+                        sorted[sorted.len() - 1], metric.samples, metric.total / metric.samples as f64, metric.max
                     )
                 })
                 .collect::<Vec<_>>()
@@ -45,18 +45,28 @@ pub fn snapshot() -> String {
         .unwrap_or_default();
     format!("{log}\nPerformance (last 240 samples per metric):\n{metrics}")
 }
-type Metrics = std::collections::BTreeMap<String, Vec<f64>>;
+#[derive(Default)]
+struct Metric {
+    recent: VecDeque<f64>,
+    samples: u64,
+    total: f64,
+    max: f64,
+}
+type Metrics = std::collections::BTreeMap<String, Metric>;
 static METRICS: OnceLock<Mutex<Metrics>> = OnceLock::new();
 pub fn measure(name: &str, value: f64) {
     if !value.is_finite() {
         return;
     }
     if let Ok(mut metrics) = METRICS.get_or_init(|| Mutex::new(Metrics::new())).lock() {
-        let values = metrics.entry(name.into()).or_default();
-        if values.len() >= 240 {
-            values.remove(0);
+        let metric = metrics.entry(name.into()).or_default();
+        if metric.recent.len() >= 240 {
+            metric.recent.pop_front();
         }
-        values.push(value);
+        metric.recent.push_back(value);
+        metric.samples = metric.samples.saturating_add(1);
+        metric.total += value;
+        metric.max = metric.max.max(value);
     }
 }
 pub fn failure(kind: FailureKind, stage: &str, message: &str) {
@@ -71,4 +81,5 @@ pub enum FailureKind {
     Storage,
     Conflict,
     Other,
+    RestartRequired,
 }

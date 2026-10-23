@@ -99,6 +99,7 @@ fn set_display(display: native::NativeDisplayData) {
 }
 /// This for now is Android specific since the process can continue running but the display
 /// is restarted. We support reinitializing the display.
+#[cfg(target_os = "android")]
 fn set_or_replace_display(display: native::NativeDisplayData) {
     if let Some(m) = NATIVE_DISPLAY.get() {
         // Replace existing display
@@ -388,6 +389,7 @@ pub mod window {
     /// This should be called when the text cursor moves to keep the IME
     /// candidate window near the insertion point.
     pub fn set_ime_position(x: i32, y: i32) {
+        #[cfg(not(target_os = "android"))]
         let d = native_display().lock().unwrap();
         #[cfg(target_os = "android")]
         {
@@ -410,6 +412,7 @@ pub mod window {
     /// # Arguments
     /// * `enabled` - `true` to enable IME (for text input), `false` to disable (for game controls)
     pub fn set_ime_enabled(enabled: bool) {
+        #[cfg(not(target_os = "android"))]
         let d = native_display().lock().unwrap();
         #[cfg(target_os = "android")]
         {

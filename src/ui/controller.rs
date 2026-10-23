@@ -8,29 +8,42 @@ impl App {
                 continue;
             };
             let original = record.id.clone();
-            let game = if self.game.id == original {
-                Ok(self.game.clone())
-            } else {
-                record.replay()
-            };
-            match game {
-                Ok(mut game) => {
-                    game.fork_identity();
-                    let level = LEVELS
-                        .iter()
-                        .position(|l| l.name == record.level_name)
-                        .unwrap_or(0);
-                    let mut branch = game.snapshot(record.user_red, level, record.mode == "review");
-                    branch.title = record.title.clone();
-                    if self.game.id == original {
-                        self.game = game;
-                        self.reset_move_view();
+            let current = self.game.snapshot(
+                self.settings.user_red,
+                self.settings.level,
+                self.review_game,
+            );
+            for source in crate::session::recovery_records(&record, Some(&current)) {
+                match source.replay() {
+                    Ok(mut game) => {
+                        game.fork_identity();
+                        let level = LEVELS
+                            .iter()
+                            .position(|l| l.name == source.level_name)
+                            .unwrap_or(0);
+                        let mut branch =
+                            game.snapshot(source.user_red, level, source.mode == "review");
+                        branch.title = if source.title.is_empty() {
+                            self.data
+                                .active
+                                .iter()
+                                .chain(&self.data.drafts)
+                                .chain(&self.data.archives)
+                                .find(|r| r.id == source.id)
+                                .map_or_else(String::new, |r| r.title.clone())
+                        } else {
+                            source.title.clone()
+                        };
+                        if self.game.id == original && source.acknowledges(&current) {
+                            self.game = game;
+                            self.reset_move_view();
+                        }
+                        self.enqueue(Command::save(branch, settings.clone()));
                     }
-                    self.enqueue(Command::save(branch, settings));
-                }
-                Err(e) => {
-                    self.saves.failed.push(Command::Save(record, settings));
-                    self.notice = e;
+                    Err(e) => {
+                        self.saves.failed(Command::save(source, settings.clone()));
+                        self.notice = e;
+                    }
                 }
             }
         }
@@ -99,11 +112,22 @@ impl App {
         self.enqueue(Command::Load);
     }
     pub(super) fn persist(&mut self) {
-        let record = self.game.snapshot(
+        let mut record = self.game.snapshot(
             self.settings.user_red,
             self.settings.level,
             self.review_game,
         );
+        if let Some(old) = self
+            .data
+            .active
+            .iter()
+            .chain(&self.data.drafts)
+            .chain(&self.data.archives)
+            .find(|r| r.id == record.id)
+        {
+            record.title = old.title.clone();
+            record.favorite = old.favorite;
+        }
         if record.result == Outcome::Playing {
             if let Some(i) = self.data.drafts.iter().position(|r| r.id == record.id) {
                 self.data.drafts[i] = record.clone();
@@ -247,6 +271,10 @@ impl App {
     pub(super) fn poll(&mut self) {
         while let Ok(event) = self.io.rx.try_recv() {
             match event.result {
+                Ok(Response::Settings(settings)) => {
+                    self.data.settings = settings;
+                    self.saves.succeeded(event.seq, &self.data);
+                }
                 Ok(Response::Data(data)) => {
                     self.saves.succeeded(event.seq, &data);
                     if matches!(self.modal, Some(Modal::StorageRecovery)) {
@@ -254,27 +282,8 @@ impl App {
                         self.settings = data.settings.clone();
                         self.notice = "存档已读取".into();
                     }
-                    if event.seq >= self.saves.last_request {
-                        self.data = *data;
-                        for command in &self.saves.failed {
-                            if let Command::Save(record, _) = command
-                                && !self
-                                    .data
-                                    .active
-                                    .iter()
-                                    .chain(self.data.drafts.iter())
-                                    .chain(self.data.archives.iter())
-                                    .any(|r| r.id == record.id)
-                            {
-                                if record.result == Outcome::Playing {
-                                    self.data.drafts.push((**record).clone());
-                                } else {
-                                    self.data.archives.push((**record).clone());
-                                }
-                            }
-                        }
-                        self.archive_dirty = true;
-                    }
+                    self.data = self.saves.project(*data);
+                    self.archive_dirty = true;
                 }
                 Err(e) => {
                     if event.retry.is_some() {
@@ -291,35 +300,14 @@ impl App {
                     // Cache errors must never strand the viewer waiting for an event.
                     if let Some(r) = &mut self.review {
                         r.cache_loading = false;
+                        r.score_version = r.score_version.wrapping_add(1);
                     }
                 }
                 Ok(Response::Cache { key, review }) => {
                     if let Some(r) = &mut self.review
                         && key == r.cache_key
                     {
-                        r.cache_loading = false;
-                        if let Some(cached) = review
-                            && cached.entries.len() == r.scores.len()
-                        {
-                            for (i, entry) in cached.entries.into_iter().enumerate() {
-                                if let Some(e) = entry
-                                    && e.valid_for(&r.game, i)
-                                {
-                                    let best = e.best.and_then(|s| s.parse::<Move>().ok());
-                                    r.scores[i] = Some(e.score);
-                                    r.bests[i] = best;
-                                    r.depths[i] = e.depth;
-                                }
-                            }
-                        }
-                        if let Some(score) =
-                            crate::review::rule_score(&r.game, r.game.history.len())
-                        {
-                            let last = r.game.history.len();
-                            r.scores[last] = Some(score);
-                            r.bests[last] = None;
-                            r.depths[last] = 0;
-                        }
+                        r.cache_loaded(review);
                     }
                 }
                 Ok(Response::CacheWarning(message)) => {
@@ -345,7 +333,14 @@ impl App {
             let pending = self.pending.take().unwrap();
             match reply.result {
                 Err(e) => {
-                    self.notice = format!("引擎不可用：{e}（可重试或认输）");
+                    self.notice = if matches!(
+                        reply.failure_kind,
+                        Some(crate::diagnostics::FailureKind::RestartRequired)
+                    ) {
+                        format!("引擎已停止：{e}。请保存对局后重启应用")
+                    } else {
+                        format!("引擎不可用：{e}（可重试或认输）")
+                    };
                     self.engine_failed = true;
                     if let Some(r) = &mut self.review {
                         r.analyzing = false;
@@ -387,9 +382,7 @@ impl App {
                             && let Some(v) =
                                 analysis.variations.iter().find(|v| v.mv == analysis.best)
                         {
-                            r.scores[ply] = Some(v.evaluation);
-                            r.bests[ply] = Some(v.mv);
-                            r.depths[ply] = v.depth;
+                            r.analyzed(ply, v);
                         }
                         self.save_review_cache();
                     }
@@ -408,6 +401,7 @@ impl App {
                 ) {
                     if let Some(score) = crate::review::rule_score(&r.game, i) {
                         r.scores[i] = Some(score);
+                        r.score_version = r.score_version.wrapping_add(1);
                     } else {
                         next = Some(i);
                     }

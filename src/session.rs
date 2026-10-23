@@ -9,6 +9,32 @@ pub struct SaveState {
     commands: std::collections::BTreeMap<u64, Command>,
 }
 impl SaveState {
+    /// Keep confirmed metadata visible while overlaying every uncommitted board.
+    /// A failed write remains recoverable even when a later disk read succeeds.
+    pub fn project(&self, mut data: Data) -> Data {
+        for command in self.failed.iter().chain(self.commands.values()) {
+            if let Command::Save(record, _) = command {
+                overlay_record(&mut data, record);
+            }
+        }
+        data
+    }
+
+    pub fn status(&self, id: &str) -> SaveStatus {
+        if self.failed.iter().any(|c| match c {
+            Command::Save(r, _) => r.id == id,
+            _ => false,
+        }) {
+            SaveStatus::Failed
+        } else if self.commands.values().any(|c| match c {
+            Command::Save(r, _) => r.id == id,
+            _ => false,
+        }) {
+            SaveStatus::Pending
+        } else {
+            SaveStatus::Saved
+        }
+    }
     pub fn queued(&mut self, seq: u64, command: Command) {
         self.last_request = seq;
         self.pending += 1;
@@ -90,6 +116,62 @@ impl SaveState {
             Command::Save(r, _) if r.id == id => Some(r.as_ref()),
             _ => None,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveStatus {
+    Pending,
+    Saved,
+    Failed,
+}
+
+/// Return all unacknowledged histories; matching identities alone prove nothing.
+pub fn recovery_records(failed: &Record, current: Option<&Record>) -> Vec<Record> {
+    let Some(current) = current.filter(|r| r.id == failed.id) else {
+        return vec![failed.clone()];
+    };
+    if current.acknowledges(failed) {
+        vec![current.clone()]
+    } else if failed.acknowledges(current) {
+        vec![failed.clone()]
+    } else {
+        vec![failed.clone(), current.clone()]
+    }
+}
+
+fn overlay_record(data: &mut Data, record: &Record) {
+    let old = data
+        .active
+        .iter()
+        .chain(&data.drafts)
+        .chain(&data.archives)
+        .find(|r| r.id == record.id);
+    if old.is_some_and(|r| r.acknowledges(record)) {
+        return;
+    }
+    let mut record = record.clone();
+    if let Some(old) = old {
+        record.title = old.title.clone();
+        record.favorite = old.favorite;
+    }
+    if record.result == crate::game::Outcome::Playing {
+        if let Some(old) = data.active.as_mut().filter(|r| r.id == record.id) {
+            *old = record;
+        } else if let Some(old) = data.drafts.iter_mut().find(|r| r.id == record.id) {
+            *old = record;
+        } else {
+            if let Some(old) = data.active.replace(record) {
+                data.drafts.push(old);
+            }
+        }
+    } else {
+        if data.active.as_ref().is_some_and(|r| r.id == record.id) {
+            data.active = None;
+        }
+        data.drafts.retain(|r| r.id != record.id);
+        data.archives.retain(|r| r.id != record.id);
+        data.archives.insert(0, record);
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

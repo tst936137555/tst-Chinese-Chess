@@ -7,8 +7,22 @@ from pathlib import Path
 from build_info import ROOT,version_info
 from ui_input_smoke import wait
 PACKAGE="com.tst.xiangqi.rust"
-def adb(*args,check=True):
-    return subprocess.run(["adb",*map(str,args)],check=check,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+def adb(*args,check=True,timeout=15):
+    return subprocess.run(["adb",*map(str,args)],check=check,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
+
+def collect_diagnostics():
+    output=ROOT/"target/android-smoke";output.mkdir(parents=True,exist_ok=True)
+    commands={
+        "logcat.txt": ("logcat","-d","-t","2000"),
+        "activity.txt": ("shell","dumpsys","activity","activities"),
+        "startup.txt": ("shell","run-as",PACKAGE,"cat","files/smoke/startup.txt"),
+    }
+    for name,args in commands.items():
+        try:
+            result=adb(*args,check=False)
+            (output/name).write_bytes(result.stdout+result.stderr)
+        except (OSError,subprocess.TimeoutExpired) as error:
+            (output/name).write_text(str(error),encoding="utf-8")
 def launch(*args):
     return adb("shell","am","start","--activity-single-top","-n",f"{PACKAGE}/.MainActivity",*args)
 def foreground():
@@ -17,7 +31,7 @@ def foreground():
 def main():
     if adb("shell","getprop","ro.kernel.qemu").stdout.strip()!=b"1":raise SystemExit("This destructive debug install test requires an Android emulator")
     apk=ROOT/"dist"/f"tst-xiangqi-{version_info()['version']}-x86_64.apk"
-    adb("install","-r",apk);adb("shell","am","force-stop",PACKAGE)
+    adb("install","-r",apk,timeout=120);adb("shell","am","force-stop",PACKAGE)
     adb("shell","run-as",PACKAGE,"rm","-f","files/smoke/result.json",check=False)
     launch("--ez","xiangqiSmoke","true")
     def smoke_result():
@@ -63,5 +77,7 @@ def main():
     output=ROOT/"target/android-smoke";output.mkdir(parents=True,exist_ok=True)
     (output/"result.json").write_text(json.dumps(result,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     print(json.dumps(result,indent=2,ensure_ascii=False))
-if __name__=="__main__":main()
+if __name__=="__main__":
+    try:main()
+    finally:collect_diagnostics()
 

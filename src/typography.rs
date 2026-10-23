@@ -15,6 +15,11 @@ pub struct UiFont {
     pixel_density: Cell<f32>,
 }
 impl UiFont {
+    /// Preserve the original name in storage; spell unsupported glyphs visibly on screen.
+    pub fn display_text<'a>(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
+        let face = ttf_parser::Face::parse(&self.bytes, 0).expect("内置字体损坏");
+        fallback_text(text, |c| face.glyph_index(c).is_some())
+    }
     pub fn load(bytes: &[u8]) -> Result<Self, macroquad::Error> {
         let density = screen_dpi_scale();
         let bank = Bank {
@@ -86,6 +91,8 @@ impl UiFont {
         bank.cached.extend(chars.into_iter().map(|c| (c, physical)));
     }
     pub fn measure(&self, text: &str, size: f32) -> TextDimensions {
+        let display = self.display_text(text);
+        let text = display.as_ref();
         self.prepare(text, size);
         let (raster, scale, _) = self.raster(size);
         measure_text(
@@ -96,6 +103,8 @@ impl UiFont {
         )
     }
     pub fn draw(&self, text: &str, x: f32, y: f32, size: f32, color: Color) {
+        let display = self.display_text(text);
+        let text = display.as_ref();
         self.prepare(text, size);
         let (raster, scale, _) = self.raster(size);
         draw_text_ex(
@@ -111,4 +120,21 @@ impl UiFont {
             },
         );
     }
+}
+
+pub fn fallback_text(text: &str, supported: impl Fn(char) -> bool) -> std::borrow::Cow<'_, str> {
+    if text.chars().all(|c| c.is_control() || supported(c)) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(
+        text.chars()
+            .map(|c| {
+                if c.is_control() || supported(c) {
+                    c.to_string()
+                } else {
+                    format!("[U+{:04X}]", c as u32)
+                }
+            })
+            .collect(),
+    )
 }

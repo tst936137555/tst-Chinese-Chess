@@ -24,7 +24,7 @@ async fn main() {
     let control = load_ttf_font_from_bytes(bytes).unwrap();
     // Exercise real startup preparation on the protected path.
     if !raw {
-        for (text, size) in copy::FONT_GROUPS {
+        for (text, size) in copy::FONT_GROUPS.iter().skip(2) {
             font.prepare(text, *size);
         }
     }

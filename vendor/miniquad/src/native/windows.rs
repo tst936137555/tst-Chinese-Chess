@@ -248,9 +248,6 @@ impl WindowsDisplay {
     fn set_window_position(&mut self, new_x: u32, new_y: u32) {
         let mut rect: RECT = unsafe { std::mem::zeroed() };
         if unsafe { GetClientRect(self.wnd, &mut rect as *mut _ as _) } != 0 {
-            let mut new_rect = rect;
-            new_rect.right = new_rect.right - new_rect.left + new_x as i32;
-            new_rect.bottom = new_rect.bottom - new_rect.top + new_y as i32;
             unsafe {
                 SetWindowPos(
                     self.wnd,

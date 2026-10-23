@@ -2,14 +2,14 @@
 use crate::game::{Outcome, Record};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_IMPORT_RECORDS: usize = 1000;
 const MAX_DRAFTS: usize = 50;
@@ -55,6 +55,8 @@ pub struct Data {
     pub drafts: Vec<Record>,
     #[serde(default)]
     pub applied_operations: Vec<String>,
+    #[serde(default)]
+    pub deleted_ids: BTreeSet<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
@@ -67,12 +69,27 @@ impl Default for Data {
             archives: Vec::new(),
             drafts: Vec::new(),
             applied_operations: Vec::new(),
+            deleted_ids: BTreeSet::new(),
             extra: BTreeMap::new(),
         }
     }
 }
 impl Data {
+    pub fn clear_archives(&mut self) {
+        self.deleted_ids
+            .extend(self.archives.drain(..).map(|r| r.id));
+    }
+    pub fn clear_drafts(&mut self) {
+        self.deleted_ids.extend(self.drafts.drain(..).map(|r| r.id));
+    }
     fn validate(&self) -> Result<(), String> {
+        if self
+            .deleted_ids
+            .iter()
+            .any(|id| id.is_empty() || id.len() > 128)
+        {
+            return Err("删除记录身份无效".into());
+        }
         if self.archives.len() > MAX_IMPORT_RECORDS || self.drafts.len() > MAX_DRAFTS {
             return Err("存档局数超限，原文件已保留".into());
         }
@@ -90,6 +107,11 @@ pub struct Storage {
 pub struct StorageFailure {
     pub kind: crate::diagnostics::FailureKind,
     pub message: String,
+}
+#[derive(Serialize, Deserialize)]
+struct SettingsFile {
+    version: u32,
+    settings: Settings,
 }
 impl Storage {
     pub fn new(path: PathBuf) -> Self {
@@ -135,12 +157,80 @@ impl Storage {
         d.version = SCHEMA_VERSION;
         Ok(d)
     }
-    pub fn load(&self) -> Result<Data, String> {
+    fn load_state(&self) -> Result<Data, String> {
         match fs::metadata(&self.path) {
             Ok(_) => Self::decode(&Self::read(&self.path)?),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Data::default()),
             Err(e) => Err(e.to_string()),
         }
+    }
+    pub fn settings_path(&self) -> PathBuf {
+        self.path.with_extension("settings.json")
+    }
+    fn decode_settings(path: &Path) -> Result<Settings, String> {
+        let file = File::open(path).map_err(|e| e.to_string())?;
+        let mut bytes = Vec::new();
+        file.take(16_385)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() > 16_384 {
+            return Err("设置文件过大".into());
+        }
+        let mut saved: SettingsFile = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        if saved.version != 1 {
+            return Err("设置来自不支持的版本，请升级程序".into());
+        }
+        saved.settings.sanitize();
+        Ok(saved.settings)
+    }
+    pub fn load(&self) -> Result<Data, String> {
+        let mut data = self.load_state()?;
+        let path = self.settings_path();
+        if path.exists() {
+            match Self::decode_settings(&path) {
+                Ok(settings) => data.settings = settings,
+                Err(error) => {
+                    crate::diagnostics::record("settings-recovery", &error);
+                    if let Ok(settings) = Self::decode_settings(&path.with_extension("bak")) {
+                        data.settings = settings;
+                    }
+                }
+            }
+        }
+        Ok(data)
+    }
+    fn write_settings(&self, settings: &Settings) -> Result<(), String> {
+        let path = self.settings_path();
+        if path.exists() {
+            let bytes = Self::read(&path)?;
+            if serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|v| v.get("version").and_then(|v| v.as_u64()))
+                .is_some_and(|version| version > 1)
+            {
+                return Err("设置来自更新版本，已禁止覆盖".into());
+            }
+            let backup = if Self::decode_settings(&path).is_ok() {
+                path.with_extension("bak")
+            } else {
+                path.with_extension(format!("damaged-{}.json", crate::game::new_id()))
+            };
+            Self::atomic_write(&backup, &bytes)?;
+        }
+        let bytes = serde_json::to_vec(&SettingsFile {
+            version: 1,
+            settings: settings.clone(),
+        })
+        .map_err(|e| e.to_string())?;
+        Self::atomic_write(&path, &bytes)
+    }
+    /// Preferences have their own atomic file; changing volume never scans the game library.
+    pub fn save_settings(&self, mut settings: Settings) -> Result<Settings, String> {
+        fs::create_dir_all(self.path.parent().ok_or("设置目录无效")?).map_err(|e| e.to_string())?;
+        let _lock = self.lock()?;
+        settings.sanitize();
+        self.write_settings(&settings)?;
+        Ok(settings)
     }
     pub(crate) fn lock(&self) -> Result<File, String> {
         let lock = OpenOptions::new()
@@ -181,6 +271,7 @@ impl Storage {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         let _lock = self.lock()?;
         let mut data = self.load()?;
+        let old_settings = data.settings.clone();
         op(&mut data)?;
         data.version = SCHEMA_VERSION;
         data.settings.sanitize();
@@ -193,6 +284,9 @@ impl Storage {
             Self::atomic_write(&self.path.with_extension("bak"), &Self::read(&self.path)?)?;
         }
         Self::atomic_write(&self.path, &bytes)?;
+        if data.settings != old_settings {
+            self.write_settings(&data.settings)?;
+        }
         Ok(data)
     }
     /// Explicit recovery preserves the broken file and never silently replaces a future schema.
@@ -220,9 +314,9 @@ impl Storage {
             Err(e) => return Err(e.to_string()),
         }
         let bytes = Self::read(&self.path.with_extension("bak"))?;
-        let data = Self::decode(&bytes)?;
+        Self::decode(&bytes)?;
         Self::atomic_write(&self.path, &bytes)?;
-        Ok(data)
+        self.load()
     }
     pub fn save_game(&self, record: Record, settings: Option<Settings>) -> Result<Data, String> {
         self.save_checked(record, settings).map_err(|e| e.message)
@@ -239,6 +333,10 @@ impl Storage {
         })?;
         let mut conflict = false;
         let result = self.update(|d| {
+            if d.deleted_ids.contains(&record.id) {
+                conflict = true;
+                return Err("此局已被删除，旧窗口不能写回；请另存独立分支".into());
+            }
             if record.result == Outcome::Playing && d.archives.iter().any(|r| r.id == record.id) {
                 conflict = true;
                 return Err("此局已结束，请从复盘续下建立新局".into());
@@ -346,12 +444,21 @@ impl Storage {
     }
     pub fn remove(&self, time: u64, red: bool) -> Result<Data, String> {
         self.update(|d| {
+            d.deleted_ids.extend(
+                d.archives
+                    .iter()
+                    .filter(|r| r.time == time && r.user_red == red)
+                    .map(|r| r.id.clone()),
+            );
             d.archives.retain(|r| r.time != time || r.user_red != red);
             Ok(())
         })
     }
     pub fn remove_by_id(&self, id: &str) -> Result<Data, String> {
         self.update(|d| {
+            if d.archives.iter().chain(&d.drafts).any(|r| r.id == id) {
+                d.deleted_ids.insert(id.to_owned());
+            }
             d.archives.retain(|r| r.id != id);
             d.drafts.retain(|r| r.id != id);
             Ok(())
@@ -375,6 +482,9 @@ impl Storage {
         let mut added = 0;
         let data = self.update(|d| {
             for r in records {
+                if d.deleted_ids.contains(&r.id) {
+                    continue;
+                }
                 if d.archives
                     .iter()
                     .chain(d.drafts.iter())

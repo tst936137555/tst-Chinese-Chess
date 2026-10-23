@@ -139,11 +139,13 @@ impl App {
         let unit = self.width / self.viewport.w;
         let area = crate::interaction::touch_area([r.x, r.y, r.w, r.h], unit);
         let hit_rect = Rect::new(area[0], area[1], area[2], area[3]);
+        self.semantic(label.to_owned(), hit_rect, enabled);
         let index = self.focus_count;
         if enabled && self.keyboard_active {
             self.focus_count += 1;
             if index == self.focus_index && self.keyboard_nav && self.board_cursor.is_none() {
                 self.focus = Some(hit_rect);
+                self.accessibility_focus = self.accessible.last().map(|e| e.id);
                 draw_rectangle_lines(r.x - 2., r.y - 2., r.w + 4., r.h + 4., 1., JADE);
             }
             if crate::platform::observation_path().is_some() {

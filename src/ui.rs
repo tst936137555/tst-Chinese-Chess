@@ -1,7 +1,7 @@
 //! Shared desktop/mobile UI with portrait and landscape layouts.
 use crate::{
-    engine::{Analysis, Engine, Score, score_loss},
-    game::{Game, LEVELS, Outcome, move_quality, outcome_by_score},
+    engine::{Analysis, Engine, Score},
+    game::{Game, LEVELS, Outcome, outcome_by_score},
     persistence::{Command, Response, Worker},
     review::CachedPosition,
     rules::{Board, Move, Piece, Side, Square},
@@ -45,17 +45,7 @@ struct Pending {
     id: u64,
     job: Job,
 }
-struct Review {
-    game: Game,
-    ply: usize,
-    scores: Vec<Option<Score>>,
-    depths: Vec<u32>,
-    cache_key: String,
-    cache_loading: bool,
-    bests: Vec<Option<Move>>,
-    analyzing: bool,
-    user_red: bool,
-}
+use crate::review::ReviewSession as Review;
 struct SavedGamePage {
     game: Game,
     user_red: bool,
@@ -151,6 +141,11 @@ struct App {
     text_cache: std::collections::HashMap<String, Vec<String>>,
     recovery: crate::session::Recovery,
     pause_serial: u64,
+    piece_cache: std::cell::RefCell<std::collections::VecDeque<(Piece, u16, RenderTarget)>>,
+    board_surface_cache: std::cell::RefCell<Option<(bool, u16, RenderTarget)>>,
+    accessible: Vec<crate::accessibility::Element>,
+    accessibility_active: bool,
+    accessibility_focus: Option<u32>,
 }
 pub async fn run() {
     let startup = std::time::Instant::now();
@@ -181,6 +176,10 @@ pub async fn run() {
     );
     let mut font_precache_ms = 0.;
     for (index, (text, size)) in copy::FONT_GROUPS.iter().enumerate() {
+        // Help/about and long licenses are prepared when opened, after the first interaction.
+        if index < 2 {
+            continue;
+        }
         if let Some(s) = &smoke {
             s.boot(&format!("font-group-{index}"));
         }
@@ -211,16 +210,27 @@ pub async fn run() {
                 .expect("asset manifest");
         let expected = manifest["pikafish"]["artifacts"]["nnue"]["sha256"]
             .as_str()
-            .expect("NNUE hash");
-        if !crate::platform::nnue_matches(&dest, expected) {
-            loader.show(&font, 0.72).await;
-            match load_file("engine/pikafish.nnue").await {
-                Ok(bytes) => {
-                    if let Err(e) = crate::platform::install_nnue(&dest, &bytes, expected) {
-                        notice = format!("权重安装失败：{e}");
-                    }
+            .expect("NNUE hash")
+            .to_owned();
+        let (done, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let result = crate::platform::prepare_nnue(&dest, &expected);
+            crate::diagnostics::measure("nnue_prepare_ms", start.elapsed().as_secs_f64() * 1000.);
+            let _ = done.send(result);
+        });
+        loop {
+            match result.try_recv() {
+                Ok(Ok(())) => break,
+                Ok(Err(e)) => {
+                    notice = format!("权重安装失败：{e}");
+                    break;
                 }
-                Err(e) => notice = format!("缺少 NNUE 权重：{e}"),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    notice = "权重准备线程已退出".into();
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => loader.show(&font, 0.72).await,
             }
         }
     }
@@ -248,20 +258,7 @@ pub async fn run() {
             .find_map(|p| std::fs::read_to_string(p).ok())
             .unwrap_or_else(|| "请先运行引擎资产下载脚本获取 NNUE 许可证。".into());
     }
-    for (index, text) in license_texts.iter().enumerate() {
-        if let Some(s) = &smoke {
-            s.boot(&format!("license-{index}"));
-        }
-        let warm_started = std::time::Instant::now();
-        font.prepare(text, 15.);
-        font_precache_ms += warm_started.elapsed().as_secs_f64() * 1000.;
-        loader
-            .show(
-                &font,
-                0.76 + 0.16 * (index + 1) as f32 / license_texts.len() as f32,
-            )
-            .await;
-    }
+    loader.show(&font, 0.92).await;
     crate::diagnostics::measure("font_precache_ms", font_precache_ms);
     if let Some(s) = &smoke {
         path = s.state_path();
@@ -354,6 +351,11 @@ pub async fn run() {
         text_cache: std::collections::HashMap::new(),
         recovery: crate::session::Recovery::default(),
         pause_serial: crate::platform::pause_serial(),
+        piece_cache: std::cell::RefCell::new(std::collections::VecDeque::new()),
+        board_surface_cache: std::cell::RefCell::new(None),
+        accessible: Vec::new(),
+        accessibility_active: true,
+        accessibility_focus: None,
     };
     loader.show(&app.font, 1.).await;
     drop(loader);
@@ -364,7 +366,9 @@ pub async fn run() {
     crate::diagnostics::measure("interactive_ms", startup.elapsed().as_secs_f64() * 1000.);
     let subscriber = macroquad::input::utils::register_input_subscriber();
     let mut lifecycle = Lifecycle;
+    let mut idle_ms = 0_f32;
     loop {
+        let frame_started = std::time::Instant::now();
         macroquad::input::utils::repeat_all_miniquad_input(&mut lifecycle, subscriber);
         if let Some(s) = &mut smoke {
             s.setup(&mut app);
@@ -452,6 +456,22 @@ pub async fn run() {
         if app.closing {
             app.click = None;
         }
+        if let Some(id) = crate::accessibility::take_action()
+            && let Some(element) = app.accessible.iter().find(|e| e.id == id && e.actionable)
+        {
+            let [x, y, w, h] = element.rect;
+            let point = crate::interaction::map_point(
+                [x + w / 2., y + h / 2.],
+                [
+                    app.viewport.x,
+                    app.viewport.y,
+                    app.viewport.w,
+                    app.viewport.h,
+                ],
+                [app.width, app.height],
+            );
+            app.click = Some(vec2(point[0], point[1]));
+        }
         if app
             .animation
             .as_ref()
@@ -464,6 +484,8 @@ pub async fn run() {
         }
         app.focus_count = 0;
         app.observed_controls.clear();
+        app.accessible.clear();
+        app.accessibility_focus = None;
         clear_background(PAPER);
         app.background();
         let modal_click = if app.modal.is_some()
@@ -475,6 +497,7 @@ pub async fn run() {
         };
         app.keyboard_active = app.modal.is_none()
             && !(app.screen == Screen::Game && app.game.outcome != Outcome::Playing);
+        app.accessibility_active = app.keyboard_active;
         app.header();
         match app.screen {
             Screen::Home => app.home(),
@@ -484,11 +507,15 @@ pub async fn run() {
         }
         if app.screen == Screen::Game && app.game.outcome != Outcome::Playing && app.modal.is_none()
         {
+            app.accessible.clear();
+            app.accessibility_active = true;
             app.keyboard_active = true;
             app.click = modal_click;
             app.end_overlay();
         }
         if app.modal.is_some() {
+            app.accessible.clear();
+            app.accessibility_active = true;
             app.keyboard_active = true;
             app.click = modal_click;
             app.draw_modal();
@@ -532,6 +559,7 @@ pub async fn run() {
             if native_back && app.screen == Screen::Home && app.modal.is_none() {
                 macroquad::miniquad::window::request_quit();
             } else if app.modal.is_some() {
+                app.accessible.clear();
                 if matches!(app.modal, Some(Modal::End(_))) {
                     app.cancel();
                 }
@@ -551,6 +579,35 @@ pub async fn run() {
             }
         }
         app.scene.present();
+        let summary = match &app.modal {
+            Some(Modal::Rename(_, edit)) => format!(
+                "名称编辑：{}。已选中 {} 个字",
+                edit.text,
+                edit.selection().len()
+            ),
+            Some(_) => "中国象棋，对话框".into(),
+            None => match app.screen {
+                Screen::Game => format!(
+                    "{}，{}行棋，{}",
+                    app.game.outcome.label(),
+                    app.game.board.turn.label(),
+                    match app.saves.status(&app.game.id) {
+                        crate::session::SaveStatus::Failed => "保存失败，可处理保存",
+                        crate::session::SaveStatus::Pending => "正在保存",
+                        _ => "已保存",
+                    }
+                ),
+                Screen::Review => "复盘，可逐步查看棋盘和分析结果".into(),
+                Screen::Archives => "棋谱收藏".into(),
+                Screen::Home => "中国象棋主页".into(),
+            },
+        };
+        crate::accessibility::publish(
+            format!("{summary}。{}", app.notice),
+            app.accessible.clone(),
+            screen_dpi_scale(),
+            app.accessibility_focus,
+        );
         if let Some(s) = &mut smoke
             && s.capture(&mut app)
         {
@@ -579,10 +636,33 @@ pub async fn run() {
             macroquad::miniquad::window::request_quit();
         }
         crate::diagnostics::measure("frame_ms", f64::from(get_frame_time()) * 1000.);
+        let work_ms = frame_started.elapsed().as_secs_f32() * 1000.;
+        crate::diagnostics::measure("frame_work_ms", f64::from(work_ms));
+        if smoke.is_none() && !crate::platform::suspended() {
+            app.scene.budget.observe(
+                work_ms.max(get_frame_time() * 1000. - idle_ms),
+                get_frame_time(),
+            );
+        }
         if crate::platform::smoke_output().is_none() && smoke.is_none() {
             app.write_test_state();
         }
         next_frame().await;
+        idle_ms = 0.;
+        // Keep input and async workers polling while reducing static-screen GPU wakeups.
+        if smoke.is_none()
+            && crate::platform::observation_path().is_none()
+            && app.animation.is_none()
+            && app.pending.is_none()
+            && !app.closing
+            && !is_mouse_button_down(MouseButton::Left)
+            && get_keys_down().is_empty()
+            && !app.name_keyboard
+        {
+            let idle_started = std::time::Instant::now();
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            idle_ms = idle_started.elapsed().as_secs_f32() * 1000.;
+        }
         if app.name_keyboard && !matches!(app.modal, Some(Modal::Rename(..))) {
             macroquad::miniquad::window::show_keyboard(false);
             app.name_keyboard = false;
@@ -590,6 +670,22 @@ pub async fn run() {
     }
 }
 impl App {
+    fn semantic(&mut self, label: String, rect: Rect, actionable: bool) {
+        if !self.accessibility_active || label.is_empty() {
+            return;
+        }
+        let unit = self.width / self.viewport.w;
+        self.accessible.push(crate::accessibility::Element::new(
+            label,
+            [
+                self.viewport.x + rect.x / unit,
+                self.viewport.y + rect.y / unit,
+                rect.w / unit,
+                rect.h / unit,
+            ],
+            actionable,
+        ));
+    }
     fn content(&self) -> (f32, f32) {
         if self.landscape() && matches!(self.screen, Screen::Game | Screen::Review) {
             let x = self.width * 0.56 + 20.;
@@ -599,7 +695,9 @@ impl App {
         ((self.width - w) / 2., w)
     }
     fn open_modal(&mut self, m: Modal) {
+        self.accessible.clear();
         if self.name_keyboard {
+            crate::platform::name_editor("", 0, 0, [0.; 4], false);
             macroquad::miniquad::window::show_keyboard(false);
             self.name_keyboard = false;
         }
@@ -610,6 +708,8 @@ impl App {
             };
             while get_char_pressed().is_some() {}
             self.name_keyboard = true;
+            macroquad::miniquad::window::set_ime_enabled(true);
+            #[cfg(not(target_os = "ios"))]
             macroquad::miniquad::window::show_keyboard(true);
         }
         self.modal = Some(m);
@@ -617,11 +717,17 @@ impl App {
         self.modal_scroll_grab = None;
     }
     fn finish_rename(&mut self) {
+        self.accessible.clear();
+        let _ = crate::text_input::take_native_edit();
+        let _ = crate::text_input::take_native_done();
+        crate::platform::name_editor("", 0, 0, [0.; 4], false);
+        macroquad::miniquad::window::set_ime_enabled(false);
         macroquad::miniquad::window::show_keyboard(false);
         self.name_keyboard = false;
         self.modal = self.rename_return.take().map(Modal::Drafts);
     }
     fn back(&mut self) {
+        self.accessible.clear();
         self.cancel();
         self.engine_failed = false;
         self.notice.clear();
@@ -670,6 +776,7 @@ impl App {
         }
     }
     fn start_game(&mut self, board: Option<Game>, red: bool) {
+        self.accessible.clear();
         if self.data.drafts.len() >= 50 && self.data.active.is_some() {
             self.notice = "对局已满，请先删除旧对局后开始新局".into();
             self.open_modal(Modal::Drafts(0));
@@ -706,6 +813,13 @@ impl App {
         }
     }
     fn resume_record(&mut self, record: crate::game::Record) {
+        self.accessible.clear();
+        let record = self
+            .saves
+            .unsaved(&record.id)
+            .filter(|failed| !record.acknowledges(failed))
+            .cloned()
+            .unwrap_or(record);
         match record.replay() {
             Ok(game) => {
                 self.cancel();
@@ -730,21 +844,11 @@ impl App {
         }
     }
     fn open_review(&mut self, game: Game, _origin: Screen) {
+        self.accessible.clear();
         let page = self.stash_page();
         self.navigation.push(page);
         self.cancel();
-        let n = game.history.len();
-        self.review = Some(Review {
-            cache_key: crate::review::key(&game),
-            game,
-            ply: 0,
-            scores: vec![None; n + 1],
-            depths: vec![0; n + 1],
-            cache_loading: true,
-            bests: vec![None; n + 1],
-            analyzing: true,
-            user_red: self.settings.user_red,
-        });
+        self.review = Some(Review::new(game, self.settings.user_red));
         self.engine_failed = false;
         self.screen = Screen::Review;
         self.load_review_cache();

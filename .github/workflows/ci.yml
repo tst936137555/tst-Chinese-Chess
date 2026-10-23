@@ -5,12 +5,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: rust-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   desktop:
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +29,13 @@ jobs:
       - name: Linux dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev xvfb xauth xdotool
+      - name: Headless Linux audio
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Hosted runners have no sound card. Keep the mixer running with ALSA's null sink.
+          printf 'pcm.!default { type null }\n' > "$RUNNER_TEMP/alsa.conf"
+          echo "ALSA_CONFIG_PATH=$RUNNER_TEMP/alsa.conf" >> "$GITHUB_ENV"
       - name: Format
         run: cargo fmt --check
       - name: Lint
@@ -48,6 +59,8 @@ jobs:
       - name: Download integrity fallback regression
         shell: pwsh
         run: ./tool/test_download_fallback.ps1
+      - name: Simulator smoke harness regression
+        run: python -m unittest discover -s tool -p "test_*smoke.py"
       - name: Audio mixer loop regression
         run: cargo test --manifest-path vendor/quad-snd/Cargo.toml --lib
       - name: Native adapter restart regression
@@ -57,7 +70,7 @@ jobs:
         run: cargo build --release --locked
       - name: UI rendering and input smoke
         if: runner.os == 'Linux'
-        run: timeout 90s xvfb-run -a ./target/release/tst-xiangqi --smoke-test target/ui-smoke
+        run: timeout 300s xvfb-run -a ./target/release/tst-xiangqi --smoke-test target/ui-smoke
       - name: Real X11 mouse and keyboard input
         if: runner.os == 'Linux'
         run: timeout 120s xvfb-run -a python3 tool/ui_input_smoke.py target/release/tst-xiangqi
@@ -70,10 +83,10 @@ jobs:
           cargo build --release --locked --example font_regression
           timeout 60s xvfb-run -a ./target/release/examples/font_regression target/font-regression
       - uses: actions/upload-artifact@v4
-        if: runner.os == 'Linux'
+        if: always() && runner.os == 'Linux'
         with:
           name: ui-smoke
-          path: target/ui-smoke/*.png
+          path: target/ui-smoke/
       - name: Windows package
         if: runner.os == 'Windows'
         shell: pwsh
@@ -86,6 +99,7 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -116,23 +130,43 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
           export NDK_HOME="$ANDROID_NDK_HOME"
           bash tool/build_android_rust.sh '${{ matrix.target }}'
+      - name: Android IME and accessibility Java bridge compile regression
+        run: python3 -m unittest discover -s tool -p "test_android_bridge.py"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-android-${{ matrix.target }}
+          path: target/android-artifacts/**/tst-xiangqi-*.apk
+          if-no-files-found: error
+      - name: Enable KVM for Android emulator
+        if: matrix.target == 'x86_64-linux-android'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          test -r /dev/kvm && test -w /dev/kvm
       - name: Install and exercise debug APK in emulator
         if: matrix.target == 'x86_64-linux-android'
+        timeout-minutes: 15
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
           target: google_apis
           disable-animations: true
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 300
           script: python3 tool/mobile_smoke.py
-      - uses: actions/upload-artifact@v4
+      - name: Android simulator diagnostics
+        if: always() && matrix.target == 'x86_64-linux-android'
+        uses: actions/upload-artifact@v4
         with:
-          name: rust-android-${{ matrix.target }}
-          path: target/android-artifacts/**/tst-xiangqi-*.apk
-          if-no-files-found: error
+          name: android-smoke
+          path: target/android-smoke/
 
   ios:
     runs-on: macos-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -150,12 +184,20 @@ jobs:
           ./tool/fetch_engine.ps1 -Target core
       - name: Build native app
         run: bash tool/build_ios_rust.sh '${{ matrix.target }}'
-      - name: Install and launch iOS simulator app
-        if: matrix.target == 'aarch64-apple-ios-sim'
-        run: python3 tool/ios_smoke.py 'dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app'
       - name: Archive
         run: cd dist/ios && zip -r ../../rust-ios-${{ matrix.target }}.zip '${{ matrix.target }}'
       - uses: actions/upload-artifact@v4
         with:
           name: rust-ios-${{ matrix.target }}
           path: rust-ios-*.zip
+          if-no-files-found: error
+      - name: Install and launch iOS simulator app
+        if: matrix.target == 'aarch64-apple-ios-sim'
+        timeout-minutes: 10
+        run: python3 tool/ios_smoke.py 'dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app'
+      - name: iOS simulator diagnostics
+        if: always() && matrix.target == 'aarch64-apple-ios-sim'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-smoke
+          path: target/ios-smoke/

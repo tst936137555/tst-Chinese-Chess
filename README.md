@@ -19,9 +19,9 @@
 - 棋谱收藏筛选、完整滚动裁切与空状态引导；复盘支持首步/末步、左右方向键、Home/End、点击或拖动走势定位。
 - 声音滑杆可点选和拖动；横屏声音设置左右分栏，短确认弹窗按内容居中，终局操作立即可用。
 - 引擎后台串行搜索、完整历史传递、同迭代 MultiPV 候选、超时和一次重试、旧请求取消；认输不依赖引擎。切后台后恢复走棋、提示、复盘和结算任务；结算保留实际评分类型、深度、耗时和资产摘要。
-- Tab/Enter 操作按钮；B 进入棋盘，方向键选格，空格/Enter 落子，Escape 取消，M 静音，Ctrl+Q 正常保存退出。启动以新图标与加载条呈现，完成后直接进入主页；所有平台预缓存常用界面、玩法说明、关于与许可证字形；长文使用独立留白的可拖动滚动条。自绘界面尚未提供系统屏幕阅读器语义树。
+- Tab/Enter 操作按钮；B 进入棋盘，方向键选格，空格/Enter 落子，Escape 取消，M 静音，Ctrl+Q 正常保存退出。启动以新图标与加载条呈现，完成后直接进入主页；优先预缓存常用界面字形，玩法说明、关于与许可证按需准备；长文使用独立留白的可拖动滚动条。提供 Windows UIA / macOS NSAccessibility、Android 虚拟节点和 iOS 语义控件桥接；名称可通过读屏接口设置。移动端名称输入使用原生组合文本状态，缺失字体字符以 Unicode 编号显示并保留原文。读屏与输入法实机体验仍需目标平台验收。
 
-画面内部至少按 1080p 基准绘制，并按实际像素密度自动提高到 2K、4K 精细度；窗口大小和布局保持自适应，不提供分辨率选项。文字按渲染密度栅格化，曲线与纹理同步细化；使用自适应超采样与高精度纹理采样改善模糊和锯齿。
+桌面以 1080p 为初始清晰度基准，按 DPI 自动提高；移动端将额外超采样限制在原生像素量的 2.25 倍内。持续帧耗时过高时自动降低内部画布，稳定恢复后再提高，保留设备与显存余量，不增加分辨率选项。棋盘和棋子按密度缓存，静止页面降低绘制频率，长复盘曲线按像素保留极值并缓存；后台任务与输入仍持续处理。
 
 ## Windows
 
@@ -99,7 +99,7 @@ bash tool/build_ios_rust.sh aarch64-apple-ios
 
 ## 数据与旧版迁移
 
-Rust 数据与旧版分开保存：Windows `%APPDATA%/tst-xiangqi-rust/state.json`；macOS/iOS `$HOME/Library/Application Support/tst-xiangqi-rust/state.json`；Android 私有 files 目录。`XIANGQI_DATA_DIR` 可覆盖目录。当前存档 schema 为 4，旧数据读取时迁移；棋谱日期统一显示北京时间（UTC+8）。
+Rust 数据与旧版分开保存：Windows `%APPDATA%/tst-xiangqi-rust/state.json`；macOS/iOS `$HOME/Library/Application Support/tst-xiangqi-rust/state.json`；Android 私有 files 目录。`XIANGQI_DATA_DIR` 可覆盖目录。当前存档 schema 为 5，旧数据读取时迁移；显式删除身份会阻止旧窗口重新写回。设置独立保存到同目录的 `state.settings.json`，采用原子写入与 `state.settings.bak` 备份，不再因调音量重写整库；损坏设置先读取其备份或主存档内的迁移值，更新时另存损坏文件，未来版本设置拒绝覆盖。恢复主存档不会回退独立设置。棋谱日期统一显示北京时间（UTC+8）。
 
 ```powershell
 cargo run --release -- --import "C:/path/to/game_archive.json"
@@ -110,6 +110,16 @@ cargo run --release -- --import "C:/path/to/game_archive.json"
 项目当前版本为 Rust 2.0.1。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
 
 ## 验证
+
+Windows 可以先执行依赖检查，脚本会在缺少 MSVC 链接器且 GCC 可用时选择 GNU 工具链：
+
+```powershell
+./tool/check.ps1 -DoctorOnly -Python /path/to/python.exe
+./tool/check.ps1 -WithEngine -Python /path/to/python.exe
+```
+
+新局面板明确提示简化裁决：长将判负、重复判和，未包含长捉判罚；该策略保持兼容旧棋谱。保存失败状态持续显示在对局卡片，可立即处理保存；重新读取不会覆盖待恢复着法，分歧恢复保留双方历史。设置、棋盘和复盘缓存各自确认，界面不会因后续失败而丢掉先前成功的收藏等操作。
+
 
 ```sh
 cargo fmt --check
@@ -130,20 +140,20 @@ Windows 使用 `.exe` 文件。`--self-test` 验证真实引擎、历史、续�
 
 内部冒烟直接调用命中处理；另外提供真实输入回归，不能把截图通过解释为真机触摸已验收：Linux 在 Xvfb 下运行 `python3 tool/ui_input_smoke.py target/release/tst-xiangqi`（需要 xdotool）；Android 模拟器运行 `python3 tool/mobile_smoke.py`；macOS 构建模拟器 app 后运行 `python3 tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app`。iOS 脚本验证安装/启动/冷启动，系统触摸和旋转仍需 XCTest 或设备验证。
 
-主项目现有 67 项测试，覆盖分歧历史、冲突确认、四类任务恢复、缓存空闲定时落盘/合并/失败退出、旧记录碰撞、对局容量、评分证据和固定随机种子，以及非法元数据导入、棋谱改名保留、备份恢复任务、设置失败确认、名称编辑和渲染尺寸边界。以下示例输出独立文件，使用临时数据，不改用户存档：
+主项目新增保存失败/重读/分支/重启、异步响应、删除屏障、独立设置、评分类型转换、阻塞管道、渲染预算、Unicode 输入与规则局面回归，覆盖分歧历史、冲突确认、四类任务恢复、缓存空闲定时落盘/合并/失败退出、旧记录碰撞、对局容量、评分证据和固定随机种子，以及非法元数据导入、棋谱改名保留、备份恢复任务、设置失败确认、名称编辑和渲染尺寸边界。以下示例输出独立文件，使用临时数据，不改用户存档：
 
 ```sh
 cargo run --release --locked --example check_ui -- target/ui-smoke
 cargo run --release --locked --example font_regression -- target/font-regression
 cargo run --release --locked --example benchmark -- target/performance-baseline.json
-cargo run --release --locked --example calibrate -- target/difficulty-calibration.json
+cargo run --release --locked --example calibrate -- target/difficulty-calibration.json --matches
 ```
 
-`check_ui` 对两个固定视口做粗粒度视觉基准比较；`font_regression` 比较新字形首帧与预热后画面，防止字体纹理扩容导致文字缺失；`benchmark` 测量 150 局档案及五档搜索，程序诊断另记录首帧、可交互、保存确认和帧耗时；`calibrate` 使用两种固定局面、固定种子抽样和更深搜索参考，不代表 ELO 或人类棋力等级。移动设备内存和耗电需在目标设备另测。
+`check_ui` 校验两个固定逻辑视口，兼容 DPI，比较整体与棋盘、状态文字、难度选择区域；`font_regression` 比较新字形首帧与预热后画面，防止字体纹理扩容导致文字缺失；`benchmark` 测量 150 局档案、独立设置与整库事务的分布和原始样本，以及五档搜索；可用 `XIANGQI_BENCH_DEVICE` 标记设备，程序诊断另记录首帧、可交互、保存确认、帧间隔与实际绘制工作耗时，并区分最近 240 个样本的分位数与整个会话的计数、均值和最大值；`calibrate` 使用十个固定局面，覆盖开局、中局、攻杀、防守、残局及双方执子，并记录资产摘要、实际深度和固定种子抽样；`--matches` 增加相邻档位交换执子的八局实局前 40 步对照，未结束保持进行中，不推断胜负或 ELO。移动设备内存和耗电需在目标设备另测。
 
 音频与布局检查包括左右声道定位、无削波、循环接点连续、混音缓冲跨界和棋盘适配。可用 `cargo test --manifest-path vendor/quad-snd/Cargo.toml --lib` 单独验证音频库修复；`cargo run --release --example render_audio` 输出离线 WAV 试听文件到 `dist/audio-preview/`。音乐与音效由 `src/audio.rs` 原创合成，无外部录音素材或额外运行时依赖。
 
-Windows 已本地构建并验证真实引擎；Android ARM64/x86_64 已生成 APK 并校验签名，macOS/iOS 通过 Rust 跨目标类型检查。完整 Apple 链接、签名和移动端安装、生命周期、性能仍需对应平台验证，不能视为已验证发行版。
+本轮 Windows 已本地构建并验证真实引擎；Android ARM64 已生成 APK 并校验签名，macOS/iOS 通过 Rust 跨目标类型检查。完整 Apple 链接、签名和移动端安装、生命周期、性能仍需对应平台验证，不能视为已验证发行版。
 
 ## 第三方组件与字体说明
 
@@ -181,3 +191,7 @@ python tool/subset_font.py --input assets/fonts/LXGWWenKai-Medium.ttf
 - 其他依赖使用各自上游许可证。
 
 本地 `vendor/miniquad` 固定 0.4.11，修改 OpenGL 纹理删除后的绑定缓存失效处理；保留 MIT 与 Apache-2.0 原许可证。
+
+### 系统无障碍适配
+
+桌面语义树使用 [AccessKit](https://github.com/AccessKit/accesskit)（MIT / Apache-2.0），Windows/macOS 适配版本由 Cargo.lock 固定。Android 使用虚拟可访问节点，iOS 使用 UIKit 语义元素和原生名称输入框。编译通过或内部截图通过不等于读屏、输入法、旋转和真机生命周期已验收。

@@ -16,6 +16,275 @@ impl App {
     pub(super) fn board(&mut self, board: &Board, last: Option<Move>, interactive: bool) {
         let (origin, cell) = self.board_rect();
         let flip = !self.settings.user_red;
+        for rank in 0..10 {
+            for file in 0..9 {
+                let square = Square::new(file, rank).unwrap();
+                let at = Self::point(origin, cell, square, flip);
+                let label = board.at(square).map_or_else(
+                    || "空位".into(),
+                    |p| format!("{}{}", p.side.label(), p.label()),
+                );
+                self.semantic(
+                    format!(
+                        "第{}列第{}行，{}{}",
+                        if flip { 9 - file } else { file + 1 },
+                        if flip { 10 - rank } else { rank + 1 },
+                        label,
+                        if self.selected == Some(square) {
+                            "，已选中"
+                        } else {
+                            ""
+                        }
+                    ),
+                    Rect::new(
+                        at.x - cell * 0.45,
+                        at.y - cell * 0.45,
+                        cell * 0.9,
+                        cell * 0.9,
+                    ),
+                    interactive,
+                );
+            }
+        }
+        self.cached_board_surface(origin, cell, flip);
+        if let Some(m) = last {
+            for s in [m.from, m.to] {
+                let p = Self::point(origin, cell, s, flip);
+                draw_rectangle(
+                    p.x - cell * 0.44,
+                    p.y - cell * 0.44,
+                    cell * 0.88,
+                    cell * 0.88,
+                    Color::new(JADE.r, JADE.g, JADE.b, 0.16),
+                );
+            }
+        }
+        let mut hints = self.hints.clone();
+        if self.screen == Screen::Review
+            && let Some(r) = &self.review
+            && r.ply > 0
+            && let Some(m) = r.bests[r.ply - 1]
+            && r.game.history[r.ply - 1].mv != m
+        {
+            hints.push(m);
+        }
+        for (i, hint) in hints.iter().enumerate() {
+            let a = Self::point(origin, cell, hint.from, flip);
+            let b = Self::point(origin, cell, hint.to, flip);
+            let color = if i == 0 {
+                Color::new(0.15, 0.5, 0.35, 0.8)
+            } else {
+                Color::new(0.1, 0.35, 0.7, 0.8)
+            };
+            draw_line(a.x, a.y, b.x, b.y, 4., color);
+            let v = (b - a).normalize_or_zero();
+            let perp = vec2(-v.y, v.x);
+            draw_triangle(b, b - v * 16. + perp * 7., b - v * 16. - perp * 7., color);
+            let mid = (a + b) / 2.;
+            draw_circle(mid.x, mid.y, 11., color);
+            self.center(if i == 0 { "优" } else { "良" }, mid.x, mid.y, 15., PAPER);
+        }
+        for (s, piece) in board.pieces() {
+            if self.screen == Screen::Game && self.animation.as_ref().is_some_and(|a| a.mv.to == s)
+            {
+                continue;
+            }
+            let p = Self::point(origin, cell, s, flip);
+            if piece.kind == crate::rules::Kind::King && board.in_check(piece.side) {
+                draw_circle(p.x, p.y, cell * 0.49, Color::new(0.8, 0.12, 0.08, 0.4));
+            }
+            self.chess_piece(p, cell, piece);
+        }
+        if self.screen == Screen::Game
+            && let Some(a) = &self.animation
+        {
+            let t = ((get_time() - a.started) / 0.26).clamp(0., 1.) as f32;
+            let smooth = t * t * (3. - 2. * t);
+            if let Some(captured) = a.captured {
+                let p = Self::point(origin, cell, a.mv.to, flip);
+                draw_circle(
+                    p.x,
+                    p.y,
+                    cell * 0.4,
+                    Color::new(PAPER.r, PAPER.g, PAPER.b, 1. - t),
+                );
+                self.center(
+                    captured.label(),
+                    p.x,
+                    p.y,
+                    cell * 0.5,
+                    Color::new(INK.r, INK.g, INK.b, 1. - t),
+                );
+            }
+            let p = Self::point(origin, cell, a.mv.from, flip)
+                .lerp(Self::point(origin, cell, a.mv.to, flip), smooth);
+            self.chess_piece(p, cell, a.piece);
+        }
+        if self.screen == Screen::Review
+            && let Some(r) = &self.review
+            && r.ply > 0
+            && let (Some(before), Some(after)) = (r.scores[r.ply - 1], r.scores[r.ply])
+        {
+            let e = &r.game.history[r.ply - 1];
+            let q = if r.bests[r.ply - 1] == Some(e.mv) {
+                "优秀"
+            } else {
+                crate::engine::assess_move(before, after, e.mover).label()
+            };
+            let p = Self::point(origin, cell, e.mv.to, flip) + vec2(cell * 0.3, -cell * 0.3);
+            draw_circle(p.x, p.y, 10., RED_INK);
+            self.center(
+                match q {
+                    "优秀" => "优",
+                    "良好" => "良",
+                    "平庸" => "平",
+                    "较差" => "差",
+                    "错招" => "错",
+                    _ => "析",
+                },
+                p.x,
+                p.y,
+                14.,
+                PAPER,
+            );
+        }
+        if let Some(s) = self.selected {
+            let p = Self::point(origin, cell, s, flip);
+            draw_circle_lines(p.x, p.y, cell * 0.46, 3., RED_INK);
+            for m in self.legal_moves(board).into_iter().filter(|m| m.from == s) {
+                let p = Self::point(origin, cell, m.to, flip);
+                if board.at(m.to).is_some() {
+                    draw_circle_lines(p.x, p.y, cell * 0.46, 2.5, JADE);
+                } else {
+                    draw_circle(p.x, p.y, cell * 0.12, JADE);
+                    draw_circle_lines(
+                        p.x,
+                        p.y,
+                        cell * 0.21,
+                        1.,
+                        Color::new(JADE.r, JADE.g, JADE.b, 0.4),
+                    );
+                }
+            }
+        }
+        if interactive && self.keyboard_active {
+            if is_key_pressed(KeyCode::B) {
+                self.board_cursor = Square::new(4, if flip { 0 } else { 9 });
+            }
+            if let Some(mut square) = self.board_cursor {
+                let mut df = 0;
+                let mut dr = 0;
+                if is_key_pressed(KeyCode::Left) {
+                    df -= 1;
+                }
+                if is_key_pressed(KeyCode::Right) {
+                    df += 1;
+                }
+                if is_key_pressed(KeyCode::Up) {
+                    dr -= 1;
+                }
+                if is_key_pressed(KeyCode::Down) {
+                    dr += 1;
+                }
+                let sign = if flip { -1 } else { 1 };
+                square = Square::new(
+                    (square.file() + df * sign).clamp(0, 8),
+                    (square.rank() + dr * sign).clamp(0, 9),
+                )
+                .unwrap();
+                self.board_cursor = Some(square);
+                let at = Self::point(origin, cell, square, flip);
+                let unit = self.width / self.viewport.w;
+                let native = vec2(self.viewport.x + at.x / unit, self.viewport.y + at.y / unit);
+                self.accessibility_focus = self
+                    .accessible
+                    .iter()
+                    .find(|e| {
+                        Rect::new(e.rect[0], e.rect[1], e.rect[2], e.rect[3]).contains(native)
+                    })
+                    .map(|e| e.id);
+                draw_rectangle_lines(
+                    at.x - cell * 0.46,
+                    at.y - cell * 0.46,
+                    cell * 0.92,
+                    cell * 0.92,
+                    2.,
+                    JADE,
+                );
+                if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
+                    self.click = Some(at);
+                }
+            }
+        }
+        if interactive
+            && let Some(p) = self.click
+            && let Some(s) =
+                crate::interaction::board_hit([p.x, p.y], [origin.x, origin.y], cell, flip)
+        {
+            self.click = None;
+            if board.at(s).is_some_and(|p| p.side == self.player()) {
+                self.selected = if self.selected == Some(s) {
+                    None
+                } else {
+                    Some(s)
+                };
+                self.hints.clear();
+            } else if let Some(from) = self.selected {
+                let m = Move { from, to: s };
+                if board.is_legal(m) {
+                    self.play(m);
+                }
+            }
+        }
+    }
+    fn cached_board_surface(&self, origin: Vec2, cell: f32, flip: bool) {
+        let width = cell * 10.;
+        let height = cell * 11.4 + 8.;
+        let density = self.scene.scale().y * self.viewport.h / self.height;
+        let pixels = (width * density).ceil().clamp(32., 4096.) as u16;
+        let cached = self
+            .board_surface_cache
+            .borrow()
+            .as_ref()
+            .filter(|(flipped, size, _)| *flipped == flip && *size == pixels)
+            .map(|(_, _, target)| target.clone());
+        let target = cached.unwrap_or_else(|| {
+            let target = render_target_ex(
+                pixels.into(),
+                (f32::from(pixels) * height / width).ceil() as u32,
+                RenderTargetParams {
+                    sample_count: 1,
+                    depth: false,
+                },
+            );
+            target.texture.set_filter(FilterMode::Linear);
+            let mut camera = Camera2D::from_display_rect(Rect::new(0., 0., width, height));
+            camera.render_target = Some(target.clone());
+            set_camera(&camera);
+            self.scene.use_scene_material();
+            clear_background(Color::new(0., 0., 0., 0.));
+            self.font.set_pixel_density(f32::from(pixels) / width);
+            self.draw_board_surface(vec2(cell, cell * 1.2), cell, flip);
+            self.camera();
+            unsafe {
+                macroquad::window::get_internal_gl().flush();
+            }
+            *self.board_surface_cache.borrow_mut() = Some((flip, pixels, target.clone()));
+            target
+        });
+        draw_texture_ex(
+            &target.texture,
+            origin.x - cell,
+            origin.y - cell * 1.2,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(width, height)),
+                flip_y: true,
+                ..Default::default()
+            },
+        );
+    }
+    fn draw_board_surface(&self, origin: Vec2, cell: f32, flip: bool) {
         let frame = Rect::new(
             origin.x - cell,
             origin.y - cell * 1.2,
@@ -153,189 +422,59 @@ impl App {
                 if flip { MUTED } else { RED_INK },
             );
         }
-        if let Some(m) = last {
-            for s in [m.from, m.to] {
-                let p = Self::point(origin, cell, s, flip);
-                draw_rectangle(
-                    p.x - cell * 0.44,
-                    p.y - cell * 0.44,
-                    cell * 0.88,
-                    cell * 0.88,
-                    Color::new(JADE.r, JADE.g, JADE.b, 0.16),
-                );
-            }
-        }
-        let mut hints = self.hints.clone();
-        if self.screen == Screen::Review
-            && let Some(r) = &self.review
-            && r.ply > 0
-            && let Some(m) = r.bests[r.ply - 1]
-            && r.game.history[r.ply - 1].mv != m
-        {
-            hints.push(m);
-        }
-        for (i, hint) in hints.iter().enumerate() {
-            let a = Self::point(origin, cell, hint.from, flip);
-            let b = Self::point(origin, cell, hint.to, flip);
-            let color = if i == 0 {
-                Color::new(0.15, 0.5, 0.35, 0.8)
-            } else {
-                Color::new(0.1, 0.35, 0.7, 0.8)
-            };
-            draw_line(a.x, a.y, b.x, b.y, 4., color);
-            let v = (b - a).normalize_or_zero();
-            let perp = vec2(-v.y, v.x);
-            draw_triangle(b, b - v * 16. + perp * 7., b - v * 16. - perp * 7., color);
-            let mid = (a + b) / 2.;
-            draw_circle(mid.x, mid.y, 11., color);
-            self.center(if i == 0 { "优" } else { "良" }, mid.x, mid.y, 15., PAPER);
-        }
-        for (s, piece) in board.pieces() {
-            if self.screen == Screen::Game && self.animation.as_ref().is_some_and(|a| a.mv.to == s)
-            {
-                continue;
-            }
-            let p = Self::point(origin, cell, s, flip);
-            if piece.kind == crate::rules::Kind::King && board.in_check(piece.side) {
-                draw_circle(p.x, p.y, cell * 0.49, Color::new(0.8, 0.12, 0.08, 0.4));
-            }
-            self.chess_piece(p, cell, piece);
-        }
-        if self.screen == Screen::Game
-            && let Some(a) = &self.animation
-        {
-            let t = ((get_time() - a.started) / 0.26).clamp(0., 1.) as f32;
-            let smooth = t * t * (3. - 2. * t);
-            if let Some(captured) = a.captured {
-                let p = Self::point(origin, cell, a.mv.to, flip);
-                draw_circle(
-                    p.x,
-                    p.y,
-                    cell * 0.4,
-                    Color::new(PAPER.r, PAPER.g, PAPER.b, 1. - t),
-                );
-                self.center(
-                    captured.label(),
-                    p.x,
-                    p.y,
-                    cell * 0.5,
-                    Color::new(INK.r, INK.g, INK.b, 1. - t),
-                );
-            }
-            let p = Self::point(origin, cell, a.mv.from, flip)
-                .lerp(Self::point(origin, cell, a.mv.to, flip), smooth);
-            self.chess_piece(p, cell, a.piece);
-        }
-        if self.screen == Screen::Review
-            && let Some(r) = &self.review
-            && r.ply > 0
-            && let (Some(before), Some(after)) = (r.scores[r.ply - 1], r.scores[r.ply])
-        {
-            let e = &r.game.history[r.ply - 1];
-            let q = if r.bests[r.ply - 1] == Some(e.mv) {
-                "优秀"
-            } else {
-                score_loss(before, after, e.mover)
-                    .map_or("杀棋变化", |loss| move_quality(loss, false))
-            };
-            let p = Self::point(origin, cell, e.mv.to, flip) + vec2(cell * 0.3, -cell * 0.3);
-            draw_circle(p.x, p.y, 10., RED_INK);
-            self.center(
-                match q {
-                    "优秀" => "优",
-                    "良好" => "良",
-                    "平庸" => "平",
-                    "较差" => "差",
-                    "错招" => "错",
-                    _ => "析",
-                },
-                p.x,
-                p.y,
-                14.,
-                PAPER,
-            );
-        }
-        if let Some(s) = self.selected {
-            let p = Self::point(origin, cell, s, flip);
-            draw_circle_lines(p.x, p.y, cell * 0.46, 3., RED_INK);
-            for m in self.legal_moves(board).into_iter().filter(|m| m.from == s) {
-                let p = Self::point(origin, cell, m.to, flip);
-                if board.at(m.to).is_some() {
-                    draw_circle_lines(p.x, p.y, cell * 0.46, 2.5, JADE);
-                } else {
-                    draw_circle(p.x, p.y, cell * 0.12, JADE);
-                    draw_circle_lines(
-                        p.x,
-                        p.y,
-                        cell * 0.21,
-                        1.,
-                        Color::new(JADE.r, JADE.g, JADE.b, 0.4),
-                    );
-                }
-            }
-        }
-        if interactive && self.keyboard_active {
-            if is_key_pressed(KeyCode::B) {
-                self.board_cursor = Square::new(4, if flip { 0 } else { 9 });
-            }
-            if let Some(mut square) = self.board_cursor {
-                let mut df = 0;
-                let mut dr = 0;
-                if is_key_pressed(KeyCode::Left) {
-                    df -= 1;
-                }
-                if is_key_pressed(KeyCode::Right) {
-                    df += 1;
-                }
-                if is_key_pressed(KeyCode::Up) {
-                    dr -= 1;
-                }
-                if is_key_pressed(KeyCode::Down) {
-                    dr += 1;
-                }
-                let sign = if flip { -1 } else { 1 };
-                square = Square::new(
-                    (square.file() + df * sign).clamp(0, 8),
-                    (square.rank() + dr * sign).clamp(0, 9),
-                )
-                .unwrap();
-                self.board_cursor = Some(square);
-                let at = Self::point(origin, cell, square, flip);
-                draw_rectangle_lines(
-                    at.x - cell * 0.46,
-                    at.y - cell * 0.46,
-                    cell * 0.92,
-                    cell * 0.92,
-                    2.,
-                    JADE,
-                );
-                if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
-                    self.click = Some(at);
-                }
-            }
-        }
-        if interactive
-            && let Some(p) = self.click
-            && let Some(s) =
-                crate::interaction::board_hit([p.x, p.y], [origin.x, origin.y], cell, flip)
-        {
-            self.click = None;
-            if board.at(s).is_some_and(|p| p.side == self.player()) {
-                self.selected = if self.selected == Some(s) {
-                    None
-                } else {
-                    Some(s)
-                };
-                self.hints.clear();
-            } else if let Some(from) = self.selected {
-                let m = Move { from, to: s };
-                if board.is_legal(m) {
-                    self.play(m);
-                }
-            }
-        }
     }
     fn chess_piece(&self, p: Vec2, cell: f32, piece: Piece) {
+        let side = cell * 1.3;
+        let pixels = (side * self.scene.scale().y * self.viewport.h / self.height)
+            .ceil()
+            .clamp(16., 512.) as u16;
+        let cached = self
+            .piece_cache
+            .borrow()
+            .iter()
+            .find(|(kind, size, _)| *kind == piece && *size == pixels)
+            .map(|(_, _, target)| target.clone());
+        let target = cached.unwrap_or_else(|| {
+            let target = render_target_ex(
+                pixels.into(),
+                pixels.into(),
+                RenderTargetParams {
+                    sample_count: 1,
+                    depth: false,
+                },
+            );
+            target.texture.set_filter(FilterMode::Linear);
+            let mut camera = Camera2D::from_display_rect(Rect::new(0., 0., side, side));
+            camera.render_target = Some(target.clone());
+            set_camera(&camera);
+            self.scene.use_scene_material();
+            clear_background(Color::new(0., 0., 0., 0.));
+            self.font.set_pixel_density(f32::from(pixels) / side);
+            self.chess_piece_uncached(vec2(side / 2., side / 2.), cell, piece);
+            self.camera();
+            let mut cache = self.piece_cache.borrow_mut();
+            if cache.len() >= 28 {
+                unsafe {
+                    macroquad::window::get_internal_gl().flush();
+                }
+                cache.pop_front();
+            }
+            cache.push_back((piece, pixels, target.clone()));
+            target
+        });
+        draw_texture_ex(
+            &target.texture,
+            p.x - side / 2.,
+            p.y - side / 2.,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(side, side)),
+                flip_y: true,
+                ..Default::default()
+            },
+        );
+    }
+    fn chess_piece_uncached(&self, p: Vec2, cell: f32, piece: Piece) {
         let radius = cell * 0.42;
         let color = if piece.side == Side::Red {
             RED_INK

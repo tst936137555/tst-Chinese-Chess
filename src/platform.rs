@@ -13,6 +13,36 @@ pub fn view_origin() -> [i32; 2] {
     std::array::from_fn(|i| VIEW_ORIGIN[i].load(std::sync::atomic::Ordering::Acquire))
 }
 #[cfg(target_os = "android")]
+pub fn publish_accessibility(json: &str) {
+    use jni::objects::{JObject, JValue};
+    let Some(vm) = JVM.get() else {
+        return;
+    };
+    let Ok(mut env) = vm.attach_current_thread() else {
+        return;
+    };
+    let activity =
+        unsafe { JObject::from_raw(macroquad::miniquad::native::android::ACTIVITY.cast()) };
+    if let Ok(text) = env.new_string(json) {
+        let _ = env.call_method(
+            &activity,
+            "xiangqiAccessibility",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&text)],
+        );
+        let _ = env.delete_local_ref(text);
+    }
+}
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_quad_1native_QuadNative_xiangqiAccessibilityActivate(
+    _: jni::JNIEnv<'_>,
+    _: jni::objects::JClass<'_>,
+    id: i32,
+) {
+    crate::accessibility::activate(id as u32);
+}
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_quad_1native_QuadNative_xiangqiViewOrigin(
     _: jni::JNIEnv<'_>,
@@ -177,6 +207,77 @@ pub fn set_suspended(paused: bool) {
 pub fn take_back() -> bool {
     BACK.swap(false, std::sync::atomic::Ordering::AcqRel)
 }
+
+/// Synchronize a real mobile text editor without converting composition into backspaces.
+pub fn name_editor(text: &str, start: usize, end: usize, rect: [f32; 4], visible: bool) {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    {
+        type State = (String, usize, usize, [u32; 4], bool);
+        static PREVIOUS: std::sync::Mutex<Option<State>> = std::sync::Mutex::new(None);
+        let next = (text.to_owned(), start, end, rect.map(f32::to_bits), visible);
+        if let Ok(mut previous) = PREVIOUS.lock() {
+            if previous.as_ref() == Some(&next) {
+                return;
+            }
+            *previous = Some(next);
+        }
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let _ = (text, start, end, rect, visible);
+    #[cfg(target_os = "ios")]
+    {
+        unsafe extern "C" {
+            fn xq_name_editor(json: *const std::ffi::c_char);
+        }
+        let json =
+            serde_json::json!({"text":text,"start":start,"end":end,"rect":rect,"visible":visible})
+                .to_string();
+        if let Ok(json) = std::ffi::CString::new(json) {
+            unsafe {
+                xq_name_editor(json.as_ptr());
+            }
+        }
+    }
+    #[cfg(target_os = "android")]
+    {
+        use jni::objects::{JObject, JValue};
+        let Some(vm) = JVM.get() else {
+            return;
+        };
+        let Ok(mut env) = vm.attach_current_thread() else {
+            return;
+        };
+        let activity =
+            unsafe { JObject::from_raw(macroquad::miniquad::native::android::ACTIVITY.cast()) };
+        if let Ok(value) = env.new_string(text) {
+            let _ = env.call_method(
+                &activity,
+                "xiangqiNameState",
+                "(Ljava/lang/String;IIZ)V",
+                &[
+                    JValue::Object(&value),
+                    JValue::Int(start as i32),
+                    JValue::Int(end as i32),
+                    JValue::Bool(u8::from(visible)),
+                ],
+            );
+            let _ = env.delete_local_ref(value);
+        }
+    }
+}
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_quad_1native_QuadNative_xiangqiNameEdit(
+    mut env: jni::JNIEnv<'_>,
+    _: jni::objects::JClass<'_>,
+    text: jni::objects::JString<'_>,
+    start: i32,
+    end: i32,
+) {
+    if let Ok(text) = env.get_string(&text) {
+        crate::text_input::native_edit(text.into(), start.max(0) as usize, end.max(0) as usize);
+    }
+}
 #[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub extern "C" fn xq_set_suspended(paused: bool) {
@@ -206,19 +307,121 @@ pub fn install_nnue(
     bytes: &[u8],
     expected: &str,
 ) -> Result<(), String> {
+    install_nnue_reader(destination, &mut std::io::Cursor::new(bytes), expected)
+}
+
+pub fn install_nnue_reader(
+    destination: &std::path::Path,
+    reader: &mut impl std::io::Read,
+    expected: &str,
+) -> Result<(), String> {
+    install_nnue_chunks(destination, expected, |chunk| {
+        reader.read(chunk).map_err(|e| e.to_string())
+    })
+}
+
+fn install_nnue_chunks(
+    destination: &std::path::Path,
+    expected: &str,
+    mut read: impl FnMut(&mut [u8]) -> Result<usize, String>,
+) -> Result<(), String> {
     use sha2::{Digest, Sha256};
     use std::io::Write;
-    if format!("{:x}", Sha256::digest(bytes)) != expected.to_ascii_lowercase() {
-        return Err("包内 NNUE 校验失败".into());
-    }
     let parent = destination.parent().ok_or("权重目录无效")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    tmp.write_all(bytes)
-        .and_then(|()| tmp.as_file().sync_all())
-        .map_err(|e| e.to_string())?;
+    let mut hash = Sha256::new();
+    let mut chunk = [0u8; 65536];
+    loop {
+        let n = read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        if n > chunk.len() {
+            return Err("权重读取长度无效".into());
+        }
+        hash.update(&chunk[..n]);
+        tmp.write_all(&chunk[..n]).map_err(|e| e.to_string())?;
+    }
+    if format!("{:x}", hash.finalize()) != expected.to_ascii_lowercase() {
+        return Err("包内 NNUE 校验失败".into());
+    }
+    tmp.as_file().sync_all().map_err(|e| e.to_string())?;
     tmp.persist(destination).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn prepare_nnue(destination: &std::path::Path, expected: &str) -> Result<(), String> {
+    if nnue_matches(destination, expected) {
+        return Ok(());
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut file = std::fs::File::open(
+            exe.parent()
+                .ok_or("应用资源目录无效")?
+                .join("engine/pikafish.nnue"),
+        )
+        .map_err(|e| e.to_string())?;
+        install_nnue_reader(destination, &mut file, expected)
+    }
+    #[cfg(target_os = "android")]
+    {
+        use jni::objects::{JObject, JValue};
+        let vm = JVM.get().ok_or("Android JVM 尚未初始化")?;
+        let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+        let activity =
+            unsafe { JObject::from_raw(macroquad::miniquad::native::android::ACTIVITY.cast()) };
+        let assets = env
+            .call_method(
+                &activity,
+                "getAssets",
+                "()Landroid/content/res/AssetManager;",
+                &[],
+            )
+            .and_then(|v| v.l())
+            .map_err(|e| e.to_string())?;
+        let name = env
+            .new_string("engine/pikafish.nnue")
+            .map_err(|e| e.to_string())?;
+        let stream = env
+            .call_method(
+                &assets,
+                "open",
+                "(Ljava/lang/String;)Ljava/io/InputStream;",
+                &[JValue::Object(&name)],
+            )
+            .and_then(|v| v.l())
+            .map_err(|e| e.to_string())?;
+        let buffer = env.new_byte_array(65536).map_err(|e| e.to_string())?;
+        let mut signed = vec![0i8; 65536];
+        let result = install_nnue_chunks(destination, expected, |chunk| {
+            let n = env
+                .call_method(&stream, "read", "([B)I", &[JValue::Object(&buffer)])
+                .and_then(|v| v.i())
+                .map_err(|e| e.to_string())?;
+            if n < 0 {
+                return Ok(0);
+            }
+            if n == 0 {
+                return Err("权重资源读取没有进展".into());
+            }
+            let n = n as usize;
+            env.get_byte_array_region(&buffer, 0, &mut signed[..n])
+                .map_err(|e| e.to_string())?;
+            for (a, b) in chunk.iter_mut().zip(&signed[..n]) {
+                *a = *b as u8;
+            }
+            Ok(n)
+        });
+        let _ = env.call_method(&stream, "close", "()V", &[]);
+        for object in [JObject::from(buffer), JObject::from(name), stream, assets] {
+            let _ = env.delete_local_ref(object);
+        }
+        result
+    }
 }
 pub fn nnue_matches(path: &std::path::Path, expected: &str) -> bool {
     use sha2::{Digest, Sha256};
@@ -246,7 +449,7 @@ pub fn smoke_output() -> Option<std::path::PathBuf> {
     }
     #[cfg(not(target_os = "android"))]
     {
-        None
+        std::env::var_os("XIANGQI_SMOKE_OUTPUT").map(PathBuf::from)
     }
 }
 #[cfg(target_os = "android")]

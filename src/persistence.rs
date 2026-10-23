@@ -66,6 +66,7 @@ impl Command {
 }
 pub enum Response {
     Data(Box<Data>),
+    Settings(Settings),
     Cache {
         key: String,
         review: Option<CachedReview>,
@@ -157,18 +158,17 @@ impl Worker {
                                 e.message
                             })?
                         }
-                        Command::Settings(s) => store.update(|d| {
-                            d.settings = s.clone();
-                            Ok(())
-                        })?,
+                        Command::Settings(s) => {
+                            return store.save_settings(s.clone()).map(Response::Settings);
+                        }
                         Command::Favorite(id, op) => store.favorite_once(id, op)?,
                         Command::Remove(id) => store.remove_by_id(id)?,
                         Command::Clear => store.update(|d| {
-                            d.archives.clear();
+                            d.clear_archives();
                             Ok(())
                         })?,
                         Command::ClearDrafts => store.update(|d| {
-                            d.drafts.clear();
+                            d.clear_drafts();
                             Ok(())
                         })?,
                         Command::Rename(id, title) => store.update(|d| {

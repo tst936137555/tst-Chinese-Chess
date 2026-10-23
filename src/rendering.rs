@@ -110,6 +110,65 @@ pub fn render_size(width: f32, height: f32, dpi: f32, max_texture: u32) -> (u32,
     (round(w), round(h))
 }
 
+/// Sustained pressure changes quality; short hitches and idle frame pacing do not.
+#[derive(Default)]
+pub struct RenderBudget {
+    tier: u8,
+    slow_seconds: f32,
+    fast_seconds: f32,
+}
+impl RenderBudget {
+    pub fn observe(&mut self, frame_ms: f32, dt: f32) {
+        if !frame_ms.is_finite() || !dt.is_finite() {
+            return;
+        }
+        let dt = dt.clamp(0., 0.1);
+        if frame_ms > 23. {
+            self.slow_seconds += dt;
+            self.fast_seconds = 0.;
+        } else if frame_ms < 15. {
+            self.fast_seconds += dt;
+            self.slow_seconds = 0.;
+        } else {
+            self.slow_seconds = 0.;
+            self.fast_seconds = 0.;
+        }
+        if self.slow_seconds >= 2. && self.tier < 2 {
+            self.tier += 1;
+            self.slow_seconds = 0.;
+        }
+        if self.fast_seconds >= 10. && self.tier > 0 {
+            self.tier -= 1;
+            self.fast_seconds = 0.;
+        }
+    }
+    pub fn size(
+        &self,
+        width: f32,
+        height: f32,
+        dpi: f32,
+        max_texture: u32,
+        mobile: bool,
+    ) -> (u32, u32) {
+        let (w, h) = render_size(width, height, dpi, max_texture);
+        let native = (width.max(1.) * height.max(1.) * dpi.max(0.5).powi(2)).max(1.);
+        let mobile_cap = if mobile {
+            (native * 2.25 / (w as f32 * h as f32)).sqrt().min(1.)
+        } else {
+            1.
+        };
+        // Leave room for the previous target during resize, board/piece caches,
+        // the window swapchain and font atlases instead of spending the budget on one FBO.
+        let color_pixels = if mobile { 4_194_304. } else { 8_388_608. };
+        let memory_cap = (color_pixels / (w as f32 * h as f32)).sqrt().min(1.);
+        let scale = [1., 0.82, 0.67][usize::from(self.tier)] * mobile_cap.min(memory_cap);
+        (
+            (w as f32 * scale).round().max(1.) as u32,
+            (h as f32 * scale).round().max(1.) as u32,
+        )
+    }
+}
+
 pub struct AdaptiveScene {
     pub target: RenderTarget,
     max_texture: u32,
@@ -118,6 +177,7 @@ pub struct AdaptiveScene {
     scene_material: Option<Material>,
     present_material: Option<Material>,
     resize_candidate: Option<((u32, u32), std::time::Instant)>,
+    pub budget: RenderBudget,
 }
 impl Default for AdaptiveScene {
     fn default() -> Self {
@@ -138,11 +198,13 @@ impl AdaptiveScene {
             }
             (max.max(1) as u32, info.features.resolve_attachments)
         };
-        let size = render_size(
+        let budget = RenderBudget::default();
+        let size = budget.size(
             screen_width(),
             screen_height(),
             screen_dpi_scale(),
             max_texture,
+            cfg!(any(target_os = "android", target_os = "ios")),
         );
         let target = Self::allocate(size, resolve);
         let (scene_material, present_material) = quality_materials();
@@ -154,6 +216,7 @@ impl AdaptiveScene {
             scene_material,
             present_material,
             resize_candidate: None,
+            budget,
         }
     }
     fn allocate((w, h): (u32, u32), _resolve: bool) -> RenderTarget {
@@ -173,11 +236,12 @@ impl AdaptiveScene {
     }
     pub fn resize(&mut self) {
         let size = self.smoke_size.unwrap_or_else(|| {
-            render_size(
+            self.budget.size(
                 screen_width(),
                 screen_height(),
                 screen_dpi_scale(),
                 self.max_texture,
+                cfg!(any(target_os = "android", target_os = "ios")),
             )
         });
         if (

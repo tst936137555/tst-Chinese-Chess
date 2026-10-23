@@ -499,7 +499,7 @@ pub fn define_app_delegate() -> *const Class {
         _: ObjcId,
     ) -> BOOL {
         unsafe {
-            let (f, conf) = RUN_ARGS.take().unwrap();
+            let (f, conf) = std::ptr::replace(std::ptr::addr_of_mut!(RUN_ARGS), None).unwrap();
 
             let main_screen: ObjcId = msg_send![class!(UIScreen), mainScreen];
             let screen_rect: NSRect = msg_send![main_screen, bounds];

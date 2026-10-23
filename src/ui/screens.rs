@@ -255,19 +255,47 @@ impl App {
         draw_circle(x + 19., 120., 4., state_color);
         self.fit_text(state, x + 32., 127., w - 130., 21., state_color);
         let repeats = self.game.repetition_count();
-        let detail = if playing && repeats >= 2 {
+        let save_status = self.saves.status(&self.game.id);
+        let detail = if save_status == crate::session::SaveStatus::Failed {
+            "保存失败 · 当前着法仍保留在内存中".into()
+        } else if playing && repeats >= 2 {
             "重复局面预警：再次重复将判和或长将负".into()
         } else if playing && board.halfmove >= 100 {
             "自然限着预警：接近 60 回合无吃子".into()
         } else {
             format!(
-                "你执{} · 皮卡鱼 / {}",
+                "你执{} · {} · {}",
                 if self.settings.user_red { "红" } else { "黑" },
-                LEVELS[self.settings.level].name
+                LEVELS[self.settings.level].name,
+                if save_status == crate::session::SaveStatus::Pending {
+                    "正在保存"
+                } else {
+                    "已保存"
+                }
             )
         };
-        self.fit_text(&detail, x + 16., 158., w - 32., 15., MUTED);
-        if self.engine_failed {
+        self.fit_text(
+            &detail,
+            x + 16.,
+            158.,
+            w - 32.,
+            15.,
+            if save_status == crate::session::SaveStatus::Failed {
+                RED_INK
+            } else {
+                MUTED
+            },
+        );
+        if save_status == crate::session::SaveStatus::Failed {
+            if self.button(
+                "处理保存",
+                Rect::new(x + w - 95., 104., 82., 40.),
+                false,
+                true,
+            ) {
+                self.open_modal(Modal::SaveFailed);
+            }
+        } else if self.engine_failed {
             if self.button("重试", Rect::new(x + w - 82., 104., 68., 40.), false, true) {
                 self.engine_failed = false;
                 self.notice.clear();
@@ -559,6 +587,13 @@ impl App {
             } else {
                 r.title.clone()
             };
+            let top = y.max(viewport.y);
+            let bottom = (y + 112.).min(viewport.bottom());
+            self.semantic(
+                format!("复盘棋谱，{}，{}", title, r.result.label()),
+                Rect::new(x, top, w - 150., (bottom - top).max(1.)),
+                true,
+            );
             self.fit_text(&title, x + 16., y + 29., w - 110., 19., INK);
             self.fit_text(
                 &if r.title.is_empty() {
@@ -758,12 +793,11 @@ impl App {
             } else {
                 r.scores[ply - 1]
                     .zip(r.scores[ply])
-                    .and_then(|(a, b)| score_loss(a, b, e.mover))
-                    .map(|loss| move_quality(loss, false))
+                    .map(|(a, b)| crate::engine::assess_move(a, b, e.mover).label())
             };
             detail = quality.map_or_else(
                 || "着法评价将在分析后显示".into(),
-                |q| format!("本步评价：{q}"),
+                |q| format!("按当前分析：{q}"),
             );
             if let Some(m) = r.bests[ply - 1] {
                 if m == e.mv {
@@ -925,6 +959,15 @@ impl App {
             chart.w - 28.,
             (chart.h - 46.).max(20.),
         );
+        let r = self.review.as_mut().unwrap();
+        let columns = plot.w.ceil().max(1.) as usize;
+        if r.chart_cache.0 != r.score_version || r.chart_cache.1 != columns {
+            r.chart_cache = (
+                r.score_version,
+                columns,
+                crate::review::chart_samples(&r.scores, columns),
+            );
+        }
         let r = self.review.as_ref().unwrap();
         let n = r.game.history.len();
         let middle = plot.y + plot.h / 2.;
@@ -945,10 +988,10 @@ impl App {
                 middle - (cp as f32 / 600.).tanh() * plot.h * 0.44,
             )
         };
-        for i in 1..r.scores.len() {
-            if let (Some(a), Some(b)) = (r.scores[i - 1], r.scores[i]) {
-                let a = point(i - 1, a.value());
-                let b = point(i, b.value());
+        for pair in r.chart_cache.2.windows(2) {
+            if let (Some(a), Some(b)) = (pair[0].1, pair[1].1) {
+                let a = point(pair[0].0, a.value());
+                let b = point(pair[1].0, b.value());
                 draw_triangle(
                     vec2(a.x, middle),
                     a,
