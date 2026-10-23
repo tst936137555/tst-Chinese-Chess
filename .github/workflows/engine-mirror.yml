@@ -62,8 +62,15 @@ jobs:
             # $1=上游URL $2=SHA256(可空) $3=镜像资产名（= manifest mirrorUrl 的 basename）
             local url="$1" sha="$2" name="$3"
             if gh release view "$mirror_tag" --json assets -q '.assets[].name' | grep -Fxq "$name"; then
-              echo "[跳过] $name（镜像已存在）"
-              return 0
+              local existing_dir
+              existing_dir=$(mktemp -d)
+              if gh release download "$mirror_tag" --pattern "$name" --dir "$existing_dir" && \
+                 [ -n "$sha" ] && [ "$sha" != "null" ] && \
+                 echo "$sha  $existing_dir/$name" | sha256sum -c -; then
+                echo "[跳过] $name（镜像摘要匹配）"
+                return 0
+              fi
+              echo "[修复] $name（镜像无法验证或摘要不符）"
             fi
             echo "[转存] $url → $name"
             # --retry-all-errors：runner 偶发连接重置（curl exit 35）不在
@@ -95,6 +102,7 @@ jobs:
 
       # 收尾校验：manifest 中每个 mirrorUrl 都应能在镜像 release 中命中
       - name: Verify manifest mirror URLs match released assets
+        if: github.repository == 'tst936137555/tst-Chinese-Chess'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

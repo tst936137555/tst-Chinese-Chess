@@ -21,15 +21,10 @@
         "sha256": "0D57D64C212E78F96CBA9E5E4F140D8872F8FAA42EA631A27AB6C5DB08509DA3",
         "dest": "pikafish.exe"
       },
-      "android-arm64": {
-        "member": "Pikafish-Android-arm64-universal",
-        "sha256": "6C06B8752E10C1ED605FA836D2C9BBF885E9C402B216023040DDF4586F4320B1",
-        "dest": "android/app/src/main/jniLibs/arm64-v8a/libpikafish.so"
-      },
       "macos": {
         "member": "Pikafish-MacOS-universal",
         "sha256": "3A11F9034EF723BB4068E4CF88A79A12D99507474BA118FA916EC2CECD4F4ABE",
-        "dest": "macos/EngineBin/pikafish",
+        "dest": "assets/engine/pikafish",
         "executable": true
       },
       "license-gpl": {
@@ -40,6 +35,7 @@
         "member": "NNUE-License.md",
         "dest": "assets/licenses/NNUE-License.md"
       }
-    }
+    },
+    "commit": "4c17cee11f888ae1d48a9494f2e2239f019f0a1f"
   }
 }

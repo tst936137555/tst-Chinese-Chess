@@ -1,0 +1,380 @@
+use super::*;
+impl App {
+    pub(super) fn board_rect(&self) -> (Vec2, f32) {
+        let (x, y, cell) =
+            super::layout::board_geometry(self.width, self.height, self.screen == Screen::Review);
+        (vec2(x, y), cell)
+    }
+    pub(super) fn point(origin: Vec2, cell: f32, s: Square, flip: bool) -> Vec2 {
+        let (f, r) = if flip {
+            (8 - s.file(), 9 - s.rank())
+        } else {
+            (s.file(), s.rank())
+        };
+        origin + vec2(f as f32 * cell, r as f32 * cell)
+    }
+    pub(super) fn board(&mut self, board: &Board, last: Option<Move>, interactive: bool) {
+        let (origin, cell) = self.board_rect();
+        let flip = !self.settings.user_red;
+        let frame = Rect::new(
+            origin.x - cell,
+            origin.y - cell * 1.2,
+            cell * 10.,
+            cell * 11.4,
+        );
+        self.panel(
+            Rect::new(frame.x, frame.y + 5., frame.w, frame.h),
+            Color::new(0.22, 0.12, 0.05, 0.18),
+        );
+        self.panel(frame, Color::new(0.38, 0.31, 0.22, 1.));
+        self.wood_surface(Rect::new(
+            frame.x + 5.,
+            frame.y + 5.,
+            frame.w - 10.,
+            frame.h - 10.,
+        ));
+        for x in [frame.x + 11., frame.x + frame.w - 11.] {
+            for y in [frame.y + 11., frame.y + frame.h - 11.] {
+                draw_circle(x, y, 2., GOLD);
+            }
+        }
+        draw_rectangle_lines(
+            origin.x - cell * 0.5,
+            origin.y - cell * 0.5,
+            cell * 9.,
+            cell * 10.,
+            2.,
+            GOLD,
+        );
+        draw_rectangle_lines(
+            origin.x - cell * 0.44,
+            origin.y - cell * 0.44,
+            cell * 8.88,
+            cell * 9.88,
+            1.,
+            MUTED,
+        );
+        for r in 0..10 {
+            let y = origin.y + r as f32 * cell;
+            draw_line(origin.x, y, origin.x + cell * 8., y, 1.2, INK);
+        }
+        for f in 0..9 {
+            let x = origin.x + f as f32 * cell;
+            if f == 0 || f == 8 {
+                draw_line(x, origin.y, x, origin.y + 9. * cell, 1.2, INK);
+            } else {
+                draw_line(x, origin.y, x, origin.y + 4. * cell, 1.2, INK);
+                draw_line(x, origin.y + 5. * cell, x, origin.y + 9. * cell, 1.2, INK);
+            }
+        }
+        for r in [0., 7.] {
+            draw_line(
+                origin.x + 3. * cell,
+                origin.y + r * cell,
+                origin.x + 5. * cell,
+                origin.y + (r + 2.) * cell,
+                1.2,
+                INK,
+            );
+            draw_line(
+                origin.x + 5. * cell,
+                origin.y + r * cell,
+                origin.x + 3. * cell,
+                origin.y + (r + 2.) * cell,
+                1.2,
+                INK,
+            );
+        }
+        // Traditional cannon and pawn registration marks, scaled with the board.
+        for (file, rank) in [
+            (1, 2),
+            (7, 2),
+            (1, 7),
+            (7, 7),
+            (0, 3),
+            (2, 3),
+            (4, 3),
+            (6, 3),
+            (8, 3),
+            (0, 6),
+            (2, 6),
+            (4, 6),
+            (6, 6),
+            (8, 6),
+        ] {
+            let p = origin + vec2(file as f32 * cell, rank as f32 * cell);
+            for sx in [-1., 1.] {
+                if (file == 0 && sx < 0.) || (file == 8 && sx > 0.) {
+                    continue;
+                }
+                for sy in [-1., 1.] {
+                    let a = p + vec2(sx * cell * 0.10, sy * cell * 0.10);
+                    draw_line(a.x, a.y, a.x + sx * cell * 0.13, a.y, 1., MUTED);
+                    draw_line(a.x, a.y, a.x, a.y + sy * cell * 0.13, 1., MUTED);
+                }
+            }
+        }
+        self.center(
+            "楚 河",
+            origin.x + 2. * cell,
+            origin.y + 4.5 * cell,
+            cell * 0.52,
+            MUTED,
+        );
+        self.center(
+            "汉 界",
+            origin.x + 6. * cell,
+            origin.y + 4.5 * cell,
+            cell * 0.52,
+            MUTED,
+        );
+        for f in 0..9 {
+            const CN: [&str; 9] = ["一", "二", "三", "四", "五", "六", "七", "八", "九"];
+            self.center(
+                &if flip {
+                    CN[f].into()
+                } else {
+                    (f + 1).to_string()
+                },
+                origin.x + f as f32 * cell,
+                origin.y - cell * 0.78,
+                (cell * 0.42).min(15.),
+                if flip { RED_INK } else { MUTED },
+            );
+            self.center(
+                &if flip {
+                    (9 - f).to_string()
+                } else {
+                    CN[8 - f].into()
+                },
+                origin.x + f as f32 * cell,
+                origin.y + 9.65 * cell,
+                (cell * 0.44).min(16.),
+                if flip { MUTED } else { RED_INK },
+            );
+        }
+        if let Some(m) = last {
+            for s in [m.from, m.to] {
+                let p = Self::point(origin, cell, s, flip);
+                draw_rectangle(
+                    p.x - cell * 0.44,
+                    p.y - cell * 0.44,
+                    cell * 0.88,
+                    cell * 0.88,
+                    Color::new(JADE.r, JADE.g, JADE.b, 0.16),
+                );
+            }
+        }
+        let mut hints = self.hints.clone();
+        if self.screen == Screen::Review
+            && let Some(r) = &self.review
+            && r.ply > 0
+            && let Some(m) = r.bests[r.ply - 1]
+            && r.game.history[r.ply - 1].mv != m
+        {
+            hints.push(m);
+        }
+        for (i, hint) in hints.iter().enumerate() {
+            let a = Self::point(origin, cell, hint.from, flip);
+            let b = Self::point(origin, cell, hint.to, flip);
+            let color = if i == 0 {
+                Color::new(0.15, 0.5, 0.35, 0.8)
+            } else {
+                Color::new(0.1, 0.35, 0.7, 0.8)
+            };
+            draw_line(a.x, a.y, b.x, b.y, 4., color);
+            let v = (b - a).normalize_or_zero();
+            let perp = vec2(-v.y, v.x);
+            draw_triangle(b, b - v * 16. + perp * 7., b - v * 16. - perp * 7., color);
+            let mid = (a + b) / 2.;
+            draw_circle(mid.x, mid.y, 11., color);
+            self.center(if i == 0 { "优" } else { "良" }, mid.x, mid.y, 15., PAPER);
+        }
+        for (s, piece) in board.pieces() {
+            if self.screen == Screen::Game && self.animation.as_ref().is_some_and(|a| a.mv.to == s)
+            {
+                continue;
+            }
+            let p = Self::point(origin, cell, s, flip);
+            if piece.kind == crate::rules::Kind::King && board.in_check(piece.side) {
+                draw_circle(p.x, p.y, cell * 0.49, Color::new(0.8, 0.12, 0.08, 0.4));
+            }
+            self.chess_piece(p, cell, piece);
+        }
+        if self.screen == Screen::Game
+            && let Some(a) = &self.animation
+        {
+            let t = ((get_time() - a.started) / 0.26).clamp(0., 1.) as f32;
+            let smooth = t * t * (3. - 2. * t);
+            if let Some(captured) = a.captured {
+                let p = Self::point(origin, cell, a.mv.to, flip);
+                draw_circle(
+                    p.x,
+                    p.y,
+                    cell * 0.4,
+                    Color::new(PAPER.r, PAPER.g, PAPER.b, 1. - t),
+                );
+                self.center(
+                    captured.label(),
+                    p.x,
+                    p.y,
+                    cell * 0.5,
+                    Color::new(INK.r, INK.g, INK.b, 1. - t),
+                );
+            }
+            let p = Self::point(origin, cell, a.mv.from, flip)
+                .lerp(Self::point(origin, cell, a.mv.to, flip), smooth);
+            self.chess_piece(p, cell, a.piece);
+        }
+        if self.screen == Screen::Review
+            && let Some(r) = &self.review
+            && r.ply > 0
+            && let (Some(before), Some(after)) = (r.scores[r.ply - 1], r.scores[r.ply])
+        {
+            let e = &r.game.history[r.ply - 1];
+            let q = if r.bests[r.ply - 1] == Some(e.mv) {
+                "优秀"
+            } else {
+                score_loss(before, after, e.mover)
+                    .map_or("杀棋变化", |loss| move_quality(loss, false))
+            };
+            let p = Self::point(origin, cell, e.mv.to, flip) + vec2(cell * 0.3, -cell * 0.3);
+            draw_circle(p.x, p.y, 10., RED_INK);
+            self.center(
+                match q {
+                    "优秀" => "优",
+                    "良好" => "良",
+                    "平庸" => "平",
+                    "较差" => "差",
+                    "错招" => "错",
+                    _ => "析",
+                },
+                p.x,
+                p.y,
+                14.,
+                PAPER,
+            );
+        }
+        if let Some(s) = self.selected {
+            let p = Self::point(origin, cell, s, flip);
+            draw_circle_lines(p.x, p.y, cell * 0.46, 3., RED_INK);
+            for m in self.legal_moves(board).into_iter().filter(|m| m.from == s) {
+                let p = Self::point(origin, cell, m.to, flip);
+                if board.at(m.to).is_some() {
+                    draw_circle_lines(p.x, p.y, cell * 0.46, 2.5, JADE);
+                } else {
+                    draw_circle(p.x, p.y, cell * 0.12, JADE);
+                    draw_circle_lines(
+                        p.x,
+                        p.y,
+                        cell * 0.21,
+                        1.,
+                        Color::new(JADE.r, JADE.g, JADE.b, 0.4),
+                    );
+                }
+            }
+        }
+        if interactive && self.keyboard_active {
+            if is_key_pressed(KeyCode::B) {
+                self.board_cursor = Square::new(4, if flip { 0 } else { 9 });
+            }
+            if let Some(mut square) = self.board_cursor {
+                let mut df = 0;
+                let mut dr = 0;
+                if is_key_pressed(KeyCode::Left) {
+                    df -= 1;
+                }
+                if is_key_pressed(KeyCode::Right) {
+                    df += 1;
+                }
+                if is_key_pressed(KeyCode::Up) {
+                    dr -= 1;
+                }
+                if is_key_pressed(KeyCode::Down) {
+                    dr += 1;
+                }
+                let sign = if flip { -1 } else { 1 };
+                square = Square::new(
+                    (square.file() + df * sign).clamp(0, 8),
+                    (square.rank() + dr * sign).clamp(0, 9),
+                )
+                .unwrap();
+                self.board_cursor = Some(square);
+                let at = Self::point(origin, cell, square, flip);
+                draw_rectangle_lines(
+                    at.x - cell * 0.46,
+                    at.y - cell * 0.46,
+                    cell * 0.92,
+                    cell * 0.92,
+                    2.,
+                    JADE,
+                );
+                if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
+                    self.click = Some(at);
+                }
+            }
+        }
+        if interactive
+            && let Some(p) = self.click
+            && let Some(s) =
+                crate::interaction::board_hit([p.x, p.y], [origin.x, origin.y], cell, flip)
+        {
+            self.click = None;
+            if board.at(s).is_some_and(|p| p.side == self.player()) {
+                self.selected = if self.selected == Some(s) {
+                    None
+                } else {
+                    Some(s)
+                };
+                self.hints.clear();
+            } else if let Some(from) = self.selected {
+                let m = Move { from, to: s };
+                if board.is_legal(m) {
+                    self.play(m);
+                }
+            }
+        }
+    }
+    fn chess_piece(&self, p: Vec2, cell: f32, piece: Piece) {
+        let radius = cell * 0.42;
+        let color = if piece.side == Side::Red {
+            RED_INK
+        } else {
+            INK
+        };
+        draw_circle(
+            p.x + 1.,
+            p.y + cell * 0.065,
+            radius * 1.03,
+            Color::new(0.26, 0.15, 0.07, 0.23),
+        );
+        draw_circle(p.x, p.y + 1., radius, Color::new(0.55, 0.37, 0.19, 1.));
+        draw_circle(
+            p.x,
+            p.y - 0.6,
+            radius * 0.97,
+            Color::new(0.99, 0.92, 0.76, 1.),
+        );
+        draw_circle(
+            p.x,
+            p.y + 0.5,
+            radius * 0.88,
+            Color::new(0.88, 0.76, 0.56, 1.),
+        );
+        draw_circle(
+            p.x,
+            p.y - 0.5,
+            radius * 0.85,
+            Color::new(0.98, 0.92, 0.79, 1.),
+        );
+        draw_circle_lines(p.x, p.y - 0.5, radius * 0.82, 1.2, color);
+        draw_circle_lines(
+            p.x,
+            p.y - 0.5,
+            radius * 0.72,
+            0.6,
+            Color::new(color.r, color.g, color.b, 0.32),
+        );
+        self.center(piece.label(), p.x, p.y - 0.6, cell * 0.53, color);
+    }
+}

@@ -1,166 +1,183 @@
-# tst自用象棋
+# tst 自用象棋 · Rust
 
-本地单机中国象棋，内置皮卡鱼（Pikafish）引擎，无网络功能。
+离线中国象棋。Rust 2024 编写规则、对局、存档、引擎协议和界面；macroquad 提供 Windows、macOS、Android、iOS 的窗口、绘制、触摸和音效。Pikafish 保持上游 C++ 搜索引擎。
 
-此游戏为 tst 自用象棋，自我学习使用（AI 辅助编程，融合个人想法）。
+工具链固定 **Rust 1.99.1**，依赖由 `Cargo.lock` 锁定。
 
 ## 功能
 
-- 本地单机对弈：执红先行 / 执黑后手，五档难度（入门 ~ 大师）
-- 引擎支持：提示（双建议）、悔棋、按局势判定胜负结束对局
-- 复盘分析：全局逐步引擎评估、局势走势折线图、走法质量分级；分析完成后可「当前局面续下」——从浏览到的局面选择执红/执黑实战对弈，续下对局独立归档（标题带（复盘）前缀）
-- 复盘棋谱：对局自动归档（未收藏最多 100 局、收藏最多 50 局，超出自动移除最旧），支持收藏置顶
-- 中文记谱（纵线记谱法）、规则判定（将死/困毙、三次重复判和、长将判负、60 回合无吃子自然限着作和）、音效开关
+- 执红/执黑、五档难度、合法落点、将军、悔棋、双建议、认输、按局势结束。
+- 将死/困毙判负、三次重复、长将判负、60 回合无吃子判和。
+- 后台原子保存、稳定对局 ID、版本继承校验与冲突分支另存、幂等归档；50 局未完成对局支持命名、逐局删除和批量清理；已归档棋谱也支持重命名；自动保留旧局备份，未来版本存档拒绝降级覆盖。
+- 复盘可边分析边浏览、暂停与继续、按引擎及权重摘要校验的持久缓存；续下保留完整历史并建立独立身份。
+- 窄屏纵排、横屏左右分栏、安全区输入映射、触摸棋谱滚动与最新着法跟随；收藏图标直接绘制避免缺字。
+- 共用横竖屏界面、中文纵线记谱、内置中文字体和音效。
+- 全新宣纸白、朱红、青绿配色；桌面首页双栏、手机纵排，统一卡片、按钮、状态提示与棋盘层次。新局在同一面板选择五档难度与执子。
+- 原创五声音阶配乐，木质落子/吃子与柔和将军提示；44.1kHz 双声道、九档落点左右定位、轻混响、关键提示时音乐自动轻降。
+- 首页统一「声音」入口，集中控制总静音、背景音乐与棋子音效的开关/音量并保存偏好；修复音频库的循环缓冲区断点并加入混音限幅。
+- 细腻宣纸底纹、木纹棋盘与立体棋子；重试入口位于状态卡，不遮挡棋盘。再次点选或 Escape 取消选子，非法落点保留选中；吃子与空位落点分别显示。
+- 棋谱收藏筛选、完整滚动裁切与空状态引导；复盘支持首步/末步、左右方向键、Home/End、点击或拖动走势定位。
+- 声音滑杆可点选和拖动；横屏声音设置左右分栏，短确认弹窗按内容居中，终局操作立即可用。
+- 引擎后台串行搜索、完整历史传递、同迭代 MultiPV 候选、超时和一次重试、旧请求取消；认输不依赖引擎。切后台后恢复走棋、提示、复盘和结算任务；结算保留实际评分类型、深度、耗时和资产摘要。
+- Tab/Enter 操作按钮；B 进入棋盘，方向键选格，空格/Enter 落子，Escape 取消，M 静音，Ctrl+Q 正常保存退出。启动以新图标与加载条呈现，完成后直接进入主页；所有平台预缓存常用界面、玩法说明、关于与许可证字形；长文使用独立留白的可拖动滚动条。自绘界面尚未提供系统屏幕阅读器语义树。
 
-## 支持平台
+画面内部至少按 1080p 基准绘制，并按实际像素密度自动提高到 2K、4K 精细度；窗口大小和布局保持自适应，不提供分辨率选项。文字按渲染密度栅格化，曲线与纹理同步细化；使用自适应超采样与高精度纹理采样改善模糊和锯齿。
 
-| 平台 | 引擎形态 | 说明 |
-|------|----------|------|
-| Android（arm64-v8a / x86_64） | 子进程（`libpikafish.so`） | 提供签名 APK 发布 |
-| iOS（A12 及以上） | 进程内 FFI（静态库 `libpikafish.a`） | 需 macOS 构建，引擎依赖 dotprod 指令 |
-| macOS | 子进程（随应用打包） | 引擎二进制随仓库提供 |
-| Windows | 子进程（`pikafish.exe`） | 发布 zip 已内置引擎；本地构建需自行放置，见「构建」 |
+## Windows
 
-不支持 Linux 与 Web。
+安装 [Rust](https://rustup.rs/) 和 Visual Studio C++ Build Tools（MSVC），首次获取引擎需要网络与 7-Zip：
 
-## 安装
-
-- **Android**：从 GitHub [Releases](https://github.com/tst936137555/tst-Chinese-Chess/releases) 下载 `tst_xiangqi-<版本>.apk` 直接安装（由 CI 自动构建签名，历史版本附件已清理，仅提供最新版本）。
-- **Windows**：从 Releases 下载 `tst_xiangqi-<版本>-windows.zip`，解压后运行 `tst_xiangqi.exe`（已内置 Pikafish 引擎与许可证文件，由 CI 自动构建）。
-- **iOS / macOS**：无预编译分发，请按下一节自行构建。
-
-## 构建
-
-前置要求：Flutter SDK（stable 渠道）、Android SDK（构建 Android）或 Xcode（构建 iOS/macOS）。
-
-```bash
-flutter pub get
-flutter run                # 调试运行到已连接设备
+```powershell
+./tool/fetch_engine.ps1 -Target windows
+cargo run --release --locked
 ```
 
-各平台发布构建：
+只有 MinGW GCC 的机器可使用 GNU 工具链：
 
-- **Android**：`flutter build apk --release`；或推送 `v*` 标签触发 CI 自动构建签名 APK（见 `.github/workflows/ci.yml`）。
-- **iOS**：先在 macOS 上运行 `tool/setup_ios_engine.sh`（构建 `libpikafish.xcframework` 静态库并注入 Xcode 工程），之后 `flutter build ios`。
-- **Windows**：`flutter build windows`，并将 [Pikafish 官方发布版](https://github.com/official-pikafish/pikafish/releases) 的 Windows 可执行文件重命名为 `pikafish.exe` 放入产物目录（开发调试时放项目根目录即可）。
-- **macOS**：`flutter build macos`（引擎二进制已在 `macos/EngineBin/`）。
-
-NNUE 权重由 fetch 脚本按 manifest 下载；字体（霞鹜文楷子集）与许可证文本已入库随 assets 打包，无需额外下载。引擎等大文件的下载源与版本钉住在 [tool/engine_manifest.json](tool/engine_manifest.json)：优先从上游官方 release 下载，失败时回退本仓库 [镜像 release](https://github.com/tst936137555/tst-Chinese-Chess/releases/tag/engine-mirror)（由 [Engine Mirror 工作流](.github/workflows/engine-mirror.yml)自动转存维护），防上游下架导致 CI 与本地构建断供。
-
-## 发版流程
-
-1. （可选）在 [CHANGELOG.md](CHANGELOG.md) 顶部新增 `## v<版本号>` 段落手写更新内容；不写则 CI 自动从提交历史按类型分组生成发行说明（`feat` → 新增、`fix` → 修复、`perf` → 优化、`refactor` → 重构、`docs/test/chore/ci/style/build` → 其他变更），支持 `feat(模块):` 作用域格式与全角冒号，最后统一附上 GitHub 自动生成的提交对比
-2. 更新 `pubspec.yaml` 版本号与 `lib/ui/home_screen.dart` 首页版本标注，保持一致
-3. 提交并推送到 main
-4. 打 tag 并推送：`git tag v<版本号> && git push <remote> v<版本号>`
-5. CI 自动构建 Android 签名 APK 与 Windows 引擎内置 zip，并创建带附件的 Release
-
-## 测试
-
-```bash
-flutter analyze
-flutter test
+```powershell
+rustup toolchain install 1.99.1-x86_64-pc-windows-gnu --component rustfmt --component clippy
+cargo +1.99.1-x86_64-pc-windows-gnu run --release --locked
+./tool/package_windows_rust.ps1 -Toolchain 1.99.1-x86_64-pc-windows-gnu
 ```
 
-全部单元测试无需真实引擎二进制与平台通道：引擎可靠性测试使用内存伪造 UCI 引擎驱动真实会话协议；真实引擎端到端测试（`review_engine_integration_test.dart`）在无引擎环境自动跳过。
+完整便携包输出 `dist/tst-xiangqi-2.0.1-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
 
-BoardView 渲染有 Golden 基线测试（`golden_test.dart`）：基线统一在 Windows 生成，其他平台自动跳过；CI 的 ubuntu job 跑全量逻辑测试，windows-test job 以同平台比对基线。更新基线：
-
-```bash
-flutter test --update-goldens test/golden_test.dart
+```text
+tst-xiangqi-2.0.1-windows/
+├── tst-xiangqi.exe
+├── assets/
+│   ├── engine/       # 皮卡鱼引擎与 NNUE 权重
+│   ├── fonts/        # 字体许可
+│   └── licenses/     # 项目及第三方许可
+├── readme/           # README 与更新记录
+├── source/           # 对应版本源码与内置资源
+└── metadata/         # 构建版本及文件 SHA256 清单
 ```
 
-## 已知限制
+## macOS
 
-- 仅单机对弈：无网络对战、无账号与云同步功能。
-- 随应用分发的 Pikafish NNUE 权重仅授权个人非商业用途，本应用及其衍生分发不得商用（见下文开源声明第 3 节）。
-- iOS 需 A12 芯片（2018 年机型）及以上，旧设备不支持。
-- 棋谱存档有数量上限（未收藏 100 局 / 收藏 50 局），超出自动移除最旧；存档保存在应用文档目录，卸载应用即清除。
-- 引擎崩溃或挂死时会自动重启并重试一次，仍失败则如实提示「引擎不可用」，不会伪造走法或评分。
-- Windows 发行版未做代码签名：首次运行时 SmartScreen 可能提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」即可；请仅从 GitHub Releases 获取安装包。
+```sh
+pwsh ./tool/fetch_engine.ps1 -Target macos
+cargo build --release --locked
+./target/release/tst-xiangqi
+```
 
-## 作者声明
+分发时将引擎放在程序旁，将权重放在 `assets/engine/pikafish.nnue`，保留 `assets/licenses/`、`assets/fonts/OFL.txt` 和 `LICENSE`。也可用 `PIKAFISH_PATH`、`PIKAFISH_NNUE` 设置绝对路径。
 
-此游戏为 tst 自用象棋，自我学习使用。
+## Android
 
-## 开源软件声明 / Open Source Notices
+需要 JDK 17、Android SDK 35、NDK r28c 或更新、Python 3.11+ 与 Rust。引擎通过 C ABI 静态链接，使用当前 Cargo 和 SDK 工具打包，无需 Flutter 或引擎子进程。
 
-本应用基于 GNU GPL v3.0 发布，包含以下开源组件：
+```sh
+export ANDROID_HOME=/path/to/android/sdk
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+export NDK_HOME="$ANDROID_NDK_HOME"
+pwsh ./tool/fetch_engine.ps1 -Target core
+bash tool/build_android_rust.sh aarch64-linux-android
+# 模拟器另行构建：
+bash tool/build_android_rust.sh x86_64-linux-android
+```
 
-### 1. 本应用程序
+每次生成单 ABI APK，输出到 `dist/`，中间文件位于 `target/android-artifacts/`。包名 `com.tst.xiangqi.rust`，可与旧版并存。首次启动将包内 NNUE 安装到私有目录。不提供密钥时使用持久的 `$HOME/.android/tst-xiangqi-rust-debug.keystore`（可用 `ANDROID_DEBUG_KEYSTORE` 覆盖）生成测试包；脚本会报告与已有旧包的签名兼容性，签名不同不能覆盖升级，切勿为安装测试包卸载有数据的旧应用。正式发布设置 `ANDROID_KEYSTORE`、`ANDROID_KEY_ALIAS`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_PASSWORD` 使用自己的签名密钥。
 
-- 许可证：GNU GPL v3.0
-- 版权：Copyright © 2026 tst-936137555
-- 源码：https://github.com/tst936137555/tst-Chinese-Chess
+## iOS
 
-### 2. Pikafish 引擎（皮卡鱼）
+需要 macOS、完整 Xcode、Python 3.11+、Rust。脚本直接构建引擎静态库和 Rust 应用，无需旧 Runner 工程。
 
-- 版本：v2026-09-06
-- 许可证：GNU GPL v3.0
-- 版权：Copyright © Pikafish contributors
-- 源码：https://github.com/official-pikafish/pikafish
-- 本应用包含 Pikafish 引擎代码，依 GPLv3 条款使用，本 App 源码已公开，满足 GPLv3 对应源码要求。
-- Android 预编译来源：
-  - arm64-v8a：官方发布版 `Pikafish-Android-arm64-universal`（随 [v2026-09-06 release](https://github.com/official-pikafish/pikafish/releases/tag/Pikafish-2026-09-06) 分发）；
-  - x86_64：官方**未提供** Android x86_64 预编译版，由本项目依据精确源码版本与工具链自行编译，见下文「4. Android x86_64 引擎自编译说明」。
-- Windows 预编译来源：官方发布版 `Pikafish-Windows-x86-64-universal`（随 [v2026-09-06 release](https://github.com/official-pikafish/pikafish/releases/tag/Pikafish-2026-09-06) 分发，由 CI 下载并经 SHA256 校验后随应用 zip 打包，GPLv3 与 NNUE 许可证文本随包附带）。
+```sh
+pwsh ./tool/fetch_engine.ps1 -Target core
+bash tool/build_ios_rust.sh aarch64-apple-ios-sim
+xcrun simctl install booted dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app
+xcrun simctl launch booted com.tst.xiangqi.rust
+# 真机未签名 .app：
+bash tool/build_ios_rust.sh aarch64-apple-ios
+```
 
-### 3. Pikafish NNUE 权重文件许可证
+真机需开发者自己的描述文件和代码签名。最低 iOS 15；引擎使用基础 NEON，不强制要求 dotprod。进程内引擎真挂死时需重启应用。[macroquad iOS 文档](https://macroquad.rs/articles/ios/)。
 
-随 Pikafish 发布的权重文件（pikafish.nnue）：
+首页仅保留“继续未完成对局”和对局选择；已取消存档管理、完整错误查看、诊断导出/分享入口；存档读取失败时提供重试和备份恢复。对局继续自动保存；保存失败时保留重试/退出确认。
 
-- 仅限合法使用，超出合法范围使用的后果由用户自行承担；
-- 仅授权个人非商业用途免费使用，任何商业用途须另向 Pikafish 团队申请商业许可。
+## 数据与旧版迁移
 
-本 App 为非商用项目，严格遵守上述限制。
+Rust 数据与旧版分开保存：Windows `%APPDATA%/tst-xiangqi-rust/state.json`；macOS/iOS `$HOME/Library/Application Support/tst-xiangqi-rust/state.json`；Android 私有 files 目录。`XIANGQI_DATA_DIR` 可覆盖目录。当前存档 schema 为 4，旧数据读取时迁移；棋谱日期统一显示北京时间（UTC+8）。
 
-### 4. Android x86_64 引擎自编译说明
+```powershell
+cargo run --release -- --import "C:/path/to/game_archive.json"
+```
 
-`android/app/src/main/jniLibs/x86_64/libpikafish.so` 为自行编译产物，构建要素如下（可复现）：
+导入旧 JSON 棋谱时逐步重放验证走法，重建局面和记谱，去重并保留原文件。旧 SharedPreferences 的偏好和未结束对局尚不自动迁移；不会跨移动端沙盒读取旧应用数据。
 
-- **精确源码版本**：official-pikafish/pikafish tag [`Pikafish-2026-09-06`](https://github.com/official-pikafish/pikafish/releases/tag/Pikafish-2026-09-06)
-- **工具链**：Android NDK r28c（28.2.13676358），`COMP=ndk`（clang 交叉编译，API 29 目标 `x86_64-linux-android29-clang++`），静态链接 `-static`
-- **构建命令**（在 POSIX 环境：Linux / macOS / WSL / MSYS2，需 make + git）：
+项目当前版本为 Rust 2.0.1。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
 
-  ```bash
-  git clone --depth 1 --branch Pikafish-2026-09-06 https://github.com/official-pikafish/pikafish.git
-  cd pikafish/src
-  export PATH="$ANDROID_NDK/toolchains/llvm/prebuilt/<host>/bin:$PATH"
-  make -j build COMP=ndk ARCH=x86_64 EXE=pikafish-x86_64 \
-       LDFLAGS="-static -Wno-unused-command-line-argument"
-  llvm-strip pikafish-x86_64
-  cp pikafish-x86_64 <项目>/android/app/src/main/jniLibs/x86_64/libpikafish.so
-  ```
+## 验证
 
-- **一键脚本**：`tool/build_android_engine.sh`（自动定位 NDK、检出 tag、编译、strip 并安装到 jniLibs；`./tool/build_android_engine.sh x86_64`，也支持 `arm64-v8a` 重建）
-- 说明：Pikafish `src/Makefile` 原生支持 `COMP=ndk`（`ARCH=x86_64` / `armv8`）；静态链接与官方 Android CI（arm64 universal）一致，避免依赖 `libc++_shared.so`；jniLibs 内必须以 `lib*.so` 命名，打包后安装至应用 `nativeLibraryDir` 供 `Process.start` 启动。
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets --locked
+```
 
-### 5. 霞鹜文楷字体（LXGW WenKai）
+覆盖初始局面 perft（44 / 1920 / 79666）、规则、非法局面、长将、悔棋、UCI 历史、取消、MultiPV、终局依据、并发存档、幂等归档、对局、版本迁移、备份恢复与分析缓存。设置 `XIANGQI_REQUIRE_ENGINE=1` 时，缺少真实引擎会令测试失败。
 
-应用全局字体使用霞鹜文楷（Medium）的子集版本：
+便携包独立检查与隔离界面回归：
 
-- 版本：v1.522（子集基线）
-- 许可证：SIL Open Font License 1.1（OFL-1.1）
-- 版权：Copyright 2021-2026 LXGW（保留字体名「霞鹜」「落霞孤鹜」「LXGW」等）；基于 Fontworks 开源的 Klee One 衍生（Copyright 2020 The Klee Project Authors）
-- 源码：https://github.com/lxgw/LxgwWenKai
-- 入库资产 `assets/fonts/XqKai-Medium-subset.ttf`（约 1.7MB）由 [tool/subset_font.py](tool/subset_font.py) 从完整字体（约 24MB，不入库）子集化生成：字符集 = ASCII + lib/test 源码扫描 + GB2312 一级常用字 + 补充集；内部家族名已改写为 `XqKai`（OFL 规定保留字体名不得用于标识修改版，pubspec 与代码引用本就使用 XqKai，行为不变）；
-- 完整版可从[上游 release](https://github.com/lxgw/LxgwWenKai/releases) 或本仓库 [镜像 release](https://github.com/tst936137555/tst-Chinese-Chess/releases/tag/engine-mirror) 下载后重新生成子集：
+```sh
+./target/release/tst-xiangqi --self-test
+./target/release/tst-xiangqi --smoke-test target/ui-smoke
+```
 
-  ```bash
-  python -m pip install fonttools
-  python tool/subset_font.py --input assets/fonts/LXGWWenKai-Medium.ttf
-  ```
+Windows 使用 `.exe` 文件。`--self-test` 验证真实引擎、历史、续局及归档；`--smoke-test` 使用指定输出目录保存测试数据，自动生成 29 个场景截图并验证横屏落子、新局设置、音量调节、选子取消、收藏筛选和复盘跳转。不会修改正常用户存档。Android debug 包可在模拟器运行 `python tool/mobile_smoke.py`。本轮通过 29 场景（含独立 2K/4K 内部画布）与原有视觉基准检查，字体首帧与稳定帧对比 RMS 为 0。
 
-- 修改 UI 文案后若个别字显示为系统字体（缺字回退），重跑上述脚本并重新提交子集资产；
-- 许可证全文随应用分发：`assets/fonts/OFL.txt`（入库并打包进 APK，满足 OFL「分发字体须附带许可证副本」要求）。
+内部冒烟直接调用命中处理；另外提供真实输入回归，不能把截图通过解释为真机触摸已验收：Linux 在 Xvfb 下运行 `python3 tool/ui_input_smoke.py target/release/tst-xiangqi`（需要 xdotool）；Android 模拟器运行 `python3 tool/mobile_smoke.py`；macOS 构建模拟器 app 后运行 `python3 tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app`。iOS 脚本验证安装/启动/冷启动，系统触摸和旋转仍需 XCTest 或设备验证。
 
-## 许可证
+主项目现有 67 项测试，覆盖分歧历史、冲突确认、四类任务恢复、缓存空闲定时落盘/合并/失败退出、旧记录碰撞、对局容量、评分证据和固定随机种子，以及非法元数据导入、棋谱改名保留、备份恢复任务、设置失败确认、名称编辑和渲染尺寸边界。以下示例输出独立文件，使用临时数据，不改用户存档：
 
-完整 GPLv3 许可证全文见：
+```sh
+cargo run --release --locked --example check_ui -- target/ui-smoke
+cargo run --release --locked --example font_regression -- target/font-regression
+cargo run --release --locked --example benchmark -- target/performance-baseline.json
+cargo run --release --locked --example calibrate -- target/difficulty-calibration.json
+```
 
-- 本仓库 [LICENSE](LICENSE)
-- https://www.gnu.org/licenses/gpl-3.0.txt
+`check_ui` 对两个固定视口做粗粒度视觉基准比较；`font_regression` 比较新字形首帧与预热后画面，防止字体纹理扩容导致文字缺失；`benchmark` 测量 150 局档案及五档搜索，程序诊断另记录首帧、可交互、保存确认和帧耗时；`calibrate` 使用两种固定局面、固定种子抽样和更深搜索参考，不代表 ELO 或人类棋力等级。移动设备内存和耗电需在目标设备另测。
 
-GPLv3（Pikafish `Copying.txt`）与 NNUE 许可证全文由 `tool/fetch_engine.ps1` 从官方发布包取得（SHA256 校验），作为 Flutter 资产（`assets/licenses/`）随 Android / iOS / macOS / Windows 各平台安装包分发，App 内「作者声明」对话框可离线查看。
+音频与布局检查包括左右声道定位、无削波、循环接点连续、混音缓冲跨界和棋盘适配。可用 `cargo test --manifest-path vendor/quad-snd/Cargo.toml --lib` 单独验证音频库修复；`cargo run --release --example render_audio` 输出离线 WAV 试听文件到 `dist/audio-preview/`。音乐与音效由 `src/audio.rs` 原创合成，无外部录音素材或额外运行时依赖。
 
-霞鹜文楷字体许可证全文见 [assets/fonts/OFL.txt](assets/fonts/OFL.txt)（SIL OFL 1.1）。
+Windows 已本地构建并验证真实引擎；Android ARM64/x86_64 已生成 APK 并校验签名，macOS/iOS 通过 Rust 跨目标类型检查。完整 Apple 链接、签名和移动端安装、生命周期、性能仍需对应平台验证，不能视为已验证发行版。
+
+## 第三方组件与字体说明
+
+本项目源码：[tst936137555/tst-Chinese-Chess](https://github.com/tst936137555/tst-Chinese-Chess)，Copyright © 2026 tst-936137555，许可证全文见 [LICENSE](LICENSE)。
+
+### Pikafish
+
+- 固定版本：`Pikafish-2026-09-06`，Copyright © Pikafish contributors。
+- [对应源码](https://github.com/official-pikafish/Pikafish/tree/Pikafish-2026-09-06)，GNU GPL v3.0。
+- Windows/macOS 引擎由 `tool/fetch_engine.ps1` 按 `tool/engine_manifest.json` 下载并校验 SHA256；Android/iOS 由 `tool/build_mobile_engine.py` 从相同 tag 构建，适配代码位于 `native/pikafish/`。
+- 构建版本、提交、目标和编译参数记录在 `mobile-engine/<target>/BUILD_INFO.txt`。分发引擎时附带许可证与对应源码。
+- NNUE 权重的使用条件以随包附带的 `assets/licenses/NNUE-License.md` 为准；权重仅授权个人非商业用途，商业用途需向 Pikafish 团队另行申请许可。
+- 引擎许可证全文由下载脚本取得，位于 `assets/licenses/COPYING-pikafish.txt`。
+
+### 霞鹜文楷（LXGW WenKai）
+
+- 子集基线版本：v1.522，SIL Open Font License 1.1。
+- Copyright 2021-2026 LXGW，基于 Klee One 衍生（Copyright 2020 The Klee Project Authors）。[字体源码](https://github.com/lxgw/LxgwWenKai)。
+- `assets/fonts/XqKai-Medium-subset.ttf` 由 `tool/subset_font.py` 生成；内部家族名改为 `XqKai`，避免使用 OFL 保留字体名标识修改版。
+- 字符集包含 ASCII、`src/` 和 `tests/` 中的 Rust 源码字符、随包许可证文本、GB2312 一级常用字及棋子与标点补充集。
+- 许可证全文见 [OFL.txt](assets/fonts/OFL.txt)，分发时随字体保留。
+
+重新生成字体（需自行准备完整字体）：
+
+```sh
+python -m pip install fonttools
+python tool/subset_font.py --input assets/fonts/LXGWWenKai-Medium.ttf
+```
+
+### Rust 界面与音频
+
+- macroquad：MIT / Apache-2.0，依赖版本由 `Cargo.lock` 固定。
+- quad-snd 0.2.8：MIT / Apache-2.0，本地依赖位于 `vendor/quad-snd/`；保留上游许可证、说明及 [本地修改记录](vendor/quad-snd/LOCAL_CHANGES.md)。
+- 音乐与音效由 `src/audio.rs` 原创合成。
+- 其他依赖使用各自上游许可证。
+
+本地 `vendor/miniquad` 固定 0.4.11，修改 OpenGL 纹理删除后的绑定缓存失效处理；保留 MIT 与 Apache-2.0 原许可证。

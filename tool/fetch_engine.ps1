@@ -11,13 +11,13 @@
 #   ./tool/fetch_engine.ps1                  # 全部资产（core + 各平台引擎）
 #   ./tool/fetch_engine.ps1 -Target core     # NNUE + 许可证（跑测试 / 所有平台构建所需）
 #   ./tool/fetch_engine.ps1 -Target windows  # core + Windows 引擎
-#   ./tool/fetch_engine.ps1 -Target android  # core + Android arm64 引擎
+#   ./tool/fetch_engine.ps1 -Target android  # 移动端共用 NNUE + 许可证
 #   ./tool/fetch_engine.ps1 -Target macos    # core + macOS 引擎
 #   -Force                                   # 忽略本地已有文件，重新下载/解压
 #
 # 依赖：7-Zip（Windows: winget install 7zip.7zip；macOS: brew install p7zip；
-#       Linux: apt install p7zip-full）。Android x86_64 引擎官方不发布，
-#       由 tool/build_android_engine.sh 编译，不经过本脚本。
+#       Linux: apt install p7zip-full）。移动端引擎由
+#       tool/build_mobile_engine.py 从固定版本源码构建静态库。
 # =============================================================================
 param(
     [ValidateSet('core', 'windows', 'android', 'macos', 'all')]
@@ -50,12 +50,15 @@ New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
 
 # 主 URL 失败（404/下架/网络异常）时依次尝试镜像 URL；全部失败才报错。
 # Invoke-WebRequest 对 4xx/5xx 会抛异常，正常进入回退；命中任一 URL 即返回。
-function Save-Url([string[]]$urls, [string]$outFile) {
+function Save-Url([string[]]$urls, [string]$outFile, [string]$expectedSha) {
     $errors = @()
     foreach ($u in ($urls | Where-Object { $_ })) {
         try {
             Write-Host "下载 $u"
             Invoke-WebRequest -Uri $u -OutFile $outFile
+            if ($expectedSha -and (Get-FileHash -LiteralPath $outFile -Algorithm SHA256).Hash -ne $expectedSha) {
+                throw '下载内容 SHA256 不匹配，尝试下一下载源'
+            }
             return
         }
         catch {
@@ -67,15 +70,14 @@ function Save-Url([string[]]$urls, [string]$outFile) {
     throw "所有下载源均失败：`n$($errors -join "`n")"
 }
 
-# 目标 → 资产键清单（许可证随所有目标安装：pubspec 将 NNUE /
-# 许可证均声明为 Flutter 资产，任何平台的构建与测试都要求文件在位。
-# 字体为入库资产，不经过本脚本）
+# 目标 → 资产键清单。所有平台均需 NNUE 与许可证；
+# 字体为入库资产，移动端引擎从源码构建，不经过本脚本。
 $targets = @{
     core    = @('nnue', 'license-gpl', 'license-nnue')
     windows = @('nnue', 'windows', 'license-gpl', 'license-nnue')
-    android = @('nnue', 'android-arm64', 'license-gpl', 'license-nnue')
+    android = @('nnue', 'license-gpl', 'license-nnue')
     macos   = @('nnue', 'macos', 'license-gpl', 'license-nnue')
-    all     = @('nnue', 'windows', 'android-arm64', 'macos',
+    all     = @('nnue', 'windows', 'macos',
                 'license-gpl', 'license-nnue')
 }
 $wanted = $targets[$Target]
@@ -98,15 +100,14 @@ function Get-Archive {
         }
     }
     if ($needDownload) {
-        Save-Url @($pk.archiveUrl, $pk.mirrorUrl) $cachedArchive
+        Save-Url @($pk.archiveUrl, $pk.mirrorUrl) $cachedArchive $pk.archiveSha256
     }
     $h = (Get-FileHash $cachedArchive -Algorithm SHA256).Hash
     Write-Host "总包 SHA256：$h"
     if ($pk.archiveSha256 -and $h -ne $pk.archiveSha256) {
         throw "总包 SHA256 不匹配：期望 $($pk.archiveSha256)，实际 $h"
     }
-    $dir = Join-Path $cacheDir 'extract'
-    if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+    $dir = Join-Path $cacheDir ('extract-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     return @($cachedArchive, $dir)
 }
@@ -149,9 +150,20 @@ function Install-Artifact([string]$key, [pscustomobject]$art) {
     Write-Host "[完成] $key → $($art.dest)"
 }
 
+$downloadLock = $null
+$lockDeadline = [DateTime]::UtcNow.AddSeconds(120)
+while (-not $downloadLock) {
+    try { $downloadLock = [System.IO.File]::Open((Join-Path $cacheDir 'download.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+    catch [System.IO.IOException] {
+        if ([DateTime]::UtcNow -ge $lockDeadline) { throw '等待引擎下载缓存锁超时' }
+        Start-Sleep -Milliseconds 100
+    }
+}
+try {
 foreach ($key in $wanted) {
     $art = $manifest.pikafish.artifacts.$key
     if (-not $art) { throw "清单中不存在资产键：$key" }
     Install-Artifact $key $art
 }
 Write-Host "引擎资产就绪（Target=$Target）。"
+} finally { $downloadLock.Dispose() }

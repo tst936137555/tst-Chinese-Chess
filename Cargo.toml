@@ -1,0 +1,54 @@
+[package]
+name = "tst-xiangqi"
+version = "2.0.1"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-only"
+description = "离线中国象棋 · Rust / Pikafish"
+build = "build.rs"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+macroquad = { version = "0.4.16", features = ["audio"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.23"
+sha2 = "0.10"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+libc = "0.2"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[package.metadata.android]
+package_name = "com.tst.xiangqi.rust"
+label = "tst自用象棋"
+assets = "assets"
+build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
+min_sdk_version = 29
+target_sdk_version = 35
+android_version = 35
+fullscreen = true
+
+[package.metadata.android.activity_attributes]
+"android:screenOrientation" = "unspecified"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "warn"
+
+[patch.crates-io]
+# Keep looped stereo music continuous when a buffer crosses the sample boundary.
+quad-snd = { path = "vendor/quad-snd" }
+
+# Keep GL binding state valid after font-atlas / render-target deletion.
+miniquad = { path = "vendor/miniquad" }

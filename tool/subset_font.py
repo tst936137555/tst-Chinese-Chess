@@ -7,16 +7,16 @@
 # XqKai-Medium-subset.ttf 直接打包，APK / 各平台安装包体积显著缩小；
 # CI 与 fetch_engine.ps1 不再需要下载字体。
 #
-# 字符集构成（宁多勿缺：缺字会回退系统字体，且可能破坏 Golden 基线）：
+# 字符集构成（宁多勿缺，避免界面缺字）：
 #   1. ASCII 可打印字符（0x20-0x7E）
-#   2. 源码扫描：lib/ 与 test/ 全部 .dart 中的非 ASCII 字符（覆盖全部 UI
+#   2. 源码扫描：src/ 与 tests/ 全部 .rs 中的非 ASCII 字符（覆盖全部 UI
 #      文案与记谱字符；文案改动后重跑本脚本即可）
 #   3. GB2312 一级常用字（约 3755 字）：为未来新增文案留出的安全余量
 #   4. 补充集：全角标点/数字、繁体棋子字等零散字符
 #
 # OFL-1.1 合规：子集属「修改版」，保留字体名（「霞鹜」「落霞孤鹜」「LXGW」）
-# 不得用于标识修改版，故输出字体的内部家族名改写为 XqKai（pubspec 声明与
-# 代码引用本就使用 XqKai，行为不变）；来源与许可证见 README 与 OFL.txt。
+# 不得用于标识修改版，故输出字体的内部家族名改写为 XqKai；
+# 来源与许可证见 README.md 与 OFL.txt。
 #
 # 用法（需 Python 3.9+ 与 fonttools，pip install fonttools）：
 #   python tool/subset_font.py --input assets/fonts/LXGWWenKai-Medium.ttf
@@ -31,7 +31,8 @@ from fontTools import subset
 from fontTools.ttLib import TTFont
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCAN_DIRS = ("lib", "test")
+SCAN_DIRS = ("src", "tests")
+SCAN_FILES = ("LICENSE", "assets/fonts/OFL.txt", "assets/licenses/NNUE-License.md")
 DEFAULT_OUTPUT = "XqKai-Medium-subset.ttf"
 
 # 内部名改写目标（nameID → 值）。全部避开 OFL 保留字体名；
@@ -66,12 +67,16 @@ def gb2312_level1() -> set[str]:
 
 
 def scan_source_chars() -> set[str]:
-    """扫描 lib/ 与 test/ 全部 Dart 源码中的非 ASCII 字符。"""
+    """扫描 src/ 与 tests/ 全部 Rust 源码中的非 ASCII 字符。"""
     chars: set[str] = set()
     for d in SCAN_DIRS:
-        for path in sorted((REPO_ROOT / d).rglob("*.dart")):
+        for path in sorted((REPO_ROOT / d).rglob("*.rs")):
             text = path.read_text(encoding="utf-8", errors="ignore")
             chars.update(ch for ch in text if ord(ch) > 0x7E and ch != "\ufeff")
+    for name in SCAN_FILES:
+        path = REPO_ROOT / name
+        if path.is_file():
+            chars.update(ch for ch in path.read_text(encoding="utf-8") if ord(ch) > 0x7E and ch != "\ufeff")
     return chars
 
 
@@ -132,8 +137,7 @@ def main() -> int:
     subset.save_font(font, str(output_path), options)
     rename_family(output_path)
 
-    # 覆盖校验：源码用到的每个字符必须存在于输出字体（缺字会回退系统字体，
-    # 且 Golden 基线以该字体渲染，缺字直接导致基线比对失败）
+    # 覆盖校验：源码用到的每个字符必须存在于输出字体。
     cmap = TTFont(str(output_path)).getBestCmap()
     missing_ui = sorted(ch for ch in ui_chars if ord(ch) not in cmap)
     missing_gb = sorted(ch for ch in gb_chars if ord(ch) not in cmap)
