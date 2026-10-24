@@ -84,7 +84,7 @@ def main():
     container=None
     try:
         if device["state"]!="Booted":sim("boot",uid)
-        sim("bootstatus",uid,"-b",timeout=180);sim("install",uid,str(app))
+        sim("bootstatus",uid,"-b",timeout=180);sim("install",uid,str(app),timeout=180)
         container=Path(sim("get_app_container",uid,PACKAGE,"data"))
         run_checks(uid,container,dest)
     finally:collect_diagnostics(uid,container,dest)

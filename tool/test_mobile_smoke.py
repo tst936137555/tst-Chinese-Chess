@@ -54,12 +54,14 @@ class AndroidSmokeTest(unittest.TestCase):
                      subprocess.TimeoutExpired("adb", 15),
                      subprocess.CompletedProcess([], 1, b"", b"device offline"),
                      result,
+                     result,
                  ]):
                 mobile_smoke.collect_diagnostics()
             output = root / "target/android-smoke"
             self.assertIn("timed out", (output / "logcat.txt").read_text())
             self.assertEqual((output / "activity.txt").read_bytes(), b"device offline")
             self.assertEqual((output / "startup.txt").read_bytes(), b"startup")
+            self.assertEqual((output / "memory.txt").read_bytes(), b"startup")
 
 
 if __name__ == "__main__":

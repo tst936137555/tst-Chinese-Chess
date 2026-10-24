@@ -82,7 +82,10 @@ def main():
             origin=wintypes.POINT(0,0);assert user.ClientToScreen(window,ctypes.byref(origin))
             scale=state.get("deviceScale",1)
             user.SetCursorPos(round(origin.x+x*scale),round(origin.y+y*scale))
-            user.mouse_event(2,0,0,0,0);time.sleep(.05);user.mouse_event(4,0,0,0,0)
+            user.mouse_event(2,0,0,0,0)
+            try:wait(read,lambda s:s.get("pointerDown") is True)
+            finally:user.mouse_event(4,0,0,0,0)
+            wait(read,lambda s:s.get("pointerDown") is False)
         def tap(label):
             time.sleep(.35)
             wait(read,lambda s:s.get("sceneStable",True) and any(c["label"]==label for c in s.get("controls",[])))

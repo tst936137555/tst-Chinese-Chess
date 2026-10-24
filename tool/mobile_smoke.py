@@ -17,6 +17,7 @@ def collect_diagnostics():
         "logcat.txt": ("logcat","-d"),
         "activity.txt": ("shell","dumpsys","activity","activities"),
         "startup.txt": ("shell","cat",f"{AUTOMATION_ROOT}/smoke/startup.txt"),
+        "memory.txt": ("shell","cat",f"{AUTOMATION_ROOT}/smoke/memory.txt"),
     }
     for name,args in commands.items():
         try:

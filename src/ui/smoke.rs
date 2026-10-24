@@ -32,6 +32,24 @@ impl Smoke {
     pub(super) fn boot(&self, stage: &str) {
         eprintln!("smoke startup: {stage}");
         let _ = std::fs::write(self.root.join("startup.txt"), stage);
+        #[cfg(target_os = "android")]
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            use std::io::Write;
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.root.join("memory.txt"))
+            {
+                let _ = writeln!(file, "{stage}");
+                for line in status.lines().filter(|line| {
+                    ["VmRSS:", "VmData:", "VmSwap:"]
+                        .iter()
+                        .any(|key| line.starts_with(key))
+                }) {
+                    let _ = writeln!(file, "{line}");
+                }
+            }
+        }
     }
     pub(super) fn setup(&mut self, app: &mut App) {
         let stage = self.frame / 24;

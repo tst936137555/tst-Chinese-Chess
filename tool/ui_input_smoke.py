@@ -27,20 +27,28 @@ def main():
         try:
             read=lambda:json.loads(state.read_text(encoding="utf-8"))
             wait(read,lambda s:s["screen"]=="home" and bool(s["controls"]))
-            window=subprocess.check_output(["xdotool","search","--sync","--pid",str(app.pid)],text=True).splitlines()[0]
+            # Miniquad does not publish _NET_WM_PID; this disposable X display
+            # contains one game window, identified by its configured title.
+            window=subprocess.check_output(["xdotool","search","--sync","--onlyvisible","--name","tst .* Rust"],text=True,timeout=15).splitlines()[0]
+            print("X11 game window:",window,flush=True)
             def command(*args):subprocess.run(["xdotool",*map(str,args)],check=True)
+            def pointer_click(x,y,scale):
+                command("mousemove","--window",window,round(x*scale),round(y*scale))
+                command("mousedown",1)
+                try:wait(read,lambda s:s.get("pointerDown") is True)
+                finally:command("mouseup",1)
+                wait(read,lambda s:s.get("pointerDown") is False)
             def click(label):
                 s=wait(read,lambda s:any(c["label"]==label for c in s["controls"]))
                 c=next(c for c in s["controls"] if c["label"]==label)
-                command("mousemove","--window",window,round((c["x"]+c["w"]/2)*s["deviceScale"]),round((c["y"]+c["h"]/2)*s["deviceScale"]))
-                command("mousedown",1);time.sleep(.06);command("mouseup",1);time.sleep(.15)
+                pointer_click(c["x"]+c["w"]/2,c["y"]+c["h"]/2,s["deviceScale"])
             click("声音");wait(read,lambda s:s["modal"])
             command("key","--window",window,"Escape");wait(read,lambda s:not s["modal"])
             click("开始新对局");wait(read,lambda s:s["modal"]);click("执红开始")
             s=wait(read,lambda s:s["screen"]=="game" and not s["modal"])
             for file,rank in [(7,7),(4,7)]:
                 q=next(q for q in s["squares"] if q["file"]==file and q["rank"]==rank)
-                command("mousemove","--window",window,round(q["x"]*s["deviceScale"]),round(q["y"]*s["deviceScale"]));command("mousedown",1);time.sleep(.06);command("mouseup",1);time.sleep(.2)
+                pointer_click(q["x"],q["y"],s["deviceScale"])
             wait(read,lambda s:s["plies"]>=1 and s["saved"])
             click("结束对局");wait(read,lambda s:s["modal"]);click("认输并归档")
             wait(read,lambda s:any(c["label"]=="复盘此局" for c in s["controls"]))
