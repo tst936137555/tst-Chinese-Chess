@@ -74,6 +74,7 @@ pub async fn run() {
         let mouse = app.pointer();
         // Release semantics allow a left swipe in the archive without accidentally opening it.
         if is_mouse_button_pressed(MouseButton::Left) {
+            app.observed_pointer[0] += 1;
             app.drag = Some((mouse, None));
             app.dragged = false;
         }
@@ -95,6 +96,20 @@ pub async fn run() {
         };
         if app.close.waiting() {
             app.click = None;
+        }
+        if is_mouse_button_released(MouseButton::Left) {
+            app.observed_pointer[1] += 1;
+            if crate::platform::observation_path().is_some() {
+                app.observed_release = serde_json::json!({
+                    "point":[mouse.x,mouse.y],
+                    "start":app.drag.as_ref().map(|(p,_)|[p.x,p.y]),
+                    "dragged":app.dragged,
+                    "accepted":app.click.is_some(),
+                    "closing":app.close.waiting(),
+                    "modal":app.modal.is_some(),
+                    "canvas":[app.width,app.height],
+                });
+            }
         }
         if let Some(action) = crate::accessibility::take_action() {
             app.redraw = true;

@@ -105,6 +105,8 @@ struct App {
     board_cursor: Option<Square>,
     observed_controls: Vec<(String, Rect)>,
     observed_at: f64,
+    observed_pointer: [u64; 2],
+    observed_release: serde_json::Value,
     data: Data,
     engine: Engine,
     pending: Option<Pending>,

@@ -178,6 +178,8 @@ pub(super) async fn initialize() -> (App, Option<smoke::Smoke>, Option<profile::
         board_cursor: None,
         observed_controls: Vec::new(),
         observed_at: 0.,
+        observed_pointer: [0; 2],
+        observed_release: serde_json::Value::Null,
         data,
         engine: Engine::new(),
         pending: None,

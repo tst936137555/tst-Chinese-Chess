@@ -203,6 +203,10 @@ pub extern "system" fn Java_quad_1native_QuadNative_xiangqiInit(
 static SUSPENDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static PAUSE_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static BACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static BACK_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn back_serial() -> u64 {
+    BACK_SERIAL.load(std::sync::atomic::Ordering::Acquire)
+}
 pub fn suspended() -> bool {
     SUSPENDED.load(std::sync::atomic::Ordering::Acquire)
 }
@@ -310,6 +314,7 @@ pub extern "system" fn Java_quad_1native_QuadNative_xiangqiBack(
     _: jni::JNIEnv<'_>,
     _: jni::objects::JClass<'_>,
 ) {
+    BACK_SERIAL.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     BACK.store(true, std::sync::atomic::Ordering::Release);
 }
 

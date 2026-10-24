@@ -77,7 +77,12 @@ def main():
     def tap(label):
         s=wait(state,lambda s:s.get("sceneStable") and any(c["label"]==label for c in s.get("controls",[])))
         c=next(c for c in s["controls"] if c["label"]==label);dpi=s["deviceScale"];ox,oy=s["viewOrigin"]
-        adb("shell","input","tap",round((c["x"]+c["w"]/2)*dpi+ox),round((c["y"]+c["h"]/2)*dpi+oy));time.sleep(.25)
+        x=round((c["x"]+c["w"]/2)*dpi+ox);y=round((c["y"]+c["h"]/2)*dpi+oy)
+        before=s.get("pointerEvents",[0,0])[1]
+        print("Android tap:",label,x,y,"release",before,"back",s.get("backSerial"),flush=True)
+        adb("shell","input","tap",x,y)
+        after=wait(state,lambda s:s.get("pointerEvents",[0,0])[1]>before)
+        print("Android touch:",after.get("pointerEvents"),after.get("lastRelease"),"modal",after.get("modal"),"back",after.get("backSerial"),flush=True)
     wait(state,lambda s:s.get("screen")=="home")
     tap("开始新对局");wait(state,lambda s:s.get("modal"))
     adb("shell","input","keyevent",4);wait(state,lambda s:s.get("screen")=="home" and not s.get("modal") and s.get("sceneStable"));assert foreground()
