@@ -32,7 +32,13 @@ def main():
             window=subprocess.check_output(["xdotool","search","--sync","--onlyvisible","--name","tst .* Rust"],text=True,timeout=15).splitlines()[0]
             print("X11 game window:",window,flush=True)
             def command(*args):subprocess.run(["xdotool",*map(str,args)],check=True)
+            def activate():
+                try:
+                    result=subprocess.run(["xdotool","windowactivate","--sync",window],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
+                    return result.returncode==0 and subprocess.check_output(["xdotool","getactivewindow"],text=True,timeout=5).strip()==window
+                except (subprocess.CalledProcessError,subprocess.TimeoutExpired):return False
             def pointer_click(x,y,scale):
+                wait(activate,bool)
                 command("mousemove","--window",window,round(x*scale),round(y*scale))
                 wait(read,lambda s:len(s.get("pointer",[]))==2 and abs(s["pointer"][0]-x)<2 and abs(s["pointer"][1]-y)<2)
                 command("mousedown",1)
@@ -40,7 +46,8 @@ def main():
                 finally:command("mouseup",1)
                 wait(read,lambda s:s.get("pointerDown") is False)
             def click(label):
-                s=wait(read,lambda s:any(c["label"]==label for c in s["controls"]))
+                wait(activate,bool)
+                s=wait(read,lambda s:s.get("sceneStable") and any(c["label"]==label for c in s["controls"]))
                 c=next(c for c in s["controls"] if c["label"]==label)
                 pointer_click(c["x"]+c["w"]/2,c["y"]+c["h"]/2,s["deviceScale"])
             click("声音");wait(read,lambda s:s["modal"])
