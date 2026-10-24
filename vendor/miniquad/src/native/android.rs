@@ -42,6 +42,7 @@ extern "C" {
 /// Message enum is used to send data from the callbacks to the drawing thread.
 #[derive(Debug)]
 enum Message {
+    ActivityRecreated { activity: ndk_sys::jobject },
     SurfaceChanged {
         width: i32,
         height: i32,
@@ -182,6 +183,9 @@ impl MainThreadState {
 
     fn process_message(&mut self, msg: Message) {
         match msg {
+            Message::ActivityRecreated { activity } => unsafe {
+                replace_activity(activity);
+            },
             Message::SurfaceCreated { window } => unsafe {
                 self.update_surface(window);
             },
@@ -412,6 +416,7 @@ where
         // it is important to create GL context only after a first SurfaceChanged
         let window = 'a: loop {
             match rx.try_recv() {
+                Ok(Message::ActivityRecreated { activity }) => replace_activity(activity),
                 Ok(Message::SurfaceCreated { window }) => {
                     break 'a window;
                 }
@@ -420,6 +425,7 @@ where
         };
         let (screen_width, screen_height) = 'a: loop {
             match rx.try_recv() {
+                Ok(Message::ActivityRecreated { activity }) => replace_activity(activity),
                 Ok(Message::SurfaceChanged { width, height }) => {
                     break 'a (width as f32, height as f32);
                 }
@@ -559,8 +565,24 @@ pub unsafe extern "C" fn Java_quad_1native_QuadNative_activityOnCreate(
     activity: ndk_sys::jobject,
 ) {
     let env = attach_jni_env();
-    ACTIVITY = (**env).NewGlobalRef.unwrap()(env, activity);
-    quad_main();
+    let activity = (**env).NewGlobalRef.unwrap()(env, activity);
+    if MESSAGES_TX.with(|tx| tx.borrow().is_some()) {
+        // Activity recreation must not start a second macroquad runtime. Keep
+        // the rendering thread/context and rebind JNI calls in message order.
+        send_message(Message::ActivityRecreated { activity });
+    } else {
+        ACTIVITY = activity;
+        quad_main();
+    }
+}
+
+unsafe fn replace_activity(activity: ndk_sys::jobject) {
+    let env = attach_jni_env();
+    let previous = ACTIVITY;
+    ACTIVITY = activity;
+    if !previous.is_null() {
+        (**env).DeleteGlobalRef.unwrap()(env, previous);
+    }
 }
 
 #[no_mangle]
@@ -584,7 +606,10 @@ unsafe extern "C" fn Java_quad_1native_QuadNative_activityOnDestroy(
     _: *mut ndk_sys::JNIEnv,
     _: ndk_sys::jobject,
 ) {
-    send_message(Message::Destroy);
+    // The native runtime belongs to the process. Android may immediately
+    // recreate this Activity (including resource-overlay changes at startup).
+    // SurfaceDestroyed releases its window; Pause keeps workers/audio idle.
+    send_message(Message::Pause);
 }
 
 #[no_mangle]

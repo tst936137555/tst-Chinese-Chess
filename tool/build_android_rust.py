@@ -82,7 +82,7 @@ def main():
 <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35"/>
 <uses-feature android:glEsVersion="0x00020000" android:required="true"/>
 <application android:label="tst自用象棋" android:icon="@mipmap/ic_launcher" android:hasCode="true" android:debuggable="false" android:enableOnBackInvokedCallback="true" android:extractNativeLibs="true" android:theme="@android:style/Theme.Material.Light.NoActionBar.Fullscreen">
-<activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|keyboardHidden|screenSize" android:screenOrientation="unspecified">
+<activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask" android:configChanges="orientation|keyboardHidden|screenSize" android:screenOrientation="unspecified">
 <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
 </activity></application></manifest>''', encoding="utf-8")
     assets = work / "assets"

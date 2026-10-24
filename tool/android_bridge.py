@@ -17,7 +17,7 @@ def activity_source(template, package="com.tst.xiangqi.rust"):
     # Leave Back dispatch to Activity/OnBackInvokedDispatcher. Forwarding it as
     # a game key as well can close a newly opened dialog with a second event.
     main_activity = main_activity.replace("    public boolean onKey(View v, int keyCode, KeyEvent event) {", "    public boolean onKey(View v, int keyCode, KeyEvent event) {\n        if (keyCode == KeyEvent.KEYCODE_BACK) return false;")
-    main_activity = main_activity.replace("    //% MAIN_ACTIVITY_BODY", "    //% MAIN_ACTIVITY_BODY\n    public void xiangqiBackground() { runOnUiThread(() -> moveTaskToBack(true)); }")
+    main_activity = main_activity.replace("    //% MAIN_ACTIVITY_BODY", "    //% MAIN_ACTIVITY_BODY\n    public void xiangqiBackground() { runOnUiThread(() -> moveTaskToBack(true)); }\n    @Override protected void onNewIntent(Intent intent) {\n        super.onNewIntent(intent);\n        if (getIntent().getBooleanExtra(\"xiangqiObserve\", false) && intent.getBooleanExtra(\"xiangqiRecreate\", false)) recreate();\n    }")
     main_activity = main_activity.replace("QuadNative.xiangqiInit();", "QuadNative.xiangqiInit();\n        if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, () -> QuadNative.xiangqiBack()); }")
     # Include display cutouts, including landscape notches, in the template's safe padding.
     main_activity = main_activity.replace("insets.getInsets(WindowInsets.Type.systemBars())", "insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout())")

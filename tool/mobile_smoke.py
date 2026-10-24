@@ -93,6 +93,9 @@ def main():
         adb("shell","input","tap",round(q["x"]*dpi+ox),round(q["y"]*dpi+oy));time.sleep(.25)
     s=wait(state,lambda s:s.get("plies",0)>=2 and s.get("saved") and not s.get("pending"),45)
     before=s["pauseSerial"];tap("结束对局")
+    launch("--ez","xiangqiRecreate","true")
+    wait(state,lambda s:s.get("pauseSerial",0)>before and s.get("modal") and s.get("sceneStable"),45)
+    before=state()["pauseSerial"]
     adb("shell","input","keyevent",3);time.sleep(.5);launch()
     wait(state,lambda s:s.get("pauseSerial",0)>before and any(c["label"]=="按当前局势结算" for c in s.get("controls",[])),45)
     adb("shell","input","keyevent",4);wait(state,lambda s:s.get("screen")=="game" and not s.get("modal"));assert foreground()
@@ -115,7 +118,7 @@ def main():
     launch();wait(state,lambda s:s.get("screen")=="home");assert foreground()
     tap("继续未完成对局");resumed=wait(state,lambda s:s.get("screen")=="game")
     assert resumed["fen"]==saved["fen"] and resumed["plies"]==saved["plies"]
-    result["osInput"]={"backModal":"passed","foregroundActivity":"passed","nativeAiReply":"passed","endAnalysisPauseResume":"passed","rotation":"passed","coldResume":"passed","homeBackResume":"passed"}
+    result["osInput"]={"backModal":"passed","foregroundActivity":"passed","nativeAiReply":"passed","activityRecreation":"passed","endAnalysisPauseResume":"passed","rotation":"passed","coldResume":"passed","homeBackResume":"passed"}
     output=ROOT/"target/android-smoke";output.mkdir(parents=True,exist_ok=True)
     (output/"result.json").write_text(json.dumps(result,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     print(json.dumps(result,indent=2,ensure_ascii=False))
