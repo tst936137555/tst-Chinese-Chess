@@ -23,6 +23,7 @@ class AndroidBridgeTest(unittest.TestCase):
             self.assertLess(source.index(hook), source.index("QuadNative.activityOnCreate(this);"))
         self.assertIn("registerOnBackInvokedCallback", source)
         self.assertIn("moveTaskToBack(true)", source)
+        self.assertIn("if (keyCode == KeyEvent.KEYCODE_BACK) return false;", source)
         self.assertNotIn("super.onBackPressed();", source)
         native = native_source((ROOT/"vendor/miniquad/java/QuadNative.java").read_text(encoding="utf-8"))
         for method in ("xiangqiInit", "xiangqiSmoke", "xiangqiObserve", "xiangqiPaused", "xiangqiNameEdit", "xiangqiAccessibilityActivate"):

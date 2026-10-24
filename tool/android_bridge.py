@@ -14,6 +14,9 @@ def activity_source(template, package="com.tst.xiangqi.rust"):
     main_activity = main_activity.replace("//% MAIN_ACTIVITY_ON_PAUSE", "QuadNative.xiangqiPaused(true);")
     main_activity = main_activity.replace("//% MAIN_ACTIVITY_ON_RESUME", "QuadNative.xiangqiPaused(false);")
     main_activity = main_activity.replace("        super.onBackPressed();", "        QuadNative.xiangqiBack();")
+    # Leave Back dispatch to Activity/OnBackInvokedDispatcher. Forwarding it as
+    # a game key as well can close a newly opened dialog with a second event.
+    main_activity = main_activity.replace("    public boolean onKey(View v, int keyCode, KeyEvent event) {", "    public boolean onKey(View v, int keyCode, KeyEvent event) {\n        if (keyCode == KeyEvent.KEYCODE_BACK) return false;")
     main_activity = main_activity.replace("    //% MAIN_ACTIVITY_BODY", "    //% MAIN_ACTIVITY_BODY\n    public void xiangqiBackground() { runOnUiThread(() -> moveTaskToBack(true)); }")
     main_activity = main_activity.replace("QuadNative.xiangqiInit();", "QuadNative.xiangqiInit();\n        if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, () -> QuadNative.xiangqiBack()); }")
     # Include display cutouts, including landscape notches, in the template's safe padding.

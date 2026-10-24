@@ -65,12 +65,12 @@ def main():
         output=adb("shell","cat",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False)
         return json.loads(output.stdout) if output.returncode==0 else {}
     def tap(label):
-        s=wait(state,lambda s:any(c["label"]==label for c in s.get("controls",[])))
+        s=wait(state,lambda s:s.get("sceneStable") and any(c["label"]==label for c in s.get("controls",[])))
         c=next(c for c in s["controls"] if c["label"]==label);dpi=s["deviceScale"];ox,oy=s["viewOrigin"]
         adb("shell","input","tap",round((c["x"]+c["w"]/2)*dpi+ox),round((c["y"]+c["h"]/2)*dpi+oy));time.sleep(.25)
     wait(state,lambda s:s.get("screen")=="home")
     tap("开始新对局");wait(state,lambda s:s.get("modal"))
-    adb("shell","input","keyevent",4);wait(state,lambda s:s.get("screen")=="home" and not s.get("modal"));assert foreground()
+    adb("shell","input","keyevent",4);wait(state,lambda s:s.get("screen")=="home" and not s.get("modal") and s.get("sceneStable"));assert foreground()
     tap("开始新对局");tap("执红开始")
     s=wait(state,lambda s:s.get("screen")=="game" and not s.get("modal") and s.get("sceneStable") and any(c["label"]=="结束对局" for c in s.get("controls",[])))
     for file,rank in [(7,7),(4,7)]:
