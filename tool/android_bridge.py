@@ -14,6 +14,7 @@ def activity_source(template, package="com.tst.xiangqi.rust"):
     main_activity = main_activity.replace("//% MAIN_ACTIVITY_ON_PAUSE", "QuadNative.xiangqiPaused(true);")
     main_activity = main_activity.replace("//% MAIN_ACTIVITY_ON_RESUME", "QuadNative.xiangqiPaused(false);")
     main_activity = main_activity.replace("        super.onBackPressed();", "        QuadNative.xiangqiBack();")
+    main_activity = main_activity.replace("    //% MAIN_ACTIVITY_BODY", "    //% MAIN_ACTIVITY_BODY\n    public void xiangqiBackground() { runOnUiThread(() -> moveTaskToBack(true)); }")
     main_activity = main_activity.replace("QuadNative.xiangqiInit();", "QuadNative.xiangqiInit();\n        if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, () -> QuadNative.xiangqiBack()); }")
     # Include display cutouts, including landscape notches, in the template's safe padding.
     main_activity = main_activity.replace("insets.getInsets(WindowInsets.Type.systemBars())", "insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout())")

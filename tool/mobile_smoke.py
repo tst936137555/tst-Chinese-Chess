@@ -95,7 +95,12 @@ def main():
     wait(state,lambda s:s.get("screen")=="home");tap("继续未完成对局")
     restored=wait(state,lambda s:s.get("screen")=="game")
     assert restored["fen"]==saved["fen"] and restored["plies"]==saved["plies"]
-    result["osInput"]={"backModal":"passed","foregroundActivity":"passed","nativeAiReply":"passed","endAnalysisPauseResume":"passed","rotation":"passed","coldResume":"passed"}
+    tap("返回");wait(state,lambda s:s.get("screen")=="home" and s.get("sceneStable"))
+    adb("shell","input","keyevent",4);wait(foreground,lambda active:not active)
+    launch();wait(state,lambda s:s.get("screen")=="home");assert foreground()
+    tap("继续未完成对局");resumed=wait(state,lambda s:s.get("screen")=="game")
+    assert resumed["fen"]==saved["fen"] and resumed["plies"]==saved["plies"]
+    result["osInput"]={"backModal":"passed","foregroundActivity":"passed","nativeAiReply":"passed","endAnalysisPauseResume":"passed","rotation":"passed","coldResume":"passed","homeBackResume":"passed"}
     output=ROOT/"target/android-smoke";output.mkdir(parents=True,exist_ok=True)
     (output/"result.json").write_text(json.dumps(result,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     print(json.dumps(result,indent=2,ensure_ascii=False))

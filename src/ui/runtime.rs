@@ -26,6 +26,17 @@ pub async fn run() {
             .close
             .can_exit(app.saves.pending, !app.saves.failed.is_empty())
         {
+            #[cfg(target_os = "android")]
+            {
+                // Android's native loop does not handle desktop quit_ordered.
+                // Keep the renderer alive while the saved root task is backgrounded.
+                app.close.cancel();
+                if let Err(error) = crate::platform::background_app() {
+                    app.notice = format!("无法返回桌面：{error}");
+                    app.redraw = true;
+                }
+            }
+            #[cfg(not(target_os = "android"))]
             break;
         }
         if app.close.waiting() && !app.saves.failed.is_empty() {

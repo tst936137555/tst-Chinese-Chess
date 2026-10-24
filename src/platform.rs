@@ -1,5 +1,17 @@
 use std::path::PathBuf;
 
+#[cfg(target_os = "android")]
+pub fn background_app() -> Result<(), String> {
+    use jni::objects::JObject;
+    let vm = JVM.get().ok_or("Android 运行环境尚未就绪")?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let activity =
+        unsafe { JObject::from_raw(macroquad::miniquad::native::android::ACTIVITY.cast()) };
+    env.call_method(&activity, "xiangqiBackground", "()V", &[])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn observation_path() -> Option<PathBuf> {
     #[cfg(target_os = "android")]
     if let Some(path) = OBSERVATION.get() {

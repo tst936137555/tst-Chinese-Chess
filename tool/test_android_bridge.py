@@ -22,6 +22,7 @@ class AndroidBridgeTest(unittest.TestCase):
         for hook in ("QuadNative.xiangqiInit();", "QuadNative.xiangqiSmoke(", "QuadNative.xiangqiObserve("):
             self.assertLess(source.index(hook), source.index("QuadNative.activityOnCreate(this);"))
         self.assertIn("registerOnBackInvokedCallback", source)
+        self.assertIn("moveTaskToBack(true)", source)
         self.assertNotIn("super.onBackPressed();", source)
         native = native_source((ROOT/"vendor/miniquad/java/QuadNative.java").read_text(encoding="utf-8"))
         for method in ("xiangqiInit", "xiangqiSmoke", "xiangqiObserve", "xiangqiPaused", "xiangqiNameEdit", "xiangqiAccessibilityActivate"):
