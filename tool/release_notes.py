@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from build_info import ROOT,version_info
@@ -40,7 +41,9 @@ def release_assets(root,version,android_build_tools=None):
             if any(evidence.get(k)!=v or type(evidence.get(k)) is not type(v) for k,v in expected.items()):
                 raise ValueError("Android release metadata, certificate or APK checksum mismatch")
             if android_build_tools is not None:
-                verify_release(path,android_build_tools/"apksigner",android_build_tools/"aapt",version,build)
+                signer=android_build_tools/("apksigner.bat" if os.name=="nt" else "apksigner")
+                aapt=android_build_tools/("aapt.exe" if os.name=="nt" else "aapt")
+                verify_release(path,signer,aapt,version,build)
         lines.append(f"{digest}  {path.name}")
     (root/"SHA256SUMS").write_text("\n".join(lines)+"\n",encoding="utf-8")
     return artifacts
