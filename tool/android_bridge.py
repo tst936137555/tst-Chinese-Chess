@@ -14,6 +14,8 @@ def activity_source(template, package="com.tst.xiangqi.rust"):
     main_activity = main_activity.replace("//% MAIN_ACTIVITY_ON_PAUSE", "QuadNative.xiangqiPaused(true);")
     main_activity = main_activity.replace("//% MAIN_ACTIVITY_ON_RESUME", "QuadNative.xiangqiPaused(false);")
     main_activity = main_activity.replace("        super.onBackPressed();", "        QuadNative.xiangqiBack();")
+    main_activity = main_activity.replace("        int pointerCount = event.getPointerCount();", '        if (((Activity)getContext()).getIntent().getBooleanExtra("xiangqiObserve", false)) Log.i("XQ_INPUT", "surface action=" + event.getActionMasked() + " x=" + event.getX() + " y=" + event.getY());\n        int pointerCount = event.getPointerCount();')
+    main_activity = main_activity.replace("    //% MAIN_ACTIVITY_BODY", '    //% MAIN_ACTIVITY_BODY\n    @Override public boolean dispatchTouchEvent(MotionEvent event) {\n        if (getIntent().getBooleanExtra("xiangqiObserve", false)) Log.i("XQ_INPUT", "activity action=" + event.getActionMasked() + " x=" + event.getX() + " y=" + event.getY());\n        return super.dispatchTouchEvent(event);\n    }')
     # Leave Back dispatch to Activity/OnBackInvokedDispatcher. Forwarding it as
     # a game key as well can close a newly opened dialog with a second event.
     main_activity = main_activity.replace("    public boolean onKey(View v, int keyCode, KeyEvent event) {", "    public boolean onKey(View v, int keyCode, KeyEvent event) {\n        if (keyCode == KeyEvent.KEYCODE_BACK) return false;")

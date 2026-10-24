@@ -16,6 +16,8 @@ def collect_diagnostics():
     commands={
         "logcat.txt": ("logcat","-d"),
         "activity.txt": ("shell","dumpsys","activity","activities"),
+        "window.txt": ("shell","dumpsys","window","windows"),
+        "input.txt": ("shell","dumpsys","input"),
         "startup.txt": ("shell","cat",f"{AUTOMATION_ROOT}/smoke/startup.txt"),
         "memory.txt": ("shell","cat",f"{AUTOMATION_ROOT}/smoke/memory.txt"),
     }
@@ -67,9 +69,6 @@ def main():
     adb("install","-r",apk,timeout=120);adb("shell","am","force-stop",PACKAGE,timeout=60)
     adb("logcat","-c")
     adb("shell","rm","-f",f"{AUTOMATION_ROOT}/smoke/result.json",f"{AUTOMATION_ROOT}/smoke/startup.txt",check=False,timeout=60)
-    launch("--ez","xiangqiSmoke","true")
-    result=wait_for_smoke()
-    print("Android smoke complete; start OS input checks",flush=True)
     adb("shell","am","force-stop",PACKAGE,timeout=60);adb("shell","rm","-f",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False,timeout=60);launch("--ez","xiangqiObserve","true")
     def state():
         output=adb("shell","cat",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False)
@@ -118,6 +117,10 @@ def main():
     launch();wait(state,lambda s:s.get("screen")=="home");assert foreground()
     tap("继续未完成对局");resumed=wait(state,lambda s:s.get("screen")=="game")
     assert resumed["fen"]==saved["fen"] and resumed["plies"]==saved["plies"]
+    print("Android OS input complete; start rendering/engine scenes",flush=True)
+    adb("shell","am","force-stop",PACKAGE,timeout=60)
+    launch("--ez","xiangqiSmoke","true")
+    result=wait_for_smoke()
     result["osInput"]={"backModal":"passed","foregroundActivity":"passed","nativeAiReply":"passed","activityRecreation":"passed","endAnalysisPauseResume":"passed","rotation":"passed","coldResume":"passed","homeBackResume":"passed"}
     output=ROOT/"target/android-smoke";output.mkdir(parents=True,exist_ok=True)
     (output/"result.json").write_text(json.dumps(result,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
