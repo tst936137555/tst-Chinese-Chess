@@ -52,15 +52,14 @@ jobs:
             exit 0
           fi
 
-          # 镜像也使用正式 Release，但不占用应用正式版本的 Latest 位置。
+          # 引擎镜像保留预发布状态，不占用应用正式版本的 Latest 位置。
           # 创建失败应中止，不能把网络或权限错误误报为“已存在”。
           if ! gh release view "$mirror_tag" >/dev/null 2>&1; then
             gh release create "$mirror_tag" \
               --title "Engine mirror" \
               --notes "由 Engine Mirror 工作流自动维护：转存 tool/engine_manifest.json 钉住的上游引擎/NNUE 资产，作为上游下架时的回退下载源。请勿手动改动，资产清单以 manifest 为准。" \
-              --latest=false
+              --prerelease --latest=false
           fi
-          gh release edit "$mirror_tag" --draft=false --prerelease=false --latest=false
 
           upload_one() {
             # $1=上游URL $2=SHA256(可空) $3=镜像资产名（= manifest mirrorUrl 的 basename）
