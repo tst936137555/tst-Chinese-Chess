@@ -77,7 +77,8 @@ def collect_diagnostics(uid,container,dest):
 def main():
     app=Path(sys.argv[1]).resolve()
     dest=Path("target/ios-smoke").resolve();dest.mkdir(parents=True,exist_ok=True)
-    devices=json.loads(sim("list","devices","available","--json"))["devices"]
+    print("iOS: waiting for CoreSimulator device inventory",flush=True)
+    devices=json.loads(sim("list","devices","available","--json",timeout=180))["devices"]
     candidates=[d for runtime,ds in devices.items() if "iOS" in runtime for d in ds if d.get("isAvailable") and "iPhone" in d["name"]]
     if not candidates:raise SystemExit("No available iOS simulator")
     device=next((d for d in candidates if d["state"]=="Booted"),candidates[0]);uid=device["udid"]

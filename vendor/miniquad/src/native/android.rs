@@ -6,7 +6,7 @@ use crate::{
     },
 };
 
-use std::{cell::RefCell, sync::mpsc, thread, time::Duration};
+use std::{sync::{mpsc, OnceLock}, thread, time::Duration};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TOUCH_RECEIVED: AtomicU64 = AtomicU64::new(0);
@@ -82,15 +82,12 @@ enum Message {
 }
 unsafe impl Send for Message {}
 
-thread_local! {
-    static MESSAGES_TX: RefCell<Option<mpsc::Sender<Message>>> = RefCell::new(None);
-}
+// JNI callbacks and timer wakes must address the same process-owned runtime,
+// regardless of which Android callback thread delivers an event.
+static MESSAGES_TX: OnceLock<mpsc::Sender<Message>> = OnceLock::new();
 
 fn send_message(message: Message) {
-    MESSAGES_TX.with(|tx| {
-        let mut tx = tx.borrow_mut();
-        tx.as_mut().unwrap().send(message).unwrap();
-    })
+    MESSAGES_TX.get().expect("Android runtime not initialized").send(message).unwrap();
 }
 
 pub static mut ACTIVITY: ndk_sys::jobject = std::ptr::null_mut();
@@ -414,8 +411,7 @@ where
 
     let (tx, rx) = mpsc::channel();
 
-    let tx2 = tx.clone();
-    MESSAGES_TX.with(move |messages_tx| *messages_tx.borrow_mut() = Some(tx2));
+    MESSAGES_TX.set(tx.clone()).expect("Android runtime already initialized");
 
     thread::spawn(move || {
         let mut libegl = LibEgl::try_load().expect("Cant load LibEGL");
@@ -576,7 +572,7 @@ pub unsafe extern "C" fn Java_quad_1native_QuadNative_activityOnCreate(
 ) {
     let env = attach_jni_env();
     let activity = (**env).NewGlobalRef.unwrap()(env, activity);
-    if MESSAGES_TX.with(|tx| tx.borrow().is_some()) {
+    if MESSAGES_TX.get().is_some() {
         // Activity recreation must not start a second macroquad runtime. Keep
         // the rendering thread/context and rebind JNI calls in message order.
         send_message(Message::ActivityRecreated { activity });
