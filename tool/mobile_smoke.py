@@ -87,9 +87,10 @@ def main():
     adb("shell","input","keyevent",4);wait(state,lambda s:s.get("screen")=="home" and not s.get("modal") and s.get("sceneStable"));assert foreground()
     tap("开始新对局");tap("执红开始")
     s=wait(state,lambda s:s.get("screen")=="game" and not s.get("modal") and s.get("sceneStable") and any(c["label"]=="结束对局" for c in s.get("controls",[])))
-    for file,rank in [(7,7),(4,7)]:
+    for step,(file,rank) in enumerate([(7,7),(4,7)]):
         q=next(q for q in s["squares"] if q["file"]==file and q["rank"]==rank);dpi=s["deviceScale"];ox,oy=s["viewOrigin"]
-        adb("shell","input","tap",round(q["x"]*dpi+ox),round(q["y"]*dpi+oy));time.sleep(.25)
+        adb("shell","input","tap",round(q["x"]*dpi+ox),round(q["y"]*dpi+oy))
+        s=wait(state,lambda s:s.get("selectedSquare")==[file,rank] if step==0 else s.get("plies",0)>=1,45)
     s=wait(state,lambda s:s.get("plies",0)>=2 and s.get("saved") and not s.get("pending"),45)
     before=s["pauseSerial"];tap("结束对局")
     launch("--ez","xiangqiRecreate","true")
