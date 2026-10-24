@@ -7,6 +7,15 @@ use crate::{
 };
 
 use std::{cell::RefCell, sync::mpsc, thread, time::Duration};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TOUCH_RECEIVED: AtomicU64 = AtomicU64::new(0);
+static TOUCH_DISPATCHED: AtomicU64 = AtomicU64::new(0);
+
+/// Delivery counters for the optional native-input regression observer.
+pub fn touch_delivery() -> [u64; 2] {
+    [TOUCH_RECEIVED.load(Ordering::Relaxed), TOUCH_DISPATCHED.load(Ordering::Relaxed)]
+}
 
 pub use crate::native::gl::{self, *};
 
@@ -206,6 +215,7 @@ impl MainThreadState {
                 x,
                 y,
             } => {
+                TOUCH_DISPATCHED.fetch_add(1, Ordering::Relaxed);
                 self.event_handler.touch_event(phase, touch_id, x, y);
             }
             Message::Character { character } => {
@@ -653,6 +663,7 @@ extern "C" fn Java_quad_1native_QuadNative_surfaceOnTouch(
     x: ndk_sys::jfloat,
     y: ndk_sys::jfloat,
 ) {
+    TOUCH_RECEIVED.fetch_add(1, Ordering::Relaxed);
     let phase = match action {
         0 => TouchPhase::Moved,
         1 => TouchPhase::Ended,

@@ -1,5 +1,12 @@
 use std::path::PathBuf;
 
+pub fn touch_delivery() -> [u64; 2] {
+    #[cfg(target_os = "android")]
+    return macroquad::miniquad::native::android::touch_delivery();
+    #[cfg(not(target_os = "android"))]
+    [0; 2]
+}
+
 #[cfg(target_os = "android")]
 pub fn background_app() -> Result<(), String> {
     use jni::objects::JObject;
