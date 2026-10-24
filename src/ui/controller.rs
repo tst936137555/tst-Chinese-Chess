@@ -1,5 +1,15 @@
 use super::*;
 impl App {
+    pub(super) fn request_close(&mut self) {
+        if self.close != crate::session::CloseState::Open {
+            return;
+        }
+        self.save_review_cache();
+        self.cancel();
+        self.close.request();
+        self.notice = "正在保存后退出...".into();
+        self.enqueue(Command::Flush);
+    }
     pub(super) fn recover_branches(&mut self) {
         let failed = std::mem::take(&mut self.saves.failed);
         for command in failed {

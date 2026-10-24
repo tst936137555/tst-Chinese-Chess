@@ -46,7 +46,19 @@ jobs:
         run: cargo build --release --locked --examples --bin tst-xiangqi
       - name: Windows input, save recovery and UIA focus
         if: runner.os == 'Windows'
-        run: python tool/windows_input_smoke.py target/release/tst-xiangqi.exe
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'mesa.7z'
+          $mesa = Join-Path $env:RUNNER_TEMP 'mesa'
+          Invoke-WebRequest -Uri 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z' -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695') { throw 'Mesa archive checksum mismatch' }
+          & 7z x $archive "-o$mesa" 'x64/*.dll' -y
+          if ($LASTEXITCODE -ne 0) { throw 'Mesa extraction failed' }
+          Copy-Item -Path "$mesa/x64/*.dll" -Destination target/release
+          python tool/windows_input_smoke.py target/release/tst-xiangqi.exe
       - name: macOS native input
         if: runner.os == 'macOS' && inputs.native_macos_input
         run: python tool/macos_input_smoke.py target/release/tst-xiangqi

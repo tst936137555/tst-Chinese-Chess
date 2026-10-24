@@ -58,7 +58,10 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: verification-ios-aarch64-apple-ios-sim
-      - run: unzip rust-ios-aarch64-apple-ios-sim.zip -d dist/ios
+      - name: Extract simulator app
+        run: |
+          mkdir -p dist/ios
+          unzip rust-ios-aarch64-apple-ios-sim.zip -d dist/ios
       - name: Install and launch simulator app
         timeout-minutes: 10
         run: python tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app

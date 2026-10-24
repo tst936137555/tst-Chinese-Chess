@@ -19,12 +19,8 @@ pub async fn run() {
         }
         app.handle_lifecycle();
         app.poll();
-        if is_quit_requested() && app.close == crate::session::CloseState::Open {
-            app.save_review_cache();
-            app.cancel();
-            app.close.request();
-            app.notice = "正在保存后退出...".into();
-            app.enqueue(Command::Flush);
+        if is_quit_requested() {
+            app.request_close();
         }
         if app
             .close
@@ -247,7 +243,7 @@ pub async fn run() {
         if is_key_pressed(KeyCode::Escape) || native_back {
             app.redraw = true;
             if native_back && app.screen == Screen::Home && app.modal.is_none() {
-                macroquad::miniquad::window::request_quit();
+                app.request_close();
             } else if app.modal.is_some() {
                 app.accessible.clear();
                 if matches!(app.modal, Some(Modal::End(_))) {
@@ -307,13 +303,13 @@ pub async fn run() {
         if let Some(s) = &mut smoke
             && s.capture(&mut app)
         {
-            macroquad::miniquad::window::request_quit();
+            app.request_close();
             smoke = None;
         }
         if let Some(profiler) = &mut profile
             && profiler.capture(&app, paint)
         {
-            macroquad::miniquad::window::request_quit();
+            app.request_close();
             profile = None;
         }
         if is_key_pressed(KeyCode::Tab) {

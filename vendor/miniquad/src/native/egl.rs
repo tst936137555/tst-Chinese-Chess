@@ -150,6 +150,7 @@ crate::declare_module! {
 pub enum EglError {
     NoDisplay,
     InitializeFailed,
+    NoConfig,
     CreateContextFailed,
 }
 
@@ -158,6 +159,7 @@ impl Display for EglError {
         match self {
             Self::NoDisplay => write!(f, "No display"),
             Self::InitializeFailed => write!(f, "Failed to initialize context"),
+            Self::NoConfig => write!(f, "No compatible EGL window configuration"),
             Self::CreateContextFailed => write!(f, "Faild to create context"),
         }
     }
@@ -185,7 +187,7 @@ pub unsafe fn create_egl_context(
 
     let alpha_size = if alpha { 8 } else { 0 };
     #[rustfmt::skip]
-    let cfg_attributes = [
+    let mut cfg_attributes = [
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_RED_SIZE, 8,
         EGL_GREEN_SIZE, 8,
@@ -193,26 +195,37 @@ pub unsafe fn create_egl_context(
         EGL_ALPHA_SIZE, alpha_size,
         EGL_DEPTH_SIZE, 16,
         EGL_STENCIL_SIZE, 0,
-        EGL_SAMPLES, sample_count as u32,
+        EGL_SAMPLES, if sample_count > 1 { sample_count as u32 } else { 0 },
         EGL_NONE,
     ];
     let mut available_cfgs: Vec<EGLConfig> = vec![null_mut(); 32];
-    let mut cfg_count = 0;
+    let mut cfg_count: EGLint = 0;
 
-    (egl.eglChooseConfig)(
-        display,
-        cfg_attributes.as_ptr() as _,
-        available_cfgs.as_ptr() as _,
-        32,
-        &mut cfg_count as *mut _ as *mut _,
-    );
-    assert!(cfg_count > 0);
-    assert!(cfg_count <= 32);
+    for samples in [sample_count, 0] {
+        // Multisampling is optional: software EGL and some devices expose only
+        // single-sample window surfaces. EGL_SAMPLES counts actual samples (0
+        // for no multisample buffer), unlike Conf's sample_count=1 convention.
+        cfg_attributes[15] = if samples > 1 { samples as u32 } else { 0 };
+        let chosen = (egl.eglChooseConfig)(
+            display,
+            cfg_attributes.as_ptr() as _,
+            available_cfgs.as_mut_ptr() as _,
+            available_cfgs.len() as _,
+            &mut cfg_count,
+        );
+        if chosen != 0 && cfg_count > 0 {
+            break;
+        }
+        cfg_count = 0;
+    }
+    if cfg_count == 0 {
+        return Err(EglError::NoConfig);
+    }
 
     // find config with 8-bit rgb buffer if available, ndk sample does not trust egl spec
     let mut config: EGLConfig = null_mut();
     let mut exact_cfg_found = false;
-    for c in &mut available_cfgs[0..cfg_count] {
+    for c in &mut available_cfgs[..cfg_count as usize] {
         let mut r: i32 = 0;
         let mut g: i32 = 0;
         let mut b: i32 = 0;
