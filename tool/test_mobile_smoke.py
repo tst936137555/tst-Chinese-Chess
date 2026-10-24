@@ -10,6 +10,14 @@ import mobile_smoke
 
 
 class AndroidSmokeTest(unittest.TestCase):
+    def test_process_can_be_spawned_after_activity_launch_returns(self):
+        completed=lambda code,data:subprocess.CompletedProcess([],code,data,b"")
+        with patch.object(mobile_smoke,"adb",side_effect=[
+            completed(1,b""),completed(1,b""),completed(1,b""),
+            completed(0,b"font-load"),completed(0,b'{"scenes":29,"realEngine":"passed"}'),
+        ]),patch.object(mobile_smoke.time,"sleep"):
+            self.assertEqual(mobile_smoke.wait_for_smoke()["scenes"],29)
+
     def test_stalled_startup_reports_native_stage(self):
         def command(*args, **kwargs):
             value = b"native-start" if args[-1].endswith("/smoke/startup.txt") else b"123"

@@ -27,12 +27,16 @@ def collect_diagnostics():
             (output/name).write_text(str(error),encoding="utf-8")
 def launch(*args):
     print("Android launch:"," ".join(args) or "resume",flush=True)
-    return adb("shell","am","start","--activity-single-top","-n",f"{PACKAGE}/.MainActivity",*args,timeout=60)
+    result=adb("shell","am","start","-W","--activity-single-top","-n",f"{PACKAGE}/.MainActivity",*args,timeout=60)
+    details=(result.stdout+result.stderr).decode(errors="replace")
+    print(details.strip(),flush=True)
+    if "Error:" in details or "Status: timeout" in details:raise AssertionError(f"Android activity launch failed: {details}")
+    return result
 def foreground():
     dump=adb("shell","dumpsys","activity","activities").stdout.decode(errors="replace")
     return any(PACKAGE in line and ("mResumedActivity" in line or "topResumedActivity" in line) for line in dump.splitlines())
 def wait_for_smoke(timeout=300, stall_timeout=90):
-    started=changed=time.monotonic();last_stage=None
+    started=changed=time.monotonic();last_stage=None;seen_process=False
     while time.monotonic()-started < timeout:
         output=adb("shell","cat",f"{AUTOMATION_ROOT}/smoke/startup.txt",check=False)
         stage=output.stdout.decode(errors="replace").strip() if output.returncode==0 else "waiting for native startup"
@@ -46,8 +50,12 @@ def wait_for_smoke(timeout=300, stall_timeout=90):
                 if result.get("scenes")!=29 or result.get("realEngine")!="passed":
                     raise AssertionError(f"Android smoke returned an unsuccessful result: {result}")
                 return result
-        if not adb("shell","pidof",PACKAGE,check=False).stdout.strip():
+        running=bool(adb("shell","pidof",PACKAGE,check=False).stdout.strip())
+        if running:seen_process=True
+        elif seen_process or stage!="waiting for native startup":
             raise AssertionError(f"Android app exited before smoke result at {last_stage}")
+        elif time.monotonic()-started>=30:
+            raise AssertionError("Android app did not start within 30s")
         if time.monotonic()-changed>=stall_timeout:
             raise AssertionError(f"Android smoke stalled for {stall_timeout}s at {last_stage}")
         time.sleep(.5)
