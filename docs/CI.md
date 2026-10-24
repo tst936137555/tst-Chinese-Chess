@@ -23,8 +23,6 @@ python tool/windows_input_smoke.py target/release/tst-xiangqi.exe
 
 Linux 运行图形测试需要 Xvfb、Openbox 和 ALSA null sink，具体命令见 `desktop.yml`。`tool/check.ps1` 的 `-Toolchain` 可选择已安装的本机 Rust host，例如 Windows GNU 工具链。工作流语法本地使用 actionlint 1.7.7 校验；CI 从固定 Go module 版本执行相同工具。
 
-上次运行 `39953175606` 的失败证据：iOS 使用了不存在的 `UIAccessibilityConvertFrameToScreen`；Linux 停在最后场景之后，注入的失败保存会妨碍正常退出；Android 在进入 UI 前没有产生启动文件，原日志截断无法进一步定位。现在修正 UIKit 函数，清理合成保存失败，并为 Android 在 EGL/音频初始化前记录 `native-start`、保留完整日志、使用普通 Pixel 模拟器配置。Android 原故障仍需新的模拟器运行确认，不能只凭脚本测试认定通过。
-
 本地 Windows 检查不能替代 GitHub 的 Linux、macOS、Android、iOS 运行结果。签名、目标设备安装、读屏、输入法组合和功耗仍需对应设备验收。macOS 原生输入测试要求 runner 已有辅助功能权限，因此仅在手动工作流勾选时运行；其余平台检查始终执行。
 
 

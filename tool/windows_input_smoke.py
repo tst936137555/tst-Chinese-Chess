@@ -82,10 +82,12 @@ def main():
             origin=wintypes.POINT(0,0);assert user.ClientToScreen(window,ctypes.byref(origin))
             scale=state.get("deviceScale",1)
             user.SetCursorPos(round(origin.x+x*scale),round(origin.y+y*scale))
+            wait(read,lambda s:len(s.get("pointer",[]))==2 and abs(s["pointer"][0]-x)<2 and abs(s["pointer"][1]-y)<2)
             user.mouse_event(2,0,0,0,0)
             try:wait(read,lambda s:s.get("pointerDown") is True)
             finally:user.mouse_event(4,0,0,0,0)
-            wait(read,lambda s:s.get("pointerDown") is False)
+            released=wait(read,lambda s:s.get("pointerDown") is False)
+            print(json.dumps({"click":[x,y],"pointer":released.get("pointer"),"selectedSquare":released.get("selectedSquare"),"plies":released.get("plies")}),flush=True)
         def tap(label):
             time.sleep(.35)
             wait(read,lambda s:s.get("sceneStable",True) and any(c["label"]==label for c in s.get("controls",[])))

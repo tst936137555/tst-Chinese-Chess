@@ -34,6 +34,7 @@ def main():
             def command(*args):subprocess.run(["xdotool",*map(str,args)],check=True)
             def pointer_click(x,y,scale):
                 command("mousemove","--window",window,round(x*scale),round(y*scale))
+                wait(read,lambda s:len(s.get("pointer",[]))==2 and abs(s["pointer"][0]-x)<2 and abs(s["pointer"][1]-y)<2)
                 command("mousedown",1)
                 try:wait(read,lambda s:s.get("pointerDown") is True)
                 finally:command("mouseup",1)

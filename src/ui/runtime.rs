@@ -239,7 +239,7 @@ pub async fn run() {
         {
             app.search(Job::Move);
         }
-        let native_back = crate::platform::take_back();
+        let native_back = crate::platform::take_back() || is_key_pressed(KeyCode::Back);
         if is_key_pressed(KeyCode::Escape) || native_back {
             app.redraw = true;
             if native_back && app.screen == Screen::Home && app.modal.is_none() {
