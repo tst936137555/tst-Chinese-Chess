@@ -46,7 +46,7 @@ def main():
             click("声音");wait(read,lambda s:s["modal"])
             command("key","--window",window,"Escape");wait(read,lambda s:not s["modal"])
             click("开始新对局");wait(read,lambda s:s["modal"]);click("执红开始")
-            s=wait(read,lambda s:s["screen"]=="game" and not s["modal"])
+            s=wait(read,lambda s:s["screen"]=="game" and not s["modal"] and s.get("sceneStable") and any(c["label"]=="结束对局" for c in s.get("controls",[])))
             for file,rank in [(7,7),(4,7)]:
                 q=next(q for q in s["squares"] if q["file"]==file and q["rank"]==rank)
                 pointer_click(q["x"],q["y"],s["deviceScale"])

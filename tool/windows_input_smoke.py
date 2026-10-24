@@ -98,8 +98,7 @@ def main():
             user.SetForegroundWindow(window)
         focus("开始新对局");time.sleep(.4);assert not read()["modal"],"UIA Focus invoked new game"
         tap("开始新对局");tap("执红开始")
-        state=wait(read,lambda s:s["screen"]=="game" and not s["modal"] and s.get("sceneStable",True))
-        time.sleep(.4);state=read()
+        state=wait(read,lambda s:s["screen"]=="game" and not s["modal"] and s.get("sceneStable") and any(c["label"]=="结束对局" for c in s.get("controls",[])))
         for file,rank in [(7,7),(4,7)]:
             square=next(q for q in state["squares"] if (q["file"],q["rank"])==(file,rank));click(square["x"],square["y"],state);time.sleep(.2)
         saved=wait(read,lambda s:s.get("plies",0)>=2 and s.get("saved") and not s.get("pending"),45)
@@ -119,7 +118,10 @@ def main():
         press(13);wait(read,lambda s:s["modal"]);press(27);wait(read,lambda s:not s["modal"])
         tap("返回");tap("开始新对局");tap("执红开始");wait(read,lambda s:s["screen"]=="game" and not s["modal"])
         tap("返回");tap("继续未完成对局");tap("命名")
-        key(17);press(65);key(17,True);commit("中文残局");press(13)
+        wait(read,lambda s:s.get("nameEdit") == "" and s.get("sceneStable"))
+        commit("中文残局")
+        wait(read,lambda s:s.get("nameEdit") == "中文残局")
+        press(13)
         wait(lambda:json.loads((data_dir/"state.json").read_text(encoding="utf-8")),lambda d:any(r.get("title")=="中文残局" for r in [d.get("active")]+d.get("drafts",[]) if r))
         user.PostMessageW(window,0x0010,0,0);child.wait(timeout=20)
         child,window=launch();tap("继续未完成对局");tap(f"执红 · 入门 · {saved['plies']}步")

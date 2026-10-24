@@ -72,7 +72,7 @@ def main():
     tap("开始新对局");wait(state,lambda s:s.get("modal"))
     adb("shell","input","keyevent",4);wait(state,lambda s:s.get("screen")=="home" and not s.get("modal"));assert foreground()
     tap("开始新对局");tap("执红开始")
-    s=wait(state,lambda s:s.get("screen")=="game" and not s.get("modal"))
+    s=wait(state,lambda s:s.get("screen")=="game" and not s.get("modal") and s.get("sceneStable") and any(c["label"]=="结束对局" for c in s.get("controls",[])))
     for file,rank in [(7,7),(4,7)]:
         q=next(q for q in s["squares"] if q["file"]==file and q["rank"]==rank);dpi=s["deviceScale"];ox,oy=s["viewOrigin"]
         adb("shell","input","tap",round(q["x"]*dpi+ox),round(q["y"]*dpi+oy));time.sleep(.25)
