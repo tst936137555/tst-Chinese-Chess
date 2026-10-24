@@ -26,7 +26,8 @@ def collect_diagnostics():
         except (OSError,subprocess.TimeoutExpired) as error:
             (output/name).write_text(str(error),encoding="utf-8")
 def launch(*args):
-    return adb("shell","am","start","--activity-single-top","-n",f"{PACKAGE}/.MainActivity",*args)
+    print("Android launch:"," ".join(args) or "resume",flush=True)
+    return adb("shell","am","start","--activity-single-top","-n",f"{PACKAGE}/.MainActivity",*args,timeout=60)
 def foreground():
     dump=adb("shell","dumpsys","activity","activities").stdout.decode(errors="replace")
     return any(PACKAGE in line and ("mResumedActivity" in line or "topResumedActivity" in line) for line in dump.splitlines())
@@ -55,12 +56,13 @@ def wait_for_smoke(timeout=300, stall_timeout=90):
 def main():
     if adb("shell","getprop","ro.kernel.qemu").stdout.strip()!=b"1":raise SystemExit("This isolated release install test requires an Android emulator")
     apk=ROOT/"dist"/f"tst-xiangqi-{version_info()['version']}-x86_64.apk"
-    adb("install","-r",apk,timeout=120);adb("shell","am","force-stop",PACKAGE)
+    adb("install","-r",apk,timeout=120);adb("shell","am","force-stop",PACKAGE,timeout=60)
     adb("logcat","-c")
-    adb("shell","rm","-f",f"{AUTOMATION_ROOT}/smoke/result.json",f"{AUTOMATION_ROOT}/smoke/startup.txt",check=False)
+    adb("shell","rm","-f",f"{AUTOMATION_ROOT}/smoke/result.json",f"{AUTOMATION_ROOT}/smoke/startup.txt",check=False,timeout=60)
     launch("--ez","xiangqiSmoke","true")
     result=wait_for_smoke()
-    adb("shell","am","force-stop",PACKAGE);adb("shell","rm","-f",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False);launch("--ez","xiangqiObserve","true")
+    print("Android smoke complete; start OS input checks",flush=True)
+    adb("shell","am","force-stop",PACKAGE,timeout=60);adb("shell","rm","-f",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False,timeout=60);launch("--ez","xiangqiObserve","true")
     def state():
         output=adb("shell","cat",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False)
         return json.loads(output.stdout) if output.returncode==0 else {}
@@ -91,7 +93,7 @@ def main():
         adb("shell","settings","put","system","user_rotation",old_rotation)
         adb("shell","settings","put","system","accelerometer_rotation",old_auto)
     saved=wait(state,lambda s:s.get("saved"))
-    adb("shell","am","force-stop",PACKAGE);adb("shell","rm","-f",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False);launch("--ez","xiangqiObserve","true")
+    adb("shell","am","force-stop",PACKAGE,timeout=60);adb("shell","rm","-f",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False,timeout=60);launch("--ez","xiangqiObserve","true")
     wait(state,lambda s:s.get("screen")=="home");tap("继续未完成对局")
     restored=wait(state,lambda s:s.get("screen")=="game")
     assert restored["fen"]==saved["fen"] and restored["plies"]==saved["plies"]
