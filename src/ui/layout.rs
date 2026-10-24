@@ -1,4 +1,19 @@
 //! Aspect-preserving canvas with a separate landscape board and side panel.
+pub(super) fn canvas_size(width: f32, height: f32, split: bool) -> (f32, f32) {
+    let ratio = width.max(1.) / height.max(1.);
+    let h = if split && height < 500. {
+        480.
+    } else if split {
+        600.
+    } else {
+        900.
+    };
+    if h * ratio < 360. {
+        (360., 360. / ratio)
+    } else {
+        (h * ratio, h)
+    }
+}
 pub(super) fn board_geometry(width: f32, height: f32, review: bool) -> (f32, f32, f32) {
     let landscape = height < 800. && width / height >= 1.35;
     let region_width = if landscape {

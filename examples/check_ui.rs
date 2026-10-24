@@ -70,7 +70,15 @@ fn main() -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     let dpi = metadata["deviceScale"].as_f64().unwrap_or(1.);
-    for scene in ["01-red.png", "19-compact-setup.png"] {
+    for scene in [
+        "01-red.png",
+        "03-landscape-input.png",
+        "10-audio.png",
+        "18-desktop-review.png",
+        "19-compact-setup.png",
+        "22-help.png",
+        "26-compact-draft-name.png",
+    ] {
         let expected = load(&Path::new("tests/ui_baselines").join(scene))?;
         let actual = load(&Path::new(&root).join(scene))?;
         if (
@@ -92,8 +100,10 @@ fn main() -> Result<(), String> {
                 ("board", [0.04, 0.28, 0.92, 0.48]),
                 ("status", [0.06, 0.11, 0.88, 0.04]),
             ]
-        } else {
+        } else if scene == "19-compact-setup.png" {
             vec![("difficulty choices", [0.12, 0.25, 0.76, 0.38])]
+        } else {
+            vec![("main content", [0.1, 0.15, 0.8, 0.7])]
         };
         for (name, region) in regions {
             let rms = difference(&crop(&actual, region), &crop(&expected, region), 64);

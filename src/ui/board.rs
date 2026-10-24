@@ -1,5 +1,27 @@
 use super::*;
 impl App {
+    pub(super) fn warm_board(&mut self) {
+        let started = std::time::Instant::now();
+        let screen = self.screen;
+        let size = (self.width, self.height);
+        self.screen = Screen::Game;
+        (self.width, self.height) = super::layout::canvas_size(
+            self.viewport.w,
+            self.viewport.h,
+            self.viewport.w / self.viewport.h >= 1.35,
+        );
+        self.camera();
+        self.board(&Board::default(), None, false);
+        unsafe {
+            macroquad::window::get_internal_gl().flush();
+        }
+        self.screen = screen;
+        (self.width, self.height) = size;
+        self.accessible.clear();
+        self.semantic_counts.clear();
+        self.camera();
+        crate::diagnostics::measure("board_precache_ms", started.elapsed().as_secs_f64() * 1000.);
+    }
     pub(super) fn board_rect(&self) -> (Vec2, f32) {
         let (x, y, cell) =
             super::layout::board_geometry(self.width, self.height, self.screen == Screen::Review);
@@ -24,7 +46,8 @@ impl App {
                     || "空位".into(),
                     |p| format!("{}{}", p.side.label(), p.label()),
                 );
-                self.semantic(
+                self.semantic_named(
+                    &format!("square:{file}:{rank}"),
                     format!(
                         "第{}列第{}行，{}{}",
                         if flip { 9 - file } else { file + 1 },

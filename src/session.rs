@@ -1,5 +1,51 @@
 //! Pure save acknowledgement and task recovery state, independent of rendering.
 use crate::{game::Record, persistence::Command, storage::Data};
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CloseState {
+    #[default]
+    Open,
+    Waiting {
+        sequence: Option<u64>,
+        flushed: bool,
+    },
+    Forced,
+}
+impl CloseState {
+    pub fn request(&mut self) {
+        *self = Self::Waiting {
+            sequence: None,
+            flushed: false,
+        };
+    }
+    pub fn waiting(self) -> bool {
+        matches!(self, Self::Waiting { .. })
+    }
+    pub fn queued_flush(&mut self, seq: u64) {
+        if let Self::Waiting { sequence: None, .. } = self {
+            *self = Self::Waiting {
+                sequence: Some(seq),
+                flushed: false,
+            };
+        }
+    }
+    pub fn flushed(&mut self, seq: u64) {
+        if let Self::Waiting {
+            sequence: Some(expected),
+            flushed,
+        } = self
+            && *expected == seq
+        {
+            *flushed = true;
+        }
+    }
+    pub fn cancel(&mut self) {
+        *self = Self::Open;
+    }
+    pub fn can_exit(self, pending: usize, failed: bool) -> bool {
+        self == Self::Forced
+            || (matches!(self, Self::Waiting { flushed: true, .. }) && pending == 0 && !failed)
+    }
+}
 #[derive(Default)]
 pub struct SaveState {
     pub last_request: u64,
@@ -9,6 +55,21 @@ pub struct SaveState {
     commands: std::collections::BTreeMap<u64, Command>,
 }
 impl SaveState {
+    pub fn project_preferences(
+        &self,
+        mut settings: crate::storage::Settings,
+    ) -> crate::storage::Settings {
+        for command in self.failed.iter().chain(self.commands.values()) {
+            match command {
+                Command::SettingsPatch(change) => change.apply(&mut settings),
+                Command::Settings(value) | Command::Save(_, Some(value)) => {
+                    settings = value.clone()
+                }
+                _ => {}
+            }
+        }
+        settings
+    }
     /// Keep confirmed metadata visible while overlaying every uncommitted board.
     /// A failed write remains recoverable even when a later disk read succeeds.
     pub fn project(&self, mut data: Data) -> Data {
@@ -36,6 +97,9 @@ impl SaveState {
         }
     }
     pub fn queued(&mut self, seq: u64, command: Command) {
+        if let Command::SetFavorite { id, revision, .. } = &command {
+            self.failed.retain(|old| !matches!(old,Command::SetFavorite {id:old_id,revision:old_revision,..} if old_id==id && old_revision<=revision));
+        }
         self.last_request = seq;
         self.pending += 1;
         self.started.insert(seq, std::time::Instant::now());
@@ -53,6 +117,9 @@ impl SaveState {
     }
     pub fn succeeded(&mut self, seq: u64, data: &Data) {
         let command = self.completed(seq);
+        if let Some(Command::SettingsPatch(change)) = &command {
+            self.supersede_preferences(change);
+        }
         if matches!(
             command,
             Some(Command::Settings(_) | Command::Save(_, Some(_)))
@@ -91,6 +158,16 @@ impl SaveState {
                     && settings.as_ref().is_none_or(|s| *s == data.settings))
             }
             Command::Settings(settings) => *settings != data.settings,
+            Command::SettingsPatch(change) => !change.acknowledged(&data.settings),
+            Command::SetFavorite {
+                id,
+                favorite,
+                revision,
+            } => !data.archives.iter().any(|r| {
+                r.id == *id
+                    && r.favorite == *favorite
+                    && r.favorite_revision == revision.saturating_add(1)
+            }),
             Command::Rename(id, title) => !data
                 .active
                 .iter()
@@ -101,6 +178,15 @@ impl SaveState {
         });
     }
     pub fn failed(&mut self, command: Command) {
+        if let Command::SetFavorite { id, revision, .. } = &command {
+            if self.commands.values().any(|newer|matches!(newer,Command::SetFavorite {id:new_id,revision:new_revision,..} if new_id==id && new_revision>=revision)) {
+                return;
+            }
+            self.failed.retain(|old|!matches!(old,Command::SetFavorite {id:old_id,revision:old_revision,..} if old_id==id && old_revision<=revision));
+        }
+        if let Command::SettingsPatch(change) = &command {
+            self.supersede_preferences(change);
+        }
         if matches!(command, Command::Settings(_)) {
             self.failed
                 .retain(|old| !matches!(old, Command::Settings(_)));
@@ -111,11 +197,37 @@ impl SaveState {
         }
         self.failed.push(command);
     }
+    fn supersede_preferences(&mut self, change: &crate::storage::SettingsChange) {
+        for command in &mut self.failed {
+            if let Command::SettingsPatch(old) = command {
+                old.supersede(change);
+            }
+        }
+        self.failed
+            .retain(|c| !matches!(c, Command::SettingsPatch(change) if change.is_empty()));
+    }
     pub fn unsaved(&self, id: &str) -> Option<&Record> {
         self.failed.iter().rev().find_map(|c| match c {
             Command::Save(r, _) if r.id == id => Some(r.as_ref()),
             _ => None,
         })
+    }
+    pub fn failure_description(&self) -> (&'static str, &'static str) {
+        let has = |predicate: fn(&Command) -> bool| self.failed.iter().any(predicate);
+        if has(|c| matches!(c, Command::Save(..))) {
+            ("对局尚未保存", "当前棋盘仍保留在内存中，可重试或另存分支。")
+        } else if has(|c| matches!(c, Command::Settings(_) | Command::SettingsPatch(_))) {
+            ("声音或偏好设置未保存", "对局内容不受影响，可重试保存设置。")
+        } else if has(|c| matches!(c, Command::Rename(..))) {
+            ("名称尚未保存", "对局内容不受影响，可重试保存名称。")
+        } else if has(|c| matches!(c, Command::Load | Command::RestoreBackup)) {
+            ("存档尚未读取", "当前棋盘已保留，可重试读取或恢复备份。")
+        } else {
+            (
+                "棋谱变更尚未保存",
+                "可重试收藏或删除等操作，已确认的对局内容仍保留。",
+            )
+        }
     }
 }
 
@@ -154,6 +266,7 @@ fn overlay_record(data: &mut Data, record: &Record) {
     if let Some(old) = old {
         record.title = old.title.clone();
         record.favorite = old.favorite;
+        record.favorite_revision = old.favorite_revision;
     }
     if record.result == crate::game::Outcome::Playing {
         if let Some(old) = data.active.as_mut().filter(|r| r.id == record.id) {
@@ -180,6 +293,27 @@ pub enum TaskKind {
     Hint,
     Review,
     End,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineTask {
+    Move,
+    Hint,
+    Review(usize),
+    End,
+}
+impl EngineTask {
+    pub fn kind(self) -> TaskKind {
+        match self {
+            Self::Move => TaskKind::Move,
+            Self::Hint => TaskKind::Hint,
+            Self::Review(_) => TaskKind::Review,
+            Self::End => TaskKind::End,
+        }
+    }
+}
+/// Presentation pacing is independent of engine strength and search time limits.
+pub fn minimum_think_seconds(level: usize) -> f64 {
+    [0.18, 0.30, 0.45, 0.80, 1.0][level.min(4)]
 }
 #[derive(Default)]
 pub struct Recovery {

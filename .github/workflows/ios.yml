@@ -1,0 +1,70 @@
+name: iOS
+on:
+  workflow_call:
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-ios, aarch64-apple-ios-sim]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-project
+        with:
+          targets: ${{ matrix.target }}
+      - name: Selected Xcode and SDK
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-version
+      - name: Fetch verified assets
+        shell: pwsh
+        run: |
+          brew install p7zip
+          ./tool/fetch_engine.ps1 -Target core
+      - name: Compile UIKit bridge before engine build
+        run: |
+          sdk=iphoneos
+          triple=arm64-apple-ios15.0
+          if [[ '${{ matrix.target }}' == *-sim ]]; then sdk=iphonesimulator; triple=arm64-apple-ios15.0-simulator; fi
+          xcrun --sdk "$sdk" clang++ -std=c++17 -fsyntax-only -target "$triple" -isysroot "$(xcrun --sdk "$sdk" --show-sdk-path)" native/pikafish/audio_session.mm
+      - name: Build native app
+        run: bash tool/build_ios_rust.sh '${{ matrix.target }}'
+      - name: Archive with executable modes and signatures
+        run: cd dist/ios && zip -r ../../rust-ios-${{ matrix.target }}.zip '${{ matrix.target }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verification-ios-${{ matrix.target }}
+          path: rust-ios-*.zip
+          if-no-files-found: error
+
+  simulator:
+    name: Install built app and exercise simulator
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verification-ios-aarch64-apple-ios-sim
+      - run: unzip rust-ios-aarch64-apple-ios-sim.zip -d dist/ios
+      - name: Install and launch simulator app
+        timeout-minutes: 10
+        run: python tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app
+      - name: Preserve simulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-smoke
+          path: target/ios-smoke/

@@ -37,9 +37,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Clippy 检查失败。' }
     & cargo "+$Toolchain" test --all-targets --locked
     if ($LASTEXITCODE -ne 0) { throw 'Rust 回归失败。' }
-    foreach ($pattern in @('test_*smoke.py','test_android_bridge.py')) {
-        & $Python -m unittest discover -s tool -p $pattern
-        if ($LASTEXITCODE -ne 0) { throw "Python 回归失败：$pattern" }
-    }
+    & cargo "+$Toolchain" test --manifest-path vendor/quad-snd/Cargo.toml --lib
+    if ($LASTEXITCODE -ne 0) { throw '音频混音回归失败。' }
+    & $Python -m unittest discover -s tool -p 'test_*.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Python 工具回归失败。' }
     & "$PSScriptRoot/test_download_fallback.ps1"
 } finally { Pop-Location }

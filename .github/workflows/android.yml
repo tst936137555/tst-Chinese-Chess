@@ -1,0 +1,130 @@
+name: Android
+on:
+  workflow_call:
+    inputs:
+      verify_only:
+        type: boolean
+        default: false
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-linux-android, x86_64-linux-android]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-project
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
+      - name: Fetch verified assets
+        shell: pwsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full
+          ./tool/fetch_engine.ps1 -Target core
+      - name: Build APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          export NDK_HOME="$ANDROID_NDK_HOME"
+          if [[ '${{ inputs.verify_only }}' == true ]]; then
+            python tool/build_android_rust.py '${{ matrix.target }}' --verify-only
+          else
+            export ANDROID_KEYSTORE="$RUNNER_TEMP/tst-xiangqi-release.jks"
+            python -c 'import base64,os,pathlib; value=os.environ.get("ANDROID_KEYSTORE_BASE64"); assert value, "Official Android signing secret is required"; p=pathlib.Path(os.environ["ANDROID_KEYSTORE"]); p.write_bytes(base64.b64decode(value,validate=True)); p.chmod(0o600)'
+            trap 'rm -f "$ANDROID_KEYSTORE"' EXIT
+            python tool/build_android_rust.py '${{ matrix.target }}'
+          fi
+      - name: Compile actual Java bridge
+        run: python -m unittest discover -s tool -p test_android_bridge.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !inputs.verify_only }}
+        with:
+          name: rust-android-${{ matrix.target }}
+          path: |
+            dist/*.apk
+            dist/*.build.json
+          if-no-files-found: error
+      - name: Preserve build metadata
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-build-${{ matrix.target }}
+          path: dist/*.build.json
+
+  emulator:
+    name: Install built APK and exercise native input
+    needs: build
+    if: ${{ !inputs.verify_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: rust-android-x86_64-linux-android
+          path: dist
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Real Android smoke
+        timeout-minutes: 15
+        uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: default
+          profile: pixel_2
+          disable-animations: true
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 300
+          script: python tool/mobile_smoke.py
+      - name: Preserve simulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-smoke
+          path: target/android-smoke/

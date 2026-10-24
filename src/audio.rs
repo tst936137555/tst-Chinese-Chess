@@ -17,6 +17,7 @@ pub struct AudioBank {
     enabled: bool,
     loading: std::sync::mpsc::Receiver<AudioAsset>,
     loading_started: std::time::Instant,
+    loading_complete: bool,
 }
 impl AudioBank {
     pub async fn load() -> Self {
@@ -51,6 +52,7 @@ impl AudioBank {
             enabled: true,
             loading,
             loading_started: std::time::Instant::now(),
+            loading_complete: false,
         }
     }
     pub async fn prepare(&mut self) {
@@ -69,6 +71,7 @@ impl AudioBank {
             if let Some((kind, index)) = target {
                 self.effects[kind][index] = sound;
             } else {
+                self.loading_complete = true;
                 self.music = sound;
                 crate::diagnostics::measure(
                     "audio_ready_ms",
@@ -86,6 +89,14 @@ impl AudioBank {
         }
         self.music_started = false;
         self.current = 0.;
+    }
+    pub fn needs_tick(&self, settings: &Settings, now: f64) -> bool {
+        let target = if settings.sound && settings.music_enabled {
+            settings.music_volume * if now < self.duck_until { 0.42 } else { 1. }
+        } else {
+            0.
+        };
+        !self.loading_complete || (self.current - target).abs() > 0.001 || now < self.duck_until
     }
     pub fn tick(&mut self, s: &Settings, dt: f32, now: f64) {
         if crate::platform::suspended() {

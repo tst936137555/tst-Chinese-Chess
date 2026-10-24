@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const MAX_PLIES: usize = 4096;
+pub const MAX_LINEAGE: usize = MAX_PLIES * 4;
+pub const RULESET: &str = "simplified-v1";
 pub const MAX_REVISION: u64 = u64::MAX - 1_000_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,12 +45,33 @@ pub struct EvaluationEvidence {
     pub assets: String,
 }
 
+static ID_CLOCK: AtomicU64 = AtomicU64::new(0);
+pub(crate) fn advance_identity_clock(floor: u64) {
+    ID_CLOCK.fetch_max(floor, Ordering::Relaxed);
+}
+pub(crate) fn identity_time(id: &str) -> Option<u64> {
+    let mut parts = id.split('-');
+    let time = u64::from_str_radix(parts.next()?, 16).ok()?;
+    parts.next()?;
+    parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(time)
+}
 pub fn new_id() -> String {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
+    let wall = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos();
+        .as_nanos()
+        .min(u128::from(u64::MAX - 1_000_000)) as u64;
+    let previous = ID_CLOCK
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+            Some(last.max(wall).saturating_add(1))
+        })
+        .unwrap();
+    let nanos = previous.max(wall).saturating_add(1);
     format!(
         "{nanos:x}-{:x}-{:x}",
         std::process::id(),
@@ -161,7 +184,7 @@ impl Game {
     fn changed(&mut self) {
         self.lineage
             .push(std::mem::replace(&mut self.version_token, new_id()));
-        if self.lineage.len() > 256 {
+        if self.lineage.len() > MAX_LINEAGE {
             self.lineage.remove(0);
         }
         // Imported counters are bounded; public callers cannot cause a panic either.
@@ -367,6 +390,7 @@ impl Game {
     }
     pub fn snapshot(&self, user_red: bool, level: usize, review: bool) -> Record {
         Record {
+            ruleset: RULESET.into(),
             source: self.source,
             id: self.id.clone(),
             revision: self.revision,
@@ -389,6 +413,7 @@ impl Game {
                 })
                 .collect(),
             favorite: false,
+            favorite_revision: 0,
             start_fen: Some(self.start.fen()),
             mode: if review { "review" } else { "normal" }.into(),
             title: String::new(),
@@ -409,6 +434,8 @@ pub struct SavedMove {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
+    #[serde(default = "default_ruleset")]
+    pub ruleset: String,
     #[serde(default)]
     pub source: RecordSource,
     #[serde(default)]
@@ -442,6 +469,8 @@ pub struct Record {
     #[serde(default)]
     pub favorite: bool,
     #[serde(default)]
+    pub favorite_revision: u64,
+    #[serde(default)]
     pub start_fen: Option<String>,
     #[serde(default = "normal")]
     pub mode: String,
@@ -455,6 +484,9 @@ pub enum RecordSource {
 }
 fn yes() -> bool {
     true
+}
+fn default_ruleset() -> String {
+    RULESET.into()
 }
 fn normal() -> String {
     "normal".into()
@@ -505,6 +537,9 @@ impl Record {
     }
     /// Shared by readers, importers and transaction commits.
     pub fn validate_metadata(&self) -> Result<(), String> {
+        if self.ruleset != RULESET {
+            return Err("棋谱使用不支持的裁决版本，请升级程序，原文件已保留".into());
+        }
         if self.revision > MAX_REVISION {
             return Err("棋谱修订号超出有效范围，原文件已保留".into());
         }
@@ -515,7 +550,7 @@ impl Record {
             || self.level_name.len() > 128
             || self.title.chars().count() > 40
             || self.version_token.len() > 160
-            || self.lineage.len() > 256
+            || self.lineage.len() > MAX_LINEAGE
             || self.lineage.iter().any(|t| t.len() > 160)
             || self.mode.len() > 32
             || self.start_fen.as_ref().is_some_and(|f| f.len() > 256)

@@ -2,25 +2,40 @@
 use macroquad::prelude::*;
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
 };
 struct Bank {
     density: u16,
     font: Font,
     cached: HashSet<(char, u16)>,
 }
+type MeasurementCache = HashMap<(u16, u16, u32, String), [f32; 3]>;
 pub struct UiFont {
     bytes: Vec<u8>,
     banks: RefCell<VecDeque<Bank>>,
     pixel_density: Cell<f32>,
+    supported: HashSet<char>,
+    measurements: RefCell<MeasurementCache>,
 }
 impl UiFont {
     /// Preserve the original name in storage; spell unsupported glyphs visibly on screen.
     pub fn display_text<'a>(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
-        let face = ttf_parser::Face::parse(&self.bytes, 0).expect("内置字体损坏");
-        fallback_text(text, |c| face.glyph_index(c).is_some())
+        fallback_text(text, |c| self.supported.contains(&c))
     }
     pub fn load(bytes: &[u8]) -> Result<Self, macroquad::Error> {
+        let face = ttf_parser::Face::parse(bytes, 0).expect("内置字体损坏");
+        let mut supported = HashSet::new();
+        if let Some(cmap) = face.tables().cmap {
+            for table in cmap.subtables.into_iter().filter(|t| t.is_unicode()) {
+                table.codepoints(|code| {
+                    if let Some(c) = char::from_u32(code)
+                        && face.glyph_index(c).is_some()
+                    {
+                        supported.insert(c);
+                    }
+                });
+            }
+        }
         let density = screen_dpi_scale();
         let bank = Bank {
             density: (density * 2.).ceil() as u16,
@@ -31,6 +46,8 @@ impl UiFont {
             bytes: bytes.to_vec(),
             banks: RefCell::new(VecDeque::from([bank])),
             pixel_density: Cell::new(density),
+            supported,
+            measurements: RefCell::new(HashMap::new()),
         })
     }
     pub fn set_pixel_density(&self, pixels_per_unit: f32) {
@@ -75,6 +92,9 @@ impl UiFont {
             });
         }
         let bank = banks.front_mut().unwrap();
+        if text.chars().all(|c| bank.cached.contains(&(c, physical))) {
+            return;
+        }
         let missing: HashSet<_> = text
             .chars()
             .filter(|c| !bank.cached.contains(&(*c, physical)))
@@ -91,16 +111,37 @@ impl UiFont {
         bank.cached.extend(chars.into_iter().map(|c| (c, physical)));
     }
     pub fn measure(&self, text: &str, size: f32) -> TextDimensions {
+        let (raster, scale, physical) = self.raster(size);
+        let key = (
+            size as u16,
+            physical,
+            screen_dpi_scale().to_bits(),
+            text.to_owned(),
+        );
+        if let Some(&[width, height, offset_y]) = self.measurements.borrow().get(&key) {
+            return TextDimensions {
+                width,
+                height,
+                offset_y,
+            };
+        }
         let display = self.display_text(text);
         let text = display.as_ref();
         self.prepare(text, size);
-        let (raster, scale, _) = self.raster(size);
-        measure_text(
+        let measured = measure_text(
             text,
             Some(&self.banks.borrow().front().unwrap().font),
             raster,
             scale,
-        )
+        );
+        let mut measurements = self.measurements.borrow_mut();
+        if measurements.len() >= 1024 {
+            measurements.clear();
+        }
+        if text.len() <= 4096 {
+            measurements.insert(key, [measured.width, measured.height, measured.offset_y]);
+        }
+        measured
     }
     pub fn draw(&self, text: &str, x: f32, y: f32, size: f32, color: Color) {
         let display = self.display_text(text);
@@ -120,6 +161,31 @@ impl UiFont {
             },
         );
     }
+}
+
+/// O(log n) measurements, always truncating at a UTF-8 character boundary.
+pub fn ellipsize(text: &str, max_width: f32, measure: impl Fn(&str) -> f32) -> String {
+    if measure(text) <= max_width {
+        return text.to_owned();
+    }
+    if measure("…") > max_width {
+        return String::new();
+    }
+    let boundaries: Vec<_> = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain([text.len()])
+        .collect();
+    let (mut low, mut high) = (0, boundaries.len() - 1);
+    while low < high {
+        let middle = (low + high).div_ceil(2);
+        if measure(&format!("{}…", &text[..boundaries[middle]])) <= max_width {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    format!("{}…", &text[..boundaries[low]])
 }
 
 pub fn fallback_text(text: &str, supported: impl Fn(char) -> bool) -> std::borrow::Cow<'_, str> {

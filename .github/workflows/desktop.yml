@@ -1,0 +1,110 @@
+name: Desktop
+on:
+  workflow_call:
+    inputs:
+      native_macos_input:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+jobs:
+  test:
+    name: Test and package (${{ matrix.os }})
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-project
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
+      - name: Fetch and verify real engine
+        if: runner.os != 'Linux'
+        shell: pwsh
+        run: |
+          if ($IsMacOS) { brew install p7zip }
+          $target = if ($IsWindows) { 'windows' } else { 'macos' }
+          ./tool/fetch_engine.ps1 -Target $target
+          'XIANGQI_REQUIRE_ENGINE=1' >> $env:GITHUB_ENV
+      - run: cargo test --all-targets --locked
+      - name: Download integrity fallback regression
+        shell: pwsh
+        run: ./tool/test_download_fallback.ps1
+      - name: Audio mixer loop regression
+        run: cargo test --manifest-path vendor/quad-snd/Cargo.toml --lib
+      - name: Native adapter restart regression
+        if: runner.os != 'Windows'
+        run: python tool/test_native_shim.py
+      - name: Build application and verification tools
+        run: cargo build --release --locked --examples --bin tst-xiangqi
+      - name: Windows input, save recovery and UIA focus
+        if: runner.os == 'Windows'
+        run: python tool/windows_input_smoke.py target/release/tst-xiangqi.exe
+      - name: macOS native input
+        if: runner.os == 'macOS' && inputs.native_macos_input
+        run: python tool/macos_input_smoke.py target/release/tst-xiangqi
+      - name: Real-engine legal-move differential
+        if: runner.os != 'Linux'
+        shell: bash
+        run: python tool/rules_differential.py target/release/examples/rules_probe${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Bounded mutation regression
+        run: cargo run --release --locked --example fuzz_inputs -- 10000
+      - name: Windows package and installed-package self-test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tool/package_windows_rust.ps1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: runner.os == 'Windows'
+        with:
+          name: rust-windows
+          path: dist/*.zip
+          if-no-files-found: error
+      - name: Preserve native input diagnostics
+        if: always() && runner.os != 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-input-${{ runner.os }}
+          path: |
+            target/windows-input-smoke/
+            target/macos-input-smoke/
+            target/rules-differential.json
+
+  rendering:
+    name: Linux rendering and OS input
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-project
+      - name: Headless display and audio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev xvfb xauth xdotool openbox
+          printf 'pcm.!default { type null }\n' > "$RUNNER_TEMP/alsa.conf"
+          echo "ALSA_CONFIG_PATH=$RUNNER_TEMP/alsa.conf" >> "$GITHUB_ENV"
+      - run: cargo build --release --locked --bin tst-xiangqi --example check_ui --example font_regression
+      - name: UI rendering and internal input
+        run: xvfb-run -a python tool/desktop_smoke.py target/release/tst-xiangqi target/ui-smoke
+      - name: Viewports, semantics and visual baselines
+        run: cargo run --release --locked --example check_ui -- target/ui-smoke
+      - name: Real X11 mouse, keyboard and window close
+        run: timeout 120s xvfb-run -a sh -c 'openbox > /tmp/xiangqi-openbox.log 2>&1 & python tool/ui_input_smoke.py target/release/tst-xiangqi'
+      - name: First-frame Chinese font atlas
+        run: timeout 60s xvfb-run -a ./target/release/examples/font_regression target/font-regression --density-cycle
+      - name: Preserve rendering diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-smoke
+          path: |
+            target/ui-smoke/
+            target/font-regression/

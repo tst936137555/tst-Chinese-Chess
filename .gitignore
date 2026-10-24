@@ -21,6 +21,11 @@ __pycache__/
 # Android 签名密钥
 *.jks
 *.keystore
+key.properties
+*.p12
+*.pfx
+*.mobileprovision
+*signing-backup*.zip
 
 # 固定版本的引擎、权重与许可证由 tool/fetch_engine.ps1 获取
 /pikafish.exe

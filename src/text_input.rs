@@ -105,6 +105,10 @@ pub fn native_edit(text: String, start: usize, end: usize) {
 pub fn take_native_edit() -> Option<(String, usize, usize)> {
     NATIVE_EDIT.lock().ok()?.take()
 }
+pub fn has_native_input() -> bool {
+    NATIVE_EDIT.lock().is_ok_and(|edit| edit.is_some())
+        || NATIVE_DONE.load(std::sync::atomic::Ordering::Acquire)
+}
 pub fn native_done() {
     NATIVE_DONE.store(true, std::sync::atomic::Ordering::Release);
 }

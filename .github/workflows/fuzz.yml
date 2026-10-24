@@ -1,0 +1,16 @@
+name: Bounded input fuzzing
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '18 3 * * 1'
+permissions:
+  contents: read
+jobs:
+  mutate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-project
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
+      - run: cargo run --release --locked --example fuzz_inputs -- 30000 '${{ github.run_number }}'

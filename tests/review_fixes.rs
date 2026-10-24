@@ -332,7 +332,7 @@ fn streaming_asset_install_validates_before_replacing_existing_bytes() {
 #[test]
 fn calibration_fixtures_cover_both_colors_and_reflected_move_counts() {
     let cases = tst_xiangqi::calibration::positions();
-    assert_eq!(cases.len(), 10);
+    assert_eq!(cases.len(), 16);
     for pair in cases.chunks(2) {
         assert_eq!(pair[0].1.board.turn, Side::Red);
         assert_eq!(pair[1].1.board.turn, Side::Black);

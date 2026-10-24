@@ -461,7 +461,11 @@ pub extern "system" fn Java_quad_1native_QuadNative_xiangqiSmoke(
 ) {
     if let Ok(value) = env.get_string(&path) {
         let value: String = value.into();
-        let _ = SMOKE_OUTPUT.set(value.into());
+        let root = PathBuf::from(value);
+        // Record entry before EGL/audio initialization so emulator failures retain a stage.
+        let _ = std::fs::create_dir_all(&root);
+        let _ = std::fs::write(root.join("startup.txt"), "native-start");
+        let _ = SMOKE_OUTPUT.set(root);
     }
 }
 static SAFE_INSETS: [std::sync::atomic::AtomicU32; 4] =

@@ -1,7 +1,11 @@
-param([string]$Toolchain = '1.99.1')
+param([string]$Toolchain)
 $ErrorActionPreference = 'Stop'
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
+    if (-not $Toolchain) {
+        $Toolchain = [regex]::Match((Get-Content rust-toolchain.toml -Raw), 'channel\s*=\s*"([^"]+)"').Groups[1].Value
+        if (-not $Toolchain) { throw 'rust-toolchain.toml 缺少 channel' }
+    }
     & "$PSScriptRoot/fetch_engine.ps1" -Target windows
     $packageTarget = ((rustc "+$Toolchain" -vV | Select-String '^host: ').Line -replace '^host: ', '').Trim()
     if (-not $packageTarget) { throw '无法识别构建目标' }
@@ -33,7 +37,7 @@ try {
     $sources = Join-Path $package 'source'
     New-Item -ItemType Directory -Force -Path $sources | Out-Null
     Copy-Item -LiteralPath 'Cargo.toml', 'Cargo.lock', 'build.rs', 'rust-toolchain.toml', 'LICENSE', 'README.md', 'CHANGELOG.md' -Destination $sources -Force
-    foreach ($directory in @('src','tests','examples','native','tool','vendor','assets/icons','assets/fonts','assets/licenses')) {
+    foreach ($directory in @('.github','docs','src','tests','examples','native','tool','vendor','assets/icons','assets/fonts','assets/licenses')) {
         Get-ChildItem -LiteralPath $directory -File -Recurse | Where-Object {
             $_.FullName -notmatch '[\\/](target|__pycache__|[.]git)[\\/]' -and $_.Extension -ne '.pyc'
         } | ForEach-Object {
@@ -50,7 +54,7 @@ try {
         if ($process.ExitCode -ne 0) { throw '便携包真实引擎/续局冒烟测试失败' }
     } finally { Pop-Location }
     if (@(Get-ChildItem -LiteralPath $package -File).Count -ne 1) { throw '包根目录必须只包含游戏 EXE' }
-    python tool/release_manifest.py $package --toolchain $Toolchain --target $packageTarget --output metadata/BUILD_INFO.json
+    python tool/release_manifest.py $package --toolchain $Toolchain --target $packageTarget --output metadata/BUILD_INFO.json --build-command "cargo +$Toolchain build --release --locked --target $packageTarget"
     if ($LASTEXITCODE -ne 0) { throw '生成发布清单失败' }
     $resolvedFinal = [System.IO.Path]::GetFullPath($finalPackage)
     if (-not $resolvedFinal.StartsWith($distRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { throw '打包目标越出 dist 目录' }

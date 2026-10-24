@@ -14,6 +14,7 @@ rustup target add "$target"
 python3 tool/build_mobile_engine.py "$target"
 export PIKAFISH_LIB_DIR="$PWD/mobile-engine/$target"
 export IPHONEOS_DEPLOYMENT_TARGET=15.0
+export XIANGQI_BUILD_COMMAND="cargo build --locked --release --target $target"
 cargo build --locked --release --target "$target"
 app="$PWD/dist/ios/$target/tst-xiangqi.app"
 python3 - "$app" "$PWD/dist/ios" <<'PY'

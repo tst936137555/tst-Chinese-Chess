@@ -34,6 +34,24 @@ pub fn positions() -> Vec<(String, Game)> {
                 .parse()
                 .expect("ending fixture"),
         ),
+        (
+            "pin",
+            "4k4/4r4/9/9/9/9/9/9/4R4/4K4 w - - 0 1"
+                .parse()
+                .expect("pin fixture"),
+        ),
+        (
+            "cannon",
+            "3k5/9/9/9/4p4/9/9/9/4C4/4K4 w - - 0 1"
+                .parse()
+                .expect("cannon fixture"),
+        ),
+        (
+            "horse",
+            "3k5/9/9/9/9/9/9/9/1R7/1N3K3 w - - 0 1"
+                .parse()
+                .expect("horse fixture"),
+        ),
     ];
     fixtures
         .into_iter()
@@ -73,4 +91,17 @@ pub fn positions() -> Vec<(String, Game)> {
             ]
         })
         .collect()
+}
+
+/// 95% Wilson interval for wins among decisive games; draws are reported separately.
+pub fn decisive_win_interval(wins: usize, games: usize) -> Option<(f64, f64)> {
+    if games == 0 || wins > games {
+        return None;
+    }
+    let n = games as f64;
+    let p = wins as f64 / n;
+    let z2 = 1.96_f64.powi(2);
+    let center = (p + z2 / (2. * n)) / (1. + z2 / n);
+    let radius = 1.96 * (p * (1. - p) / n + z2 / (4. * n * n)).sqrt() / (1. + z2 / n);
+    Some(((center - radius).max(0.), (center + radius).min(1.)))
 }

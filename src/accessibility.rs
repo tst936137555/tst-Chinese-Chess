@@ -8,24 +8,32 @@ pub struct Element {
     pub label: String,
     pub rect: [f32; 4],
     pub actionable: bool,
+    #[serde(default)]
+    pub control: bool,
+    #[serde(default)]
+    pub disabled: bool,
     pub value: Option<String>,
 }
 impl Element {
     pub fn new(label: String, rect: [f32; 4], actionable: bool) -> Self {
-        let mut id = 2166136261u32;
-        let identity = if label.starts_with('第') {
-            label.split('，').next().unwrap_or(&label)
+        let identity = Self::label_identity(&label).to_owned();
+        Self::with_identity(&identity, label, rect, actionable)
+    }
+    pub fn label_identity(label: &str) -> &str {
+        if label.starts_with('第') {
+            label.split('，').next().unwrap_or(label)
         } else {
             label
                 .split('：')
                 .next()
-                .unwrap_or(&label)
+                .unwrap_or(label)
                 .trim_end_matches("，已选中")
-        };
-        for byte in identity
-            .bytes()
-            .chain(rect.iter().flat_map(|n| n.round().to_bits().to_le_bytes()))
-        {
+        }
+    }
+    /// Layout and translated/stateful labels are attributes, never node identities.
+    pub fn with_identity(identity: &str, label: String, rect: [f32; 4], actionable: bool) -> Self {
+        let mut id = 2166136261u32;
+        for byte in identity.bytes() {
             id = (id ^ u32::from(byte)).wrapping_mul(16777619);
         }
         Self {
@@ -33,6 +41,8 @@ impl Element {
             label,
             rect,
             actionable,
+            control: actionable,
+            disabled: false,
             value: None,
         }
     }
@@ -45,15 +55,36 @@ struct Snapshot {
     focus: Option<u32>,
 }
 static SNAPSHOT: OnceLock<Mutex<Snapshot>> = OnceLock::new();
-static ACTIONS: OnceLock<Mutex<std::collections::VecDeque<u32>>> = OnceLock::new();
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+static DESKTOP_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControlAction {
+    Click(u32),
+    Focus(u32),
+}
+static ACTIONS: OnceLock<Mutex<std::collections::VecDeque<ControlAction>>> = OnceLock::new();
 pub fn activate(id: u32) {
+    enqueue_action(ControlAction::Click(id));
+}
+pub fn focus(id: u32) {
+    enqueue_action(ControlAction::Focus(id));
+}
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub fn desktop_action(action: accesskit::Action, id: u32) {
+    match action {
+        accesskit::Action::Click => activate(id),
+        accesskit::Action::Focus => focus(id),
+        _ => {}
+    }
+}
+fn enqueue_action(action: ControlAction) {
     if let Ok(mut actions) = ACTIONS.get_or_init(Default::default).lock()
         && actions.len() < 32
     {
-        actions.push_back(id);
+        actions.push_back(action);
     }
 }
-pub fn take_action() -> Option<u32> {
+pub fn take_action() -> Option<ControlAction> {
     ACTIONS
         .get_or_init(Default::default)
         .lock()
@@ -78,7 +109,9 @@ pub fn publish(summary: String, elements: Vec<Element>, dpi: f32, focus: Option<
         false
     };
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    desktop::update();
+    if changed || !DESKTOP_READY.load(std::sync::atomic::Ordering::Acquire) {
+        desktop::update();
+    }
     if changed {
         #[cfg(target_os = "android")]
         crate::platform::publish_accessibility(
@@ -116,9 +149,7 @@ mod desktop {
     struct Handler;
     impl ActionHandler for Handler {
         fn do_action(&mut self, request: ActionRequest) {
-            if request.action == Action::Click || request.action == Action::Focus {
-                activate(request.target_node.0 as u32);
-            }
+            desktop_action(request.action, request.target_node.0 as u32);
             if request.action == Action::SetValue
                 && let Some(accesskit::ActionData::Value(value)) = request.data
                 && SNAPSHOT
@@ -157,12 +188,18 @@ mod desktop {
             let id = NodeId(u64::from(element.id));
             let mut node = Node::new(if element.value.is_some() {
                 Role::TextInput
-            } else if element.actionable {
+            } else if element.control {
                 Role::Button
             } else {
                 Role::Label
             });
             node.set_label(element.label);
+            if element.disabled {
+                node.set_disabled();
+            }
+            if element.control && !element.disabled {
+                node.add_action(Action::Focus);
+            }
             if let Some(value) = element.value {
                 node.set_value(value);
                 node.add_action(Action::SetValue);
@@ -275,6 +312,7 @@ mod desktop {
                         return None;
                     }
                     *guard = Some(adapter);
+                    DESKTOP_READY.store(true, std::sync::atomic::Ordering::Release);
                 }
                 guard.as_mut()?.update_if_active(tree)
             });
@@ -297,6 +335,7 @@ mod desktop {
                 *adapter = Some(unsafe {
                     accesskit_macos::SubclassingAdapter::new(view.cast(), Handler, Handler)
                 });
+                DESKTOP_READY.store(true, std::sync::atomic::Ordering::Release);
             }
             adapter.as_mut()?.update_if_active(tree)
         });

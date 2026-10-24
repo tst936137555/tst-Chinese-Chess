@@ -6,44 +6,63 @@ pub(super) struct Surfaces {
     wood: Texture2D,
 }
 impl Surfaces {
-    pub(super) fn new() -> Self {
-        let texture = |wood: bool| {
-            let size = if wood { 1024u16 } else { 512u16 };
-            let mut image = Image::gen_image_color(size, size, WHITE);
-            let mut seed = 0x1357_2468u32;
-            for y in 0..size {
-                for x in 0..size {
-                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-                    let noise = (seed >> 24) as f32 / 255. - 0.5;
-                    let xf = x as f32 * 256. / f32::from(size);
-                    let yf = y as f32 * 256. / f32::from(size);
-                    let (base, variation) = if wood {
-                        let grain = (yf * 0.72 + (xf * 0.025).sin() * 2.4).sin();
-                        let broad = (yf * 0.09 + (xf * 0.018).sin()).sin();
-                        (WOOD, noise * 0.008 + grain * 0.008 + broad * 0.012)
-                    } else {
-                        (PAPER, noise * 0.004)
-                    };
-                    image.set_pixel(
-                        x as u32,
-                        y as u32,
-                        Color::new(
-                            base.r + variation,
-                            base.g + variation,
-                            base.b + variation,
-                            1.,
-                        ),
-                    );
+    pub(super) fn prepare() -> std::sync::mpsc::Receiver<[Image; 2]> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let texture = |wood: bool| {
+                let size = if wood { 1024u16 } else { 512u16 };
+                let mut image = Image::gen_image_color(size, size, WHITE);
+                let mut seed = 0x1357_2468u32;
+                for y in 0..size {
+                    for x in 0..size {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        let noise = (seed >> 24) as f32 / 255. - 0.5;
+                        let xf = x as f32 * 256. / f32::from(size);
+                        let yf = y as f32 * 256. / f32::from(size);
+                        let (base, variation) = if wood {
+                            let grain = (yf * 0.72 + (xf * 0.025).sin() * 2.4).sin();
+                            let broad = (yf * 0.09 + (xf * 0.018).sin()).sin();
+                            (WOOD, noise * 0.008 + grain * 0.008 + broad * 0.012)
+                        } else {
+                            (PAPER, noise * 0.004)
+                        };
+                        image.set_pixel(
+                            x as u32,
+                            y as u32,
+                            Color::new(
+                                base.r + variation,
+                                base.g + variation,
+                                base.b + variation,
+                                1.,
+                            ),
+                        );
+                    }
                 }
-            }
-            let result = Texture2D::from_image(&image);
+                image
+            };
+            let images = [texture(false), texture(true)];
+            crate::diagnostics::measure(
+                "surface_generate_ms",
+                started.elapsed().as_secs_f64() * 1000.,
+            );
+            let _ = tx.send(images);
+        });
+        rx
+    }
+    pub(super) fn from_images(images: [Image; 2]) -> Self {
+        let started = std::time::Instant::now();
+        let texture = |image: &Image| {
+            let result = Texture2D::from_image(image);
             result.set_filter(FilterMode::Linear);
             result
         };
-        Self {
-            paper: texture(false),
-            wood: texture(true),
-        }
+        let result = Self {
+            paper: texture(&images[0]),
+            wood: texture(&images[1]),
+        };
+        crate::diagnostics::measure("surface_upload_ms", started.elapsed().as_secs_f64() * 1000.);
+        result
     }
 }
 impl App {
@@ -108,16 +127,8 @@ impl App {
             self.text(text, x, y, size, color);
             return;
         }
-        let mut shown = String::new();
-        for c in text.chars() {
-            let mut next = shown.clone();
-            next.push(c);
-            if self.font.measure(&(next.clone() + "…"), size).width > max_width {
-                shown.push('…');
-                break;
-            }
-            shown = next;
-        }
+        let shown =
+            crate::typography::ellipsize(text, max_width, |s| self.font.measure(s, size).width);
         self.text(&shown, x, y, size, color);
     }
     pub(super) fn player(&self) -> Side {
@@ -135,11 +146,47 @@ impl App {
         self.text(text, x - m.width / 2., y + size * 0.32, size, color);
     }
     pub(super) fn button(&mut self, label: &str, r: Rect, primary: bool, enabled: bool) -> bool {
+        self.button_identity(None, label, r, primary, enabled)
+    }
+    pub(super) fn button_named(
+        &mut self,
+        key: &str,
+        label: &str,
+        r: Rect,
+        primary: bool,
+        enabled: bool,
+    ) -> bool {
+        self.button_identity(Some(key), label, r, primary, enabled)
+    }
+    fn button_identity(
+        &mut self,
+        key: Option<&str>,
+        label: &str,
+        r: Rect,
+        primary: bool,
+        enabled: bool,
+    ) -> bool {
         // Hit areas use viewport units; keep short-screen controls reachable without shrinking text.
         let unit = self.width / self.viewport.w;
         let area = crate::interaction::touch_area([r.x, r.y, r.w, r.h], unit);
         let hit_rect = Rect::new(area[0], area[1], area[2], area[3]);
-        self.semantic(label.to_owned(), hit_rect, enabled);
+        if let Some(key) = key {
+            self.semantic_named(key, label.to_owned(), hit_rect, enabled);
+        } else {
+            self.semantic(label.to_owned(), hit_rect, enabled);
+        }
+        if self.accessibility_active
+            && let Some(element) = self.accessible.last_mut()
+        {
+            element.control = true;
+            element.disabled = !enabled;
+            if enabled && self.focus_request == Some(element.id) {
+                self.focus_request = None;
+                self.focus_index = self.focus_count;
+                self.keyboard_nav = true;
+                self.board_cursor = None;
+            }
+        }
         let index = self.focus_count;
         if enabled && self.keyboard_active {
             self.focus_count += 1;

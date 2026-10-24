@@ -69,9 +69,9 @@ def with_accessibility(source):
                 org.json.JSONObject node=xqElement(id);if(node==null)return null;
                 info.setSource(QuadSurface.this,id);info.setParent(QuadSurface.this);
                 boolean editable=!node.isNull("value");
-                info.setClassName(editable?"android.widget.EditText":node.optBoolean("actionable")?"android.widget.Button":"android.widget.TextView");
+                info.setClassName(editable?"android.widget.EditText":node.optBoolean("control",node.optBoolean("actionable"))?"android.widget.Button":"android.widget.TextView");
                 if(editable){info.setEditable(true);info.setText(node.optString("value"));info.addAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT);}
-                info.setContentDescription(node.optString("label")); info.setEnabled(true); info.setFocusable(true);info.setVisibleToUser(isShown());
+                info.setContentDescription(node.optString("label")); info.setEnabled(!node.optBoolean("disabled")); info.setFocusable(true);info.setVisibleToUser(isShown());
                 android.graphics.Rect bounds=xqBounds(node);info.setBoundsInParent(bounds);
                 int[] xy=new int[2];getLocationOnScreen(xy);bounds.offset(xy[0],xy[1]);info.setBoundsInScreen(bounds);
                 info.setAccessibilityFocused(id==xqFocused);

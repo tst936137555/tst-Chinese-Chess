@@ -49,7 +49,10 @@ def main():
             click("首步");wait(read,lambda s:s["reviewPly"]==0)
             command("key","--window",window,"Tab");command("key","--window",window,"Escape")
             print(json.dumps({"osInput":"X11 mouse down/up + keyboard","move":"saved","reviewNavigation":"passed","modalEscape":"passed"}))
-            command("keydown","--window",window,"ctrl");command("key","--window",window,"q");time.sleep(.2);command("keyup","ctrl");app.wait(timeout=30)
+            command("key","--window",window,"ctrl+q");time.sleep(.2)
+            assert app.poll() is None,"Ctrl+Q must not close the game"
+            # Send WM_DELETE_WINDOW through the normal window-manager close action.
+            command("windowactivate","--sync",window);command("key","alt+F4");app.wait(timeout=30)
             if app.returncode:raise AssertionError(f"app exit {app.returncode}")
         finally:
             if app.poll() is None:app.terminate();app.wait(timeout=10)

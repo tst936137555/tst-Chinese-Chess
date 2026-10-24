@@ -3,7 +3,9 @@ pub mod audio;
 pub mod calibration;
 pub mod diagnostics;
 pub mod engine;
+mod frame_wake;
 pub mod game;
+pub mod history;
 pub mod interaction;
 pub mod notation;
 pub mod persistence;
@@ -32,13 +34,29 @@ pub fn launch() {
         }
     }
     macroquad::Window::from_config(
-        macroquad::prelude::Conf {
-            window_title: "tst 自用象棋 · Rust".into(),
-            window_width: 1100,
-            window_height: 800,
-            high_dpi: true,
-            sample_count: 4,
-            icon: app_icon(),
+        macroquad::conf::Conf {
+            miniquad_conf: macroquad::prelude::Conf {
+                window_title: "tst 自用象棋 · Rust".into(),
+                window_width: 1100,
+                window_height: 800,
+                high_dpi: true,
+                sample_count: 4,
+                icon: app_icon(),
+                platform: macroquad::miniquad::conf::Platform {
+                    blocking_event_loop: cfg!(any(target_os = "windows", target_os = "android")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            update_on: Some(macroquad::conf::UpdateTrigger {
+                key_down: true,
+                mouse_down: true,
+                mouse_up: true,
+                mouse_motion: true,
+                mouse_wheel: true,
+                touch: true,
+                ..Default::default()
+            }),
             ..Default::default()
         },
         ui::run(),

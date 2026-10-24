@@ -89,16 +89,17 @@ extern "C" void xq_accessibility_update(const char* json) {
     UIAccessibilityElement* summary = [[[UIAccessibilityElement alloc] initWithAccessibilityContainer:view] autorelease];
     summary.accessibilityLabel = tree[@"summary"];
     summary.accessibilityTraits = UIAccessibilityTraitStaticText;
-    summary.accessibilityFrame = UIAccessibilityConvertFrameToScreen(CGRectMake(0,0,CGRectGetWidth(view.bounds),44),view);
+    summary.accessibilityFrame = UIAccessibilityConvertFrameToScreenCoordinates(CGRectMake(0,0,CGRectGetWidth(view.bounds),44),view);
     [elements addObject:summary];
     for (NSDictionary* node in tree[@"elements"]) {
       XqAccessibilityElement* element = [[[XqAccessibilityElement alloc] initWithAccessibilityContainer:view] autorelease];
       element.controlId = [node[@"id"] unsignedIntValue];
       element.actionable = [node[@"actionable"] boolValue];
       element.accessibilityLabel = node[@"label"];
-      element.accessibilityTraits = element.actionable ? UIAccessibilityTraitButton : UIAccessibilityTraitStaticText;
+      element.accessibilityTraits = [node[@"control"] boolValue] ? UIAccessibilityTraitButton : UIAccessibilityTraitStaticText;
+      if ([node[@"disabled"] boolValue]) element.accessibilityTraits |= UIAccessibilityTraitNotEnabled;
       NSArray* r = node[@"rect"];
-      element.accessibilityFrame = UIAccessibilityConvertFrameToScreen(CGRectMake([r[0] doubleValue],[r[1] doubleValue],[r[2] doubleValue],[r[3] doubleValue]),view);
+      element.accessibilityFrame = UIAccessibilityConvertFrameToScreenCoordinates(CGRectMake([r[0] doubleValue],[r[1] doubleValue],[r[2] doubleValue],[r[3] doubleValue]),view);
       [elements addObject:element];
     }
     view.isAccessibilityElement = NO;

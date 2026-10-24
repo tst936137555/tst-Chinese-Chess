@@ -1,203 +1,104 @@
-name: Rust
+name: CI
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
-
+    inputs:
+      native_macos_input:
+        description: Run macOS OS input (runner must have Accessibility permission)
+        type: boolean
+        default: false
 permissions:
   contents: read
-
 concurrency:
-  group: rust-${{ github.ref }}
-  cancel-in-progress: true
-
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
 jobs:
-  desktop:
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+  quality:
+    name: Format, lint and tooling regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-project
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Linux dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev xvfb xauth xdotool
-      - name: Headless Linux audio
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          # Hosted runners have no sound card. Keep the mixer running with ALSA's null sink.
-          printf 'pcm.!default { type null }\n' > "$RUNNER_TEMP/alsa.conf"
-          echo "ALSA_CONFIG_PATH=$RUNNER_TEMP/alsa.conf" >> "$GITHUB_ENV"
-      - name: Format
-        run: cargo fmt --check
-      - name: Lint
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Fetch real Windows engine
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tool/fetch_engine.ps1 -Target windows
-      - name: Fetch real macOS engine
-        if: runner.os == 'macOS'
-        shell: pwsh
-        run: |
-          brew install p7zip
-          ./tool/fetch_engine.ps1 -Target macos
-      - name: Require real engine on supported desktop runners
-        if: runner.os != 'Linux'
-        shell: bash
-        run: echo 'XIANGQI_REQUIRE_ENGINE=1' >> "$GITHUB_ENV"
-      - name: Tests
-        run: cargo test --all-targets --locked
-      - name: Download integrity fallback regression
-        shell: pwsh
-        run: ./tool/test_download_fallback.ps1
-      - name: Simulator smoke harness regression
-        run: python -m unittest discover -s tool -p "test_*smoke.py"
-      - name: Audio mixer loop regression
-        run: cargo test --manifest-path vendor/quad-snd/Cargo.toml --lib
-      - name: Native adapter restart regression
-        if: runner.os != 'Windows'
-        run: python3 tool/test_native_shim.py
-      - name: Release build
-        run: cargo build --release --locked
-      - name: UI rendering and input smoke
-        if: runner.os == 'Linux'
-        run: timeout 300s xvfb-run -a ./target/release/tst-xiangqi --smoke-test target/ui-smoke
-      - name: Real X11 mouse and keyboard input
-        if: runner.os == 'Linux'
-        run: timeout 120s xvfb-run -a python3 tool/ui_input_smoke.py target/release/tst-xiangqi
-      - name: Stable viewport and coarse visual baselines
-        if: runner.os == 'Linux'
-        run: cargo run --release --locked --example check_ui -- target/ui-smoke
-      - name: First-frame Chinese font atlas regression
-        if: runner.os == 'Linux'
-        run: |
-          cargo build --release --locked --example font_regression
-          timeout 60s xvfb-run -a ./target/release/examples/font_regression target/font-regression
-      - uses: actions/upload-artifact@v4
-        if: always() && runner.os == 'Linux'
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          name: ui-smoke
-          path: target/ui-smoke/
-      - name: Windows package
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./tool/package_windows_rust.ps1
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows'
-        with:
-          name: rust-windows
-          path: dist/*.zip
-
+          go-version: '1.27.3'
+          cache: false
+      - name: Validate all workflow syntax and expressions
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -color -shellcheck= -pyflakes=
+      - name: Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Build scripts and smoke harness regressions
+        run: python -m unittest discover -s tool -p 'test_*.py'
+      - name: Verify release version and changelog on every change
+        shell: bash
+        run: python tool/release_notes.py --tag "v$(python tool/build_info.py version)" --output target/release-notes.md
+  desktop:
+    needs: quality
+    uses: ./.github/workflows/desktop.yml
+    with:
+      native_macos_input: ${{ inputs.native_macos_input == true }}
   android:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [aarch64-linux-android, x86_64-linux-android]
+    needs: quality
+    uses: ./.github/workflows/android.yml
+    with:
+      verify_only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+    secrets: inherit
+  ios:
+    needs: quality
+    uses: ./.github/workflows/ios.yml
+  ci:
+    name: CI passed
+    if: always()
+    needs: [quality, desktop, android, ios]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-java@v5
+      - name: Require every build and runtime check
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); print(results); assert results and all(r == "success" for r in results), "Required CI jobs failed, were cancelled, or were skipped"'
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release-artifacts
+          pattern: rust-*
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
-          # The legacy 'tools' package in the action's defaults is no longer available.
-          packages: platform-tools
-      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
-      - uses: dtolnay/rust-toolchain@1.99.1
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Fetch assets
-        shell: pwsh
-        run: |
-          sudo apt-get install -y p7zip-full
-          ./tool/fetch_engine.ps1 -Target core
-      - name: Build APK
+          packages: build-tools;35.0.0
+      - name: Validate tag, release notes and verified artifacts
+        run: python tool/release_notes.py --tag "$GITHUB_REF_NAME" --output target/release-notes.md --assets release-artifacts --android-build-tools "$ANDROID_HOME/build-tools/35.0.0"
+      - name: Publish verified stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
-          export NDK_HOME="$ANDROID_NDK_HOME"
-          bash tool/build_android_rust.sh '${{ matrix.target }}'
-      - name: Android IME and accessibility Java bridge compile regression
-        run: python3 -m unittest discover -s tool -p "test_android_bridge.py"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rust-android-${{ matrix.target }}
-          path: target/android-artifacts/**/tst-xiangqi-*.apk
-          if-no-files-found: error
-      - name: Enable KVM for Android emulator
-        if: matrix.target == 'x86_64-linux-android'
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          sudo udevadm settle
-          test -r /dev/kvm && test -w /dev/kvm
-      - name: Install and exercise debug APK in emulator
-        if: matrix.target == 'x86_64-linux-android'
-        timeout-minutes: 15
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          arch: x86_64
-          target: google_apis
-          disable-animations: true
-          disable-linux-hw-accel: false
-          emulator-boot-timeout: 300
-          script: python3 tool/mobile_smoke.py
-      - name: Android simulator diagnostics
-        if: always() && matrix.target == 'x86_64-linux-android'
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-smoke
-          path: target/android-smoke/
-
-  ios:
-    runs-on: macos-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [aarch64-apple-ios, aarch64-apple-ios-sim]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.99.1
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Fetch assets
-        shell: pwsh
-        run: |
-          brew install p7zip
-          ./tool/fetch_engine.ps1 -Target core
-      - name: Build native app
-        run: bash tool/build_ios_rust.sh '${{ matrix.target }}'
-      - name: Archive
-        run: cd dist/ios && zip -r ../../rust-ios-${{ matrix.target }}.zip '${{ matrix.target }}'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rust-ios-${{ matrix.target }}
-          path: rust-ios-*.zip
-          if-no-files-found: error
-      - name: Install and launch iOS simulator app
-        if: matrix.target == 'aarch64-apple-ios-sim'
-        timeout-minutes: 10
-        run: python3 tool/ios_smoke.py 'dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app'
-      - name: iOS simulator diagnostics
-        if: always() && matrix.target == 'aarch64-apple-ios-sim'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-smoke
-          path: target/ios-smoke/
+          mapfile -d '' assets < <(find release-artifacts -type f \( -name '*.zip' -o -name '*.apk' -o -name '*.build.json' -o -name SHA256SUMS \) -print0)
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" --verify-tag --latest --title "$GITHUB_REF_NAME" --notes-file target/release-notes.md

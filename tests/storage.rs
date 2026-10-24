@@ -1,7 +1,4 @@
-use tst_xiangqi::{
-    game::{Game, Outcome},
-    storage::Storage,
-};
+use tst_xiangqi::{game::Game, storage::Storage};
 #[test]
 fn concurrent_updates_replace_safely_and_toggle_latest_state() {
     let dir = tempfile::tempdir().unwrap();
@@ -11,9 +8,10 @@ fn concurrent_updates_replace_safely_and_toggle_latest_state() {
             let path = path.clone();
             std::thread::spawn(move || {
                 let store = Storage::new(path);
-                let mut r = Game::default().snapshot(true, 0, false);
+                let mut game = Game::default();
+                game.resign(tst_xiangqi::rules::Side::Red);
+                let mut r = game.snapshot(true, 0, false);
                 r.time = i;
-                r.result = Outcome::Draw;
                 store
                     .update(|d| {
                         d.archives.push(r);

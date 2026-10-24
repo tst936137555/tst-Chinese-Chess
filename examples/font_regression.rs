@@ -22,6 +22,8 @@ async fn main() {
     let bytes = include_bytes!("../assets/fonts/XqKai-Medium-subset.ttf");
     let font = UiFont::load(bytes).unwrap();
     let control = load_ttf_font_from_bytes(bytes).unwrap();
+    // Exercise the application's offscreen render and presentation path.
+    let mut scene = tst_xiangqi::rendering::AdaptiveScene::new();
     // Exercise real startup preparation on the protected path.
     if !raw {
         for (text, size) in copy::FONT_GROUPS.iter().skip(2) {
@@ -29,8 +31,28 @@ async fn main() {
         }
     }
     let mut first: Option<Image> = None;
-    for frame in 0..2 {
+    let cycle = args.iter().any(|s| s == "--density-cycle");
+    let mut results = Vec::new();
+    let mut max_rms = 0_f64;
+    for frame in 0..if cycle { 10 } else { 2 } {
+        let density = if cycle {
+            [1., 1.25, 1.5, 2., 1.][frame / 2]
+        } else {
+            screen_dpi_scale()
+        };
+        if frame % 2 == 0 {
+            first = None;
+            scene.target = render_target((640. * density) as u32, (800. * density) as u32);
+            scene.target.texture.set_filter(FilterMode::Linear);
+        }
+        if cycle {
+            font.set_pixel_density(density);
+        }
+        let mut camera = Camera2D::from_display_rect(Rect::new(0., 0., 640., 800.));
+        camera.render_target = Some(scene.target.clone());
+        set_camera(&camera);
         clear_background(Color::new(0.98, 0.97, 0.94, 1.));
+        scene.use_scene_material();
         let mut y = 35.;
         for (source, size) in [
             (copy::HELP, 18.),
@@ -60,6 +82,7 @@ async fn main() {
                 y += 27.;
             }
         }
+        scene.present();
         let image = get_screen_data();
         image.export_png(root.join(format!("{frame}.png")).to_str().unwrap());
         if let Some(first) = &first {
@@ -71,7 +94,9 @@ async fn main() {
                 .sum::<f64>()
                 / image.bytes.len() as f64)
                 .sqrt();
-            let result = serde_json::json!({"rawControl":raw,"firstVsWarmRms":rms,"size":[image.width,image.height]});
+            max_rms = max_rms.max(rms);
+            results.push(serde_json::json!({"density":density,"rms":rms}));
+            let result = serde_json::json!({"rawControl":raw,"firstVsWarmRms":max_rms,"densitySamples":results,"size":[image.width,image.height]});
             std::fs::write(
                 root.join("result.json"),
                 serde_json::to_vec_pretty(&result).unwrap(),

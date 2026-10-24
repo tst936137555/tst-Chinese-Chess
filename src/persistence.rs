@@ -2,7 +2,7 @@
 use crate::{
     game::Record,
     review::{CachedPosition, CachedReview},
-    storage::{Data, Settings, Storage},
+    storage::{Data, Settings, SettingsChange, Storage},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,7 +20,13 @@ use std::{
 pub enum Command {
     Save(Box<Record>, Option<Settings>),
     Settings(Settings),
+    SettingsPatch(SettingsChange),
     Favorite(String, String),
+    SetFavorite {
+        id: String,
+        favorite: bool,
+        revision: u64,
+    },
     Remove(String),
     Clear,
     ClearDrafts,
@@ -35,6 +41,12 @@ pub enum Command {
         key: String,
         entries: Vec<Option<CachedPosition>>,
     },
+    CacheUpdate {
+        key: String,
+        len: usize,
+        ply: usize,
+        entry: CachedPosition,
+    },
     Flush,
     Shutdown,
 }
@@ -47,7 +59,9 @@ impl Command {
             self,
             Self::Save(..)
                 | Self::Settings(..)
+                | Self::SettingsPatch(..)
                 | Self::Favorite(..)
+                | Self::SetFavorite { .. }
                 | Self::Remove(..)
                 | Self::Clear
                 | Self::ClearDrafts
@@ -60,7 +74,11 @@ impl Command {
     fn cache_command(&self) -> bool {
         matches!(
             self,
-            Self::CacheLoad { .. } | Self::CachePut { .. } | Self::Flush | Self::Shutdown
+            Self::CacheLoad { .. }
+                | Self::CachePut { .. }
+                | Self::CacheUpdate { .. }
+                | Self::Flush
+                | Self::Shutdown
         )
     }
 }
@@ -89,14 +107,14 @@ struct CacheFile {
     reviews: BTreeMap<String, CachedReview>,
 }
 pub struct Worker {
-    tx: mpsc::Sender<(u64, Command)>,
+    tx: mpsc::Sender<(u64, Command, Instant)>,
     pub rx: mpsc::Receiver<Event>,
     sequence: AtomicU64,
     handle: Option<JoinHandle<()>>,
 }
 impl Worker {
     pub fn new(store: Storage) -> Self {
-        let (tx, requests) = mpsc::channel::<(u64, Command)>();
+        let (tx, requests) = mpsc::channel::<(u64, Command, Instant)>();
         let (events, rx) = mpsc::channel();
         let (cache_tx, cache_rx) = mpsc::channel();
         let cache_events = events.clone();
@@ -104,13 +122,24 @@ impl Worker {
         let cache_handle = std::thread::spawn(move || cache_worker(path, cache_rx, cache_events));
         let handle = std::thread::spawn(move || {
             let mut carry = None;
-            while let Some((mut seq, mut command)) = carry.take().or_else(|| requests.recv().ok()) {
-                while matches!(command, Command::Save(..) | Command::Settings(..)) {
-                    let Ok((next_seq, next)) = requests.try_recv() else {
+            while let Some((mut seq, mut command, queued_at)) =
+                carry.take().or_else(|| requests.recv().ok())
+            {
+                while matches!(
+                    command,
+                    Command::Save(..) | Command::Settings(..) | Command::SettingsPatch(..)
+                ) {
+                    let Ok((next_seq, mut next, next_queued)) = requests.try_recv() else {
                         break;
                     };
                     let replace = match (&command, &next) {
                         (Command::Settings(_), Command::Settings(_)) => true,
+                        (Command::SettingsPatch(old), Command::SettingsPatch(new)) => {
+                            let mut combined = old.clone();
+                            combined.merge(new);
+                            next = Command::SettingsPatch(combined);
+                            true
+                        }
                         (Command::Save(old, old_settings), Command::Save(new, new_settings)) => {
                             new.acknowledges(old)
                                 && (old_settings.is_none() || new_settings.is_some())
@@ -118,7 +147,7 @@ impl Worker {
                         _ => false,
                     };
                     if !replace {
-                        carry = Some((next_seq, next));
+                        carry = Some((next_seq, next, next_queued));
                         break;
                     }
                     let _ = events.send(Event {
@@ -129,6 +158,10 @@ impl Worker {
                     seq = next_seq;
                     command = next;
                 }
+                crate::diagnostics::measure(
+                    "storage_queue_ms",
+                    queued_at.elapsed().as_secs_f64() * 1000.,
+                );
                 if command.cache_command() {
                     let shutdown = matches!(command, Command::Shutdown);
                     if cache_tx.send((seq, command)).is_err() {
@@ -161,7 +194,15 @@ impl Worker {
                         Command::Settings(s) => {
                             return store.save_settings(s.clone()).map(Response::Settings);
                         }
+                        Command::SettingsPatch(change) => {
+                            return store.patch_settings(change).map(Response::Settings);
+                        }
                         Command::Favorite(id, op) => store.favorite_once(id, op)?,
+                        Command::SetFavorite {
+                            id,
+                            favorite,
+                            revision,
+                        } => store.set_favorite(id, *favorite, *revision)?,
                         Command::Remove(id) => store.remove_by_id(id)?,
                         Command::Clear => store.update(|d| {
                             d.clear_archives();
@@ -220,7 +261,7 @@ impl Worker {
     pub fn send(&self, command: Command) -> Result<u64, String> {
         let seq = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
         self.tx
-            .send((seq, command))
+            .send((seq, command, Instant::now()))
             .map_err(|_| "存档线程已退出".to_string())?;
         Ok(seq)
     }
@@ -358,9 +399,39 @@ fn cache_worker(
                 Ok(f) => cache = read_cache(&path, &f),
                 Err(e) => emit(seq, Response::CacheWarning(e)),
             }
-            initialized = true;
+            initialized = !cache.fingerprint.is_empty();
         }
         match command {
+            Command::CacheUpdate {
+                key,
+                len,
+                ply,
+                entry,
+            } => {
+                if len <= crate::game::MAX_PLIES + 1 && ply < len && !cache.fingerprint.is_empty() {
+                    let review = cache.reviews.entry(key).or_insert_with(|| CachedReview {
+                        entries: vec![None; len],
+                        updated_at: 0,
+                    });
+                    if review.entries.len() != len {
+                        review.entries = vec![None; len];
+                    }
+                    {
+                        if review.entries[ply]
+                            .as_ref()
+                            .is_none_or(|old| entry.depth >= old.depth)
+                        {
+                            review.entries[ply] = Some(entry);
+                        }
+                        review.updated_at = crate::game::now_ms();
+                        if !dirty {
+                            deadline = Instant::now() + Duration::from_secs(2);
+                        }
+                        dirty = true;
+                    }
+                }
+                emit(seq, Response::SavedCache);
+            }
             Command::CacheLoad { key } => {
                 if !dirty && !cache.fingerprint.is_empty() {
                     cache = read_cache(&path, &cache.fingerprint);

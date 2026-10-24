@@ -9,10 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_IMPORT_RECORDS: usize = 1000;
 const MAX_DRAFTS: usize = 50;
+const MAX_RETIRED_IDS: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -45,6 +46,77 @@ impl Settings {
         self.effects_volume = self.effects_volume.clamp(0., 1.);
     }
 }
+/// Only fields edited by this window are applied to the latest preferences on disk.
+#[derive(Clone, Debug)]
+pub struct SettingsChange {
+    pub before: Settings,
+    pub after: Settings,
+}
+impl SettingsChange {
+    /// Compose consecutive edits while preserving the oldest baseline per field.
+    pub fn merge(&mut self, newer: &Self) {
+        macro_rules! merge { ($($field:ident),+) => { $(
+            if newer.before.$field != newer.after.$field {
+                if self.before.$field == self.after.$field {
+                    self.before.$field = newer.before.$field;
+                }
+                self.after.$field = newer.after.$field;
+                // Returning to the initial value is still an explicit edit.
+                if self.before.$field == self.after.$field {
+                    self.before.$field = newer.before.$field;
+                }
+            }
+        )+ }; }
+        merge!(
+            user_red,
+            level,
+            sound,
+            music_enabled,
+            effects_enabled,
+            music_volume,
+            effects_volume
+        );
+    }
+    pub fn supersede(&mut self, newer: &Self) {
+        macro_rules! replaced { ($($field:ident),+) => { $(if newer.before.$field != newer.after.$field {
+            self.before.$field = self.after.$field;
+        })+ }; }
+        replaced!(
+            user_red,
+            level,
+            sound,
+            music_enabled,
+            effects_enabled,
+            music_volume,
+            effects_volume
+        );
+    }
+    pub fn apply(&self, settings: &mut Settings) {
+        macro_rules! changed {
+            ($($field:ident),+) => { $(if self.before.$field != self.after.$field {
+                settings.$field = self.after.$field;
+            })+ };
+        }
+        changed!(
+            user_red,
+            level,
+            sound,
+            music_enabled,
+            effects_enabled,
+            music_volume,
+            effects_volume
+        );
+        settings.sanitize();
+    }
+    pub fn is_empty(&self) -> bool {
+        self.before == self.after
+    }
+    pub fn acknowledged(&self, settings: &Settings) -> bool {
+        let mut expected = settings.clone();
+        self.apply(&mut expected);
+        expected == *settings
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Data {
     pub version: u32,
@@ -57,6 +129,9 @@ pub struct Data {
     pub applied_operations: Vec<String>,
     #[serde(default)]
     pub deleted_ids: BTreeSet<String>,
+    /// Compacted identities remain barred from automatic stale-window writes.
+    #[serde(default)]
+    pub retired_before_nanos: u64,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
@@ -70,11 +145,22 @@ impl Default for Data {
             drafts: Vec::new(),
             applied_operations: Vec::new(),
             deleted_ids: BTreeSet::new(),
+            retired_before_nanos: 0,
             extra: BTreeMap::new(),
         }
     }
 }
 impl Data {
+    fn compact_retired(&mut self) {
+        if self.deleted_ids.len() > MAX_RETIRED_IDS {
+            self.retired_before_nanos = self
+                .retired_before_nanos
+                .max(crate::game::identity_time(&crate::game::new_id()).unwrap_or(0));
+            while self.deleted_ids.len() > MAX_RETIRED_IDS {
+                self.deleted_ids.pop_first();
+            }
+        }
+    }
     pub fn clear_archives(&mut self) {
         self.deleted_ids
             .extend(self.archives.drain(..).map(|r| r.id));
@@ -82,7 +168,22 @@ impl Data {
     pub fn clear_drafts(&mut self) {
         self.deleted_ids.extend(self.drafts.drain(..).map(|r| r.id));
     }
+    fn trim_archives(&mut self) {
+        let (mut plain, mut fav) = (0, 0);
+        self.archives.retain(|r| {
+            let n = if r.favorite { &mut fav } else { &mut plain };
+            *n += 1;
+            let keep = *n <= if r.favorite { 50 } else { 100 };
+            if !keep {
+                self.deleted_ids.insert(r.id.clone());
+            }
+            keep
+        });
+    }
     fn validate(&self) -> Result<(), String> {
+        if self.retired_before_nanos > crate::game::MAX_REVISION {
+            return Err("存档身份屏障超出有效范围，原文件已保留".into());
+        }
         if self
             .deleted_ids
             .iter()
@@ -93,11 +194,52 @@ impl Data {
         if self.archives.len() > MAX_IMPORT_RECORDS || self.drafts.len() > MAX_DRAFTS {
             return Err("存档局数超限，原文件已保留".into());
         }
+        let mut identities = BTreeSet::new();
         for record in self.active.iter().chain(&self.archives).chain(&self.drafts) {
-            record.validate_metadata()?;
+            validate_record(record)?;
+            if record.id.is_empty() || !identities.insert(&record.id) {
+                return Err("存档存在重复或空的对局身份，原文件已保留".into());
+            }
+            if self.deleted_ids.contains(&record.id) {
+                return Err("存档包含已删除的对局身份，原文件已保留".into());
+            }
+        }
+        if self
+            .active
+            .iter()
+            .chain(&self.drafts)
+            .any(|r| r.result != Outcome::Playing)
+            || self.archives.iter().any(|r| r.result == Outcome::Playing)
+        {
+            return Err("存档中的活动对局与归档状态不一致，原文件已保留".into());
         }
         Ok(())
     }
+}
+/// Cache positive semantic checks by complete serialized content, never by identity alone.
+/// Metadata-only edits and forged tokens cannot reuse a result for different bytes.
+fn validate_record(record: &Record) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::{
+        collections::VecDeque,
+        sync::{Mutex, OnceLock},
+    };
+    static VERIFIED: OnceLock<Mutex<VecDeque<[u8; 32]>>> = OnceLock::new();
+    record.validate_metadata()?;
+    let key: [u8; 32] =
+        Sha256::digest(serde_json::to_vec(record).map_err(|e| e.to_string())?).into();
+    let cache = VERIFIED.get_or_init(Default::default);
+    if cache.lock().is_ok_and(|entries| entries.contains(&key)) {
+        return Ok(());
+    }
+    record.replay()?;
+    if let Ok(mut entries) = cache.lock() {
+        if entries.len() >= 512 {
+            entries.pop_front();
+        }
+        entries.push_back(key);
+    }
+    Ok(())
 }
 #[derive(Clone)]
 pub struct Storage {
@@ -152,14 +294,22 @@ impl Storage {
             r.normalize();
         }
         d.validate()?;
-        d.applied_operations.truncate(128);
+        crate::game::advance_identity_clock(d.retired_before_nanos);
         d.settings.sanitize();
         d.version = SCHEMA_VERSION;
         Ok(d)
     }
     fn load_state(&self) -> Result<Data, String> {
         match fs::metadata(&self.path) {
-            Ok(_) => Self::decode(&Self::read(&self.path)?),
+            Ok(_) => {
+                let started = Instant::now();
+                let result = Self::decode(&Self::read(&self.path)?);
+                crate::diagnostics::measure(
+                    "storage_read_validate_ms",
+                    started.elapsed().as_secs_f64() * 1000.,
+                );
+                result
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Data::default()),
             Err(e) => Err(e.to_string()),
         }
@@ -185,19 +335,24 @@ impl Storage {
     }
     pub fn load(&self) -> Result<Data, String> {
         let mut data = self.load_state()?;
+        data.settings = self.load_preferences(data.settings);
+        Ok(data)
+    }
+    /// Read preferences even when the independent game library is damaged.
+    pub fn load_preferences(&self, mut fallback: Settings) -> Settings {
         let path = self.settings_path();
         if path.exists() {
             match Self::decode_settings(&path) {
-                Ok(settings) => data.settings = settings,
+                Ok(settings) => fallback = settings,
                 Err(error) => {
                     crate::diagnostics::record("settings-recovery", &error);
                     if let Ok(settings) = Self::decode_settings(&path.with_extension("bak")) {
-                        data.settings = settings;
+                        fallback = settings;
                     }
                 }
             }
         }
-        Ok(data)
+        fallback
     }
     fn write_settings(&self, settings: &Settings) -> Result<(), String> {
         let path = self.settings_path();
@@ -209,6 +364,9 @@ impl Storage {
                 .is_some_and(|version| version > 1)
             {
                 return Err("设置来自更新版本，已禁止覆盖".into());
+            }
+            if Self::decode_settings(&path).is_ok_and(|old| old == *settings) {
+                return Ok(());
             }
             let backup = if Self::decode_settings(&path).is_ok() {
                 path.with_extension("bak")
@@ -232,6 +390,18 @@ impl Storage {
         self.write_settings(&settings)?;
         Ok(settings)
     }
+    pub fn patch_settings(&self, change: &SettingsChange) -> Result<Settings, String> {
+        fs::create_dir_all(self.path.parent().ok_or("设置目录无效")?).map_err(|e| e.to_string())?;
+        let _lock = self.lock()?;
+        let path = self.settings_path();
+        let mut settings = Self::decode_settings(&path)
+            .or_else(|_| Self::decode_settings(&path.with_extension("bak")))
+            .unwrap_or_else(|_| change.before.clone());
+        change.apply(&mut settings);
+        // write_settings also preserves damaged files and rejects future schemas.
+        self.write_settings(&settings)?;
+        Ok(settings)
+    }
     pub(crate) fn lock(&self) -> Result<File, String> {
         let lock = OpenOptions::new()
             .create(true)
@@ -243,7 +413,13 @@ impl Storage {
         let start = Instant::now();
         loop {
             match lock.try_lock() {
-                Ok(()) => return Ok(lock),
+                Ok(()) => {
+                    crate::diagnostics::measure(
+                        "storage_lock_wait_ms",
+                        start.elapsed().as_secs_f64() * 1000.,
+                    );
+                    return Ok(lock);
+                }
                 Err(std::fs::TryLockError::WouldBlock)
                     if start.elapsed() < Duration::from_secs(2) =>
                 {
@@ -256,10 +432,18 @@ impl Storage {
     pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         let parent = path.parent().ok_or("存档目录无效")?;
         let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        tmp.write_all(bytes)
-            .and_then(|()| tmp.as_file().sync_all())
-            .map_err(|e| e.to_string())?;
+        let written = Instant::now();
+        tmp.write_all(bytes).map_err(|e| e.to_string())?;
+        crate::diagnostics::measure("storage_write_ms", written.elapsed().as_secs_f64() * 1000.);
+        let synced = Instant::now();
+        tmp.as_file().sync_all().map_err(|e| e.to_string())?;
+        crate::diagnostics::measure("storage_sync_ms", synced.elapsed().as_secs_f64() * 1000.);
+        let replaced = Instant::now();
         tmp.persist(path).map_err(|e| e.to_string())?;
+        crate::diagnostics::measure(
+            "storage_replace_ms",
+            replaced.elapsed().as_secs_f64() * 1000.,
+        );
         #[cfg(unix)]
         File::open(parent)
             .and_then(|f| f.sync_all())
@@ -273,17 +457,33 @@ impl Storage {
         let mut data = self.load()?;
         let old_settings = data.settings.clone();
         op(&mut data)?;
+        data.compact_retired();
         data.version = SCHEMA_VERSION;
         data.settings.sanitize();
         data.validate()?;
-        let bytes = serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?;
+        let serialized = Instant::now();
+        let bytes = serde_json::to_vec(&data).map_err(|e| e.to_string())?;
+        crate::diagnostics::measure(
+            "storage_serialize_ms",
+            serialized.elapsed().as_secs_f64() * 1000.,
+        );
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Err("存档超过 32 MiB 限制".into());
         }
-        if self.path.is_file() {
-            Self::atomic_write(&self.path.with_extension("bak"), &Self::read(&self.path)?)?;
+        let previous = if self.path.is_file() {
+            Some(Self::read(&self.path)?)
+        } else {
+            None
+        };
+        if previous.as_deref() != Some(bytes.as_slice()) {
+            if let Some(previous) = previous {
+                Self::atomic_write(&self.path.with_extension("bak"), &previous)?;
+            }
+            Self::atomic_write(&self.path, &bytes)?;
+        } else if !self.path.with_extension("bak").is_file() {
+            // Seed the first recovery point even when the second transaction is a no-op.
+            Self::atomic_write(&self.path.with_extension("bak"), &bytes)?;
         }
-        Self::atomic_write(&self.path, &bytes)?;
         if data.settings != old_settings {
             self.write_settings(&data.settings)?;
         }
@@ -327,13 +527,23 @@ impl Storage {
         settings: Option<Settings>,
     ) -> Result<Data, StorageFailure> {
         record.normalize();
-        record.replay().map_err(|message| StorageFailure {
+        validate_record(&record).map_err(|message| StorageFailure {
             kind: crate::diagnostics::FailureKind::Protocol,
             message,
         })?;
         let mut conflict = false;
         let result = self.update(|d| {
-            if d.deleted_ids.contains(&record.id) {
+            let known = d
+                .active
+                .iter()
+                .chain(&d.drafts)
+                .chain(&d.archives)
+                .any(|r| r.id == record.id);
+            let born = crate::game::identity_time(&record.id)
+                .unwrap_or_else(|| record.created_at.saturating_mul(1_000_000));
+            if d.deleted_ids.contains(&record.id)
+                || (!known && d.retired_before_nanos > 0 && born <= d.retired_before_nanos)
+            {
                 conflict = true;
                 return Err("此局已被删除，旧窗口不能写回；请另存独立分支".into());
             }
@@ -353,6 +563,7 @@ impl Storage {
                     return Err("[conflict] 此局已由另一窗口更新，请另存当前分支或重新载入".into());
                 }
                 record.favorite = old.favorite;
+                record.favorite_revision = old.favorite_revision;
                 record.title = old.title.clone();
             }
             if let Some(s) = settings {
@@ -377,7 +588,7 @@ impl Storage {
                 d.drafts.retain(|r| r.id != record.id);
                 d.archives.retain(|r| r.id != record.id);
                 d.archives.insert(0, record);
-                trim(&mut d.archives);
+                d.trim_archives();
             }
             Ok(())
         });
@@ -435,10 +646,39 @@ impl Storage {
                 return Err("最多收藏 50 局，请先取消一个收藏".into());
             }
             d.archives[idx].favorite = !d.archives[idx].favorite;
+            d.archives[idx].favorite_revision = d.archives[idx]
+                .favorite_revision
+                .checked_add(1)
+                .ok_or("收藏修订号已满")?;
             d.applied_operations.push(operation.to_owned());
-            if d.applied_operations.len() > 128 {
-                d.applied_operations.remove(0);
+            Ok(())
+        })
+    }
+    /// A retry names the desired state and the metadata revision it observed.
+    pub fn set_favorite(&self, id: &str, favorite: bool, revision: u64) -> Result<Data, String> {
+        self.update(|d| {
+            let idx = d
+                .archives
+                .iter()
+                .position(|r| r.id == id)
+                .ok_or("棋谱已不存在")?;
+            let record = &d.archives[idx];
+            if record.favorite_revision != revision {
+                if record.favorite == favorite
+                    && record.favorite_revision == revision.saturating_add(1)
+                {
+                    return Ok(());
+                }
+                return Err("[conflict] 收藏状态已由另一操作更新，请重新读取后操作".into());
             }
+            if favorite
+                && !record.favorite
+                && d.archives.iter().filter(|r| r.favorite).count() >= 50
+            {
+                return Err("最多收藏 50 局，请先取消一个收藏".into());
+            }
+            d.archives[idx].favorite = favorite;
+            d.archives[idx].favorite_revision = revision.checked_add(1).ok_or("收藏修订号已满")?;
             Ok(())
         })
     }
@@ -512,17 +752,12 @@ impl Storage {
                 }
             }
             d.archives.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
-            trim(&mut d.archives);
+            let favorites = d.archives.iter().filter(|r| r.favorite).count();
+            if favorites > 50 || d.archives.len() - favorites > 100 {
+                return Err("导入后超过普通棋谱 100 局或收藏 50 局上限；未导入任何记录，现有棋谱与原文件均已保留".into());
+            }
             Ok(())
         })?;
         Ok((data, added))
     }
-}
-fn trim(records: &mut Vec<Record>) {
-    let (mut plain, mut fav) = (0, 0);
-    records.retain(|r| {
-        let n = if r.favorite { &mut fav } else { &mut plain };
-        *n += 1;
-        *n <= if r.favorite { 50 } else { 100 }
-    });
 }

@@ -10,6 +10,34 @@ import mobile_smoke
 
 
 class AndroidSmokeTest(unittest.TestCase):
+    def test_stalled_startup_reports_native_stage(self):
+        def command(*args, **kwargs):
+            value = b"native-start" if args[-1].endswith("/smoke/startup.txt") else b"123"
+            code = 1 if args[-1].endswith("/smoke/result.json") else 0
+            return subprocess.CompletedProcess([], code, value, b"")
+        with patch.object(mobile_smoke, "adb", side_effect=command), \
+             patch.object(mobile_smoke.time, "monotonic", side_effect=range(100)), \
+             patch.object(mobile_smoke.time, "sleep"):
+            with self.assertRaisesRegex(AssertionError, "stalled.*native-start"):
+                mobile_smoke.wait_for_smoke(stall_timeout=10)
+
+    def test_crash_fails_immediately(self):
+        with patch.object(mobile_smoke, "adb", side_effect=[
+            subprocess.CompletedProcess([], 0, b"font-load", b""),
+            subprocess.CompletedProcess([], 1, b"", b"missing"),
+            subprocess.CompletedProcess([], 1, b"", b""),
+        ]):
+            with self.assertRaisesRegex(AssertionError, "exited.*font-load"):
+                mobile_smoke.wait_for_smoke()
+
+    def test_mobile_result_requires_real_engine(self):
+        with patch.object(mobile_smoke, "adb", side_effect=[
+            subprocess.CompletedProcess([], 0, b"scene-28/29", b""),
+            subprocess.CompletedProcess([], 0, b'{"scenes":29,"realEngine":"assets unavailable"}', b""),
+        ]):
+            with self.assertRaisesRegex(AssertionError, "unsuccessful result"):
+                mobile_smoke.wait_for_smoke()
+
     def test_adb_has_a_bounded_default_and_install_override(self):
         with patch.object(mobile_smoke.subprocess, "run") as run:
             mobile_smoke.adb("shell", "getprop")

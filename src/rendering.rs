@@ -234,7 +234,8 @@ impl AdaptiveScene {
         crate::diagnostics::record("render-target", &format!("{w}x{h} samples={sample_count}"));
         target
     }
-    pub fn resize(&mut self) {
+    pub fn resize(&mut self) -> bool {
+        let mut changed = false;
         let size = self.smoke_size.unwrap_or_else(|| {
             self.budget.size(
                 screen_width(),
@@ -253,19 +254,21 @@ impl AdaptiveScene {
                 match self.resize_candidate {
                     Some((candidate, started)) if candidate == size => {
                         if started.elapsed() < std::time::Duration::from_millis(120) {
-                            return;
+                            return false;
                         }
                     }
                     _ => {
                         self.resize_candidate = Some((size, std::time::Instant::now()));
-                        return;
+                        return false;
                     }
                 }
             }
             set_default_camera();
             self.target = Self::allocate(size, self.resolve);
+            changed = true;
         }
         self.resize_candidate = None;
+        changed
     }
     pub(crate) fn smoke_resolution(&mut self, width: u32, height: u32) {
         // Exercise high detail independently of monitor/window size; no user-facing setting.

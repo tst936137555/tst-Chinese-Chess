@@ -7,15 +7,16 @@ from pathlib import Path
 from build_info import ROOT,version_info
 from ui_input_smoke import wait
 PACKAGE="com.tst.xiangqi.rust"
+AUTOMATION_ROOT=f"/sdcard/Android/data/{PACKAGE}/files"
 def adb(*args,check=True,timeout=15):
     return subprocess.run(["adb",*map(str,args)],check=check,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
 
 def collect_diagnostics():
     output=ROOT/"target/android-smoke";output.mkdir(parents=True,exist_ok=True)
     commands={
-        "logcat.txt": ("logcat","-d","-t","2000"),
+        "logcat.txt": ("logcat","-d"),
         "activity.txt": ("shell","dumpsys","activity","activities"),
-        "startup.txt": ("shell","run-as",PACKAGE,"cat","files/smoke/startup.txt"),
+        "startup.txt": ("shell","cat",f"{AUTOMATION_ROOT}/smoke/startup.txt"),
     }
     for name,args in commands.items():
         try:
@@ -28,19 +29,39 @@ def launch(*args):
 def foreground():
     dump=adb("shell","dumpsys","activity","activities").stdout.decode(errors="replace")
     return any(PACKAGE in line and ("mResumedActivity" in line or "topResumedActivity" in line) for line in dump.splitlines())
+def wait_for_smoke(timeout=300, stall_timeout=90):
+    started=changed=time.monotonic();last_stage=None
+    while time.monotonic()-started < timeout:
+        output=adb("shell","cat",f"{AUTOMATION_ROOT}/smoke/startup.txt",check=False)
+        stage=output.stdout.decode(errors="replace").strip() if output.returncode==0 else "waiting for native startup"
+        if stage!=last_stage:
+            print("Android smoke:",stage,flush=True);last_stage=stage;changed=time.monotonic()
+        output=adb("shell","cat",f"{AUTOMATION_ROOT}/smoke/result.json",check=False)
+        if output.returncode==0:
+            try:result=json.loads(output.stdout)
+            except json.JSONDecodeError:result=None
+            if result is not None:
+                if result.get("scenes")!=29 or result.get("realEngine")!="passed":
+                    raise AssertionError(f"Android smoke returned an unsuccessful result: {result}")
+                return result
+        if not adb("shell","pidof",PACKAGE,check=False).stdout.strip():
+            raise AssertionError(f"Android app exited before smoke result at {last_stage}")
+        if time.monotonic()-changed>=stall_timeout:
+            raise AssertionError(f"Android smoke stalled for {stall_timeout}s at {last_stage}")
+        time.sleep(.5)
+    raise AssertionError(f"Android smoke exceeded {timeout}s at {last_stage}")
+
 def main():
-    if adb("shell","getprop","ro.kernel.qemu").stdout.strip()!=b"1":raise SystemExit("This destructive debug install test requires an Android emulator")
+    if adb("shell","getprop","ro.kernel.qemu").stdout.strip()!=b"1":raise SystemExit("This isolated release install test requires an Android emulator")
     apk=ROOT/"dist"/f"tst-xiangqi-{version_info()['version']}-x86_64.apk"
     adb("install","-r",apk,timeout=120);adb("shell","am","force-stop",PACKAGE)
-    adb("shell","run-as",PACKAGE,"rm","-f","files/smoke/result.json",check=False)
+    adb("logcat","-c")
+    adb("shell","rm","-f",f"{AUTOMATION_ROOT}/smoke/result.json",f"{AUTOMATION_ROOT}/smoke/startup.txt",check=False)
     launch("--ez","xiangqiSmoke","true")
-    def smoke_result():
-        output=adb("shell","run-as",PACKAGE,"cat","files/smoke/result.json",check=False)
-        return json.loads(output.stdout) if output.returncode==0 else {}
-    result=wait(smoke_result,lambda r:r.get("scenes")==29 and r.get("realEngine")=="passed",120)
-    adb("shell","am","force-stop",PACKAGE);adb("shell","run-as",PACKAGE,"rm","-f","files/interaction/interaction.json",check=False);launch("--ez","xiangqiObserve","true")
+    result=wait_for_smoke()
+    adb("shell","am","force-stop",PACKAGE);adb("shell","rm","-f",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False);launch("--ez","xiangqiObserve","true")
     def state():
-        output=adb("shell","run-as",PACKAGE,"cat","files/interaction/interaction.json",check=False)
+        output=adb("shell","cat",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False)
         return json.loads(output.stdout) if output.returncode==0 else {}
     def tap(label):
         s=wait(state,lambda s:any(c["label"]==label for c in s.get("controls",[])))
@@ -69,7 +90,7 @@ def main():
         adb("shell","settings","put","system","user_rotation",old_rotation)
         adb("shell","settings","put","system","accelerometer_rotation",old_auto)
     saved=wait(state,lambda s:s.get("saved"))
-    adb("shell","am","force-stop",PACKAGE);adb("shell","run-as",PACKAGE,"rm","-f","files/interaction/interaction.json",check=False);launch("--ez","xiangqiObserve","true")
+    adb("shell","am","force-stop",PACKAGE);adb("shell","rm","-f",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False);launch("--ez","xiangqiObserve","true")
     wait(state,lambda s:s.get("screen")=="home");tap("继续未完成对局")
     restored=wait(state,lambda s:s.get("screen")=="game")
     assert restored["fen"]==saved["fen"] and restored["plies"]==saved["plies"]

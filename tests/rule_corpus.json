@@ -1,0 +1,116 @@
+[
+  {
+    "name": "opening-red",
+    "fen": "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
+    "perft1": 44,
+    "perft2": 1920
+  },
+  {
+    "name": "opening-black",
+    "fen": "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR b - - 0 1",
+    "perft1": 44,
+    "perft2": 1920
+  },
+  {
+    "name": "middle-red",
+    "fen": "r1bakabr1/9/1cn3nc1/2p1p1p1p/p8/9/P1P1P1P1P/1CN1C1N2/9/R1BAKABR1 w - - 8 5",
+    "perft1": 36,
+    "perft2": 1262
+  },
+  {
+    "name": "middle-black",
+    "fen": "1rbakab1r/9/2n1c1nc1/p1p1p1p1p/9/8P/P1P1P1P2/1CN3NC1/9/1RBAKAB1R b - - 8 5",
+    "perft1": 36,
+    "perft2": 1262
+  },
+  {
+    "name": "attack-red",
+    "fen": "5k3/9/9/9/9/9/9/9/3R5/4K4 w - - 0 1",
+    "perft1": 19,
+    "perft2": 18
+  },
+  {
+    "name": "attack-black",
+    "fen": "4k4/5r3/9/9/9/9/9/9/9/3K5 b - - 0 1",
+    "perft1": 19,
+    "perft2": 18
+  },
+  {
+    "name": "defense-red",
+    "fen": "5k3/9/9/9/9/9/9/9/4r4/4K4 w - - 0 1",
+    "perft1": 2,
+    "perft2": 20
+  },
+  {
+    "name": "defense-black",
+    "fen": "4k4/4R4/9/9/9/9/9/9/9/3K5 b - - 0 1",
+    "perft1": 2,
+    "perft2": 20
+  },
+  {
+    "name": "ending-red",
+    "fen": "4k4/9/9/4p4/4P4/9/9/9/9/4K4 w - - 0 1",
+    "perft1": 6,
+    "perft2": 21
+  },
+  {
+    "name": "ending-black",
+    "fen": "4k4/9/9/9/9/4p4/4P4/9/9/4K4 b - - 0 1",
+    "perft1": 6,
+    "perft2": 21
+  },
+  {
+    "name": "pin-red",
+    "fen": "4k4/4r4/9/9/9/9/9/9/4R4/4K4 w - - 0 1",
+    "perft1": 9,
+    "perft2": 51
+  },
+  {
+    "name": "pin-black",
+    "fen": "4k4/4r4/9/9/9/9/9/9/4R4/4K4 b - - 0 1",
+    "perft1": 9,
+    "perft2": 51
+  },
+  {
+    "name": "cannon-red",
+    "fen": "3k5/9/9/9/4p4/9/9/9/4C4/4K4 w - - 0 1",
+    "perft1": 12,
+    "perft2": 32
+  },
+  {
+    "name": "cannon-black",
+    "fen": "4k4/4c4/9/9/9/4P4/9/9/9/5K3 b - - 0 1",
+    "perft1": 12,
+    "perft2": 32
+  },
+  {
+    "name": "horse-red",
+    "fen": "3k5/9/9/9/9/9/9/9/1R7/1N3K3 w - - 0 1",
+    "perft1": 19,
+    "perft2": 33
+  },
+  {
+    "name": "horse-black",
+    "fen": "3k3n1/7r1/9/9/9/9/9/9/9/5K3 b - - 0 1",
+    "perft1": 19,
+    "perft2": 33
+  },
+  {
+    "name": "rook-pin",
+    "fen": "4k4/4r4/9/9/9/9/9/9/4R4/4K4 w - - 0 1",
+    "perft1": 9,
+    "perft2": 51
+  },
+  {
+    "name": "cannon-screen",
+    "fen": "3k5/9/9/9/4p4/9/9/9/4C4/4K4 w - - 0 1",
+    "perft1": 12,
+    "perft2": 32
+  },
+  {
+    "name": "stalemate",
+    "fen": "3k5/2R1R4/9/9/9/9/9/9/9/4K4 b - - 0 1",
+    "perft1": 0,
+    "perft2": 0
+  }
+]

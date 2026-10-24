@@ -15,6 +15,7 @@ pub struct ReviewSession {
     pub user_red: bool,
     pub score_version: u64,
     pub chart_cache: ChartCache,
+    pub dirty: std::collections::BTreeSet<usize>,
 }
 impl ReviewSession {
     pub fn new(game: Game, user_red: bool) -> Self {
@@ -31,13 +32,17 @@ impl ReviewSession {
             user_red,
             score_version: 0,
             chart_cache: (u64::MAX, 0, Vec::new()),
+            dirty: Default::default(),
         }
     }
     pub fn cache_loaded(&mut self, cache: Option<CachedReview>) {
         self.cache_loading = false;
         if let Some(cache) = cache.filter(|c| c.entries.len() == self.scores.len()) {
             for (ply, entry) in cache.entries.into_iter().enumerate() {
-                if let Some(entry) = entry.filter(|e| e.valid_for(&self.game, ply)) {
+                if let Some(entry) = entry.filter(|e| {
+                    e.valid_for(&self.game, ply)
+                        && (self.scores[ply].is_none() || e.depth > self.depths[ply])
+                }) {
                     self.scores[ply] = Some(entry.score);
                     self.bests[ply] = entry.best.and_then(|m| m.parse().ok());
                     self.depths[ply] = entry.depth;
@@ -49,6 +54,7 @@ impl ReviewSession {
             self.scores[last] = Some(score);
             self.bests[last] = None;
             self.depths[last] = 0;
+            self.dirty.insert(last);
         }
         self.score_version = self.score_version.wrapping_add(1);
     }
@@ -59,6 +65,7 @@ impl ReviewSession {
         self.scores[ply] = Some(variation.evaluation);
         self.bests[ply] = Some(variation.mv);
         self.depths[ply] = variation.depth;
+        self.dirty.insert(ply);
         self.score_version = self.score_version.wrapping_add(1);
     }
 }

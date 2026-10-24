@@ -73,7 +73,7 @@ impl App {
         let (origin, cell) = self.board_rect();
         let unit = self.width / self.viewport.w;
         let squares:Vec<_>=(0..10).flat_map(|rank|(0..9).map(move|file|(file,rank))).map(|(file,rank)|{let square=Square::new(file,rank).unwrap();let point=Self::point(origin,cell,square,!self.settings.user_red);serde_json::json!({"file":file,"rank":rank,"x":self.viewport.x+point.x/unit,"y":self.viewport.y+point.y/unit})}).collect();
-        let value = serde_json::json!({"screen":screen,"modal":self.modal.is_some(),"fen":self.game.board.fen(),"plies":self.game.history.len(),"pending":self.pending.is_some(),"pauseSerial":self.pause_serial,"saved":self.saves.pending==0&&self.saves.failed.is_empty(),"reviewPly":self.review.as_ref().map(|r|r.ply),"controls":controls,"squares":squares,"deviceScale":screen_dpi_scale(),"viewOrigin":crate::platform::view_origin(),"screenWidth":screen_width(),"screenHeight":screen_height()});
+        let value = serde_json::json!({"screen":screen,"sceneStable":!self.redraw,"modal":self.modal.is_some(),"fen":self.game.board.fen(),"plies":self.game.history.len(),"pending":self.pending.is_some(),"pauseSerial":self.pause_serial,"pendingSaves":self.saves.pending,"failedSaves":self.saves.failed.len(),"saved":self.saves.pending==0&&self.saves.failed.is_empty(),"reviewPly":self.review.as_ref().map(|r|r.ply),"controls":controls,"squares":squares,"keyboardFocus":self.focus_index,"keyboardNavigation":self.keyboard_nav,"focusedControl":self.accessible.iter().find(|e|Some(e.id)==self.accessibility_focus).map(|e|e.label.clone()),"deviceScale":screen_dpi_scale(),"viewOrigin":crate::platform::view_origin(),"screenWidth":screen_width(),"screenHeight":screen_height()});
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -82,15 +82,28 @@ impl App {
         }
     }
     pub(super) fn enqueue(&mut self, command: Command) {
+        self.redraw = true;
         let data_command = command.changes_data();
         match self.io.send(command.clone()) {
             Ok(seq) => {
+                if matches!(command, Command::Flush) {
+                    self.close.queued_flush(seq);
+                }
                 if data_command {
                     self.saves.queued(seq, command);
                 }
             }
             Err(e) => {
                 self.notice = e;
+                if matches!(command, Command::Flush) && self.close.waiting() {
+                    self.close.cancel();
+                    self.open_modal(Modal::SaveFailed);
+                }
+                if matches!(command, Command::CacheLoad { .. })
+                    && let Some(review) = &mut self.review
+                {
+                    review.cache_loading = false;
+                }
                 if data_command {
                     self.saves.failed.push(command);
                 }
@@ -98,10 +111,12 @@ impl App {
         }
     }
     pub(super) fn cancel(&mut self) {
+        self.redraw = true;
         self.board_cursor = None;
         self.recovery.resume = None;
         self.engine.cancel();
         self.pending = None;
+        self.ready_move = None;
         self.selected = None;
         self.hints.clear();
         if let Some(r) = &mut self.review {
@@ -127,6 +142,7 @@ impl App {
         {
             record.title = old.title.clone();
             record.favorite = old.favorite;
+            record.favorite_revision = old.favorite_revision;
         }
         if record.result == Outcome::Playing {
             if let Some(i) = self.data.drafts.iter().position(|r| r.id == record.id) {
@@ -143,12 +159,7 @@ impl App {
             }
             self.data.drafts.retain(|r| r.id != record.id);
         }
-        let settings = if self.review_game {
-            None
-        } else {
-            Some(self.settings.clone())
-        };
-        self.enqueue(Command::save(record, settings));
+        self.enqueue(Command::save(record, None));
         self.move_layout_key.1 = u64::MAX;
         self.legal_key.clear();
     }
@@ -157,6 +168,33 @@ impl App {
         self.move_follow = true;
         self.move_layout_key = (String::new(), u64::MAX);
         self.legal_key.clear();
+    }
+    pub(super) fn save_preferences(&mut self) {
+        let change = crate::storage::SettingsChange {
+            before: self.preferences.clone(),
+            after: self.settings.clone(),
+        };
+        if !change.is_empty() {
+            self.preferences = self.settings.clone();
+            self.enqueue(Command::SettingsPatch(change));
+        }
+    }
+    fn sync_preferences(&mut self, confirmed: &Settings) {
+        let draft = crate::storage::SettingsChange {
+            before: self.preferences.clone(),
+            after: self.settings.clone(),
+        };
+        let mut baseline = self.saves.project_preferences(confirmed.clone());
+        let mut visible = baseline.clone();
+        draft.apply(&mut visible);
+        if matches!(self.screen, Screen::Game | Screen::Review) {
+            baseline.user_red = self.settings.user_red;
+            baseline.level = self.settings.level;
+            visible.user_red = self.settings.user_red;
+            visible.level = self.settings.level;
+        }
+        self.preferences = baseline;
+        self.settings = visible;
     }
     pub(super) fn sound(&mut self, index: usize) {
         let file = self.game.history.last().map_or(4, |e| e.mv.to.file());
@@ -213,6 +251,7 @@ impl App {
         if self.pending.is_some() || crate::platform::suspended() {
             return;
         }
+        self.redraw = true;
         let request = match &job {
             Job::Move => {
                 let l = LEVELS[self.settings.level];
@@ -234,7 +273,13 @@ impl App {
             }
         };
         match request {
-            Ok(id) => self.pending = Some(Pending { id, job }),
+            Ok(id) => {
+                self.pending = Some(Pending {
+                    id,
+                    job,
+                    started: get_time(),
+                })
+            }
             Err(e) => {
                 self.notice = e;
                 self.engine_failed = true;
@@ -249,37 +294,49 @@ impl App {
         }
     }
     pub(super) fn save_review_cache(&mut self) {
-        if let Some(r) = &self.review {
-            let entries = r
-                .scores
-                .iter()
-                .enumerate()
-                .map(|(i, s)| {
-                    s.map(|score| CachedPosition {
-                        score,
-                        best: r.bests[i].map(|m| m.to_string()),
-                        depth: r.depths[i],
-                    })
-                })
-                .collect();
-            self.enqueue(Command::CachePut {
-                key: r.cache_key.clone(),
-                entries,
-            });
+        let mut updates = Vec::new();
+        if let Some(r) = &mut self.review {
+            for i in std::mem::take(&mut r.dirty) {
+                if let Some(score) = r.scores[i] {
+                    updates.push(Command::CacheUpdate {
+                        key: r.cache_key.clone(),
+                        len: r.scores.len(),
+                        ply: i,
+                        entry: CachedPosition {
+                            score,
+                            best: r.bests[i].map(|m| m.to_string()),
+                            depth: r.depths[i],
+                        },
+                    });
+                }
+            }
+        }
+        for update in updates {
+            self.enqueue(update);
         }
     }
     pub(super) fn poll(&mut self) {
+        if self.ready_move.is_some_and(|(_, at)| get_time() >= at) && !crate::platform::suspended()
+        {
+            let (mv, _) = self.ready_move.take().unwrap();
+            self.pending = None;
+            self.play(mv);
+        }
         while let Ok(event) = self.io.rx.try_recv() {
+            self.redraw = true;
             match event.result {
                 Ok(Response::Settings(settings)) => {
                     self.data.settings = settings;
                     self.saves.succeeded(event.seq, &self.data);
+                    self.sync_preferences(&self.data.settings.clone());
                 }
                 Ok(Response::Data(data)) => {
                     self.saves.succeeded(event.seq, &data);
+                    self.sync_preferences(&data.settings);
                     if matches!(self.modal, Some(Modal::StorageRecovery)) {
                         self.modal = None;
                         self.settings = data.settings.clone();
+                        self.preferences = data.settings.clone();
                         self.notice = "存档已读取".into();
                     }
                     self.data = self.saves.project(*data);
@@ -293,8 +350,8 @@ impl App {
                         }
                     }
                     self.notice = format!("保存或读取失败：{e}（当前棋盘已保留）");
-                    if self.closing {
-                        self.closing = false;
+                    if self.close.waiting() {
+                        self.close.cancel();
                         self.open_modal(Modal::SaveFailed);
                     }
                     // Cache errors must never strand the viewer waiting for an event.
@@ -319,7 +376,7 @@ impl App {
                     self.notice = format!("分析缓存未保存：{message}；主存档不受影响");
                 }
                 Ok(Response::CachePersisted) => {}
-                Ok(Response::Flushed) => self.close_flushed = true,
+                Ok(Response::Flushed) => self.close.flushed(event.seq),
                 Ok(Response::SavedCache) => {}
                 Ok(Response::Superseded) => {
                     self.saves.completed(event.seq);
@@ -327,6 +384,7 @@ impl App {
             }
         }
         while let Ok(reply) = self.engine.rx.try_recv() {
+            self.redraw = true;
             if self.pending.as_ref().is_none_or(|p| p.id != reply.id) {
                 continue;
             }
@@ -349,7 +407,14 @@ impl App {
                 Ok(analysis) => match pending.job {
                     Job::Move => {
                         let m = self.choose(&analysis);
-                        self.play(m);
+                        let ready = pending.started
+                            + crate::session::minimum_think_seconds(self.settings.level);
+                        if get_time() < ready {
+                            self.ready_move = Some((m, ready));
+                            self.pending = Some(pending);
+                        } else {
+                            self.play(m);
+                        }
                     }
                     Job::Hint => {
                         self.hints = analysis.variations.iter().take(2).map(|v| v.mv).collect();
@@ -401,6 +466,7 @@ impl App {
                 ) {
                     if let Some(score) = crate::review::rule_score(&r.game, i) {
                         r.scores[i] = Some(score);
+                        r.dirty.insert(i);
                         r.score_version = r.score_version.wrapping_add(1);
                     } else {
                         next = Some(i);
@@ -417,22 +483,14 @@ impl App {
     pub(super) fn handle_lifecycle(&mut self) {
         let serial = crate::platform::pause_serial();
         if serial != self.pause_serial {
+            self.redraw = true;
             self.pause_serial = serial;
-            let kind = self
-                .pending
-                .as_ref()
-                .map(|p| match p.job {
-                    Job::Move => crate::session::TaskKind::Move,
-                    Job::Hint => crate::session::TaskKind::Hint,
-                    Job::Review(_) => crate::session::TaskKind::Review,
-                    Job::End => crate::session::TaskKind::End,
-                })
-                .or_else(|| {
-                    self.review
-                        .as_ref()
-                        .filter(|r| r.analyzing)
-                        .map(|_| crate::session::TaskKind::Review)
-                });
+            let kind = self.pending.as_ref().map(|p| p.job.kind()).or_else(|| {
+                self.review
+                    .as_ref()
+                    .filter(|r| r.analyzing)
+                    .map(|_| crate::session::TaskKind::Review)
+            });
             let kind = kind.or(self.recovery.resume);
             self.save_review_cache();
             self.cancel();

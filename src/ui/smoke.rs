@@ -77,6 +77,7 @@ impl Smoke {
                 app.pending = Some(Pending {
                     id: 9_000_001,
                     job: Job::Review(0),
+                    started: get_time(),
                 });
             }
             5 => {
@@ -481,6 +482,21 @@ impl Smoke {
                 "4k-game",
             ][stage];
             let path = self.root.join(format!("{stage:02}-{name}.png"));
+            let mut ids = std::collections::BTreeSet::new();
+            for node in &app.accessible {
+                assert!(
+                    ids.insert(node.id),
+                    "semantic identity collision in scene {stage}"
+                );
+                assert!(!node.label.is_empty() && node.rect.iter().all(|n| n.is_finite()));
+                assert!(node.rect[2] > 0. && node.rect[3] > 0.);
+                assert!(!node.disabled || (node.control && !node.actionable));
+            }
+            std::fs::write(
+                self.root.join(format!("{stage:02}-semantics.json")),
+                serde_json::to_vec_pretty(&app.accessible).unwrap(),
+            )
+            .unwrap();
             if stage >= 27 {
                 // export_png already converts bottom-up GPU readback to upright rows.
                 let frame = app.scene.target.texture.get_texture_data();
