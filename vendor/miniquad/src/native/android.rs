@@ -503,20 +503,18 @@ where
             let block_on_wait = conf.platform.blocking_event_loop && !s.update_requested;
 
             if block_on_wait {
-                // We don't need to loop here because the loop above consumes all
-                // available messages. Instead we are going to block until receiving here.
-
                 match rx_recv(&rx, rx_timeout) {
                     Ok(msg) => s.process_message(msg),
                     // Timeout so time to do periodic update()
                     Err(mpsc::RecvTimeoutError::Timeout) => s.update_requested = true,
                     Err(mpsc::RecvTimeoutError::Disconnected) => panic!(),
                 }
-            } else {
-                // process all the messages from the main thread
-                while let Ok(msg) = rx.try_recv() {
-                    s.process_message(msg);
-                }
+            }
+            // Coalesce queued wake requests before rendering. Slow frames can
+            // otherwise leave real input behind hundreds of timer wakes: the
+            // blocking branch would render once for each queued ScheduleUpdate.
+            while let Ok(msg) = rx.try_recv() {
+                s.process_message(msg);
             }
 
             if !conf.platform.blocking_event_loop || s.update_requested {
