@@ -251,10 +251,12 @@ impl MainThreadState {
     }
 
     fn frame(&mut self) {
+        // A background activity can have no surface. Consume this update even
+        // then, so the blocking loop waits for resume instead of spinning.
+        self.update_requested = false;
         self.event_handler.update();
 
         if self.surface.is_null() == false {
-            self.update_requested = false;
             self.event_handler.draw();
 
             unsafe {
