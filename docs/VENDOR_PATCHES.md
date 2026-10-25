@@ -12,7 +12,7 @@
 依赖版本由 Cargo.lock 固定；当前修复没有以未经验证的大范围依赖升级代替缺陷修复。安全公告扫描与许可证清单核对可单独运行并保留日期、工具版本和结果，不能把未运行的检查写成通过。
 
 
-v2.1.0 miniquad 补丁补充：Android 跨线程调用通过锁内 NewLocalRef 取得独立引用，替换全局引用时不影响读者；Activity 代际用于重新发布读屏/输入框/亮屏状态；初始 Surface 等待改为 recv，避免忙等。Windows framebuffer 直接从客户区物理像素计算，避免 225% 等小数 DPI 的整数逻辑尺寸往返。应用层不再直接读取 Android ACTIVITY 裸指针。验证包括 Android 目标编译、CheckJNI 三次重建、Windows 小数 DPI 单测与视觉基线。
+v2.1.0 miniquad 补丁补充：Android 跨线程调用通过锁内 NewLocalRef 取得独立引用，替换全局引用时不影响读者；Activity 代际用于重新发布读屏/输入框/亮屏状态；初始 Surface 等待改为 recv，避免忙等。Windows framebuffer 直接从客户区物理像素计算，避免 225% 等小数 DPI 的整数逻辑尺寸往返。iOS 初始化和布局变化时发布实际 content scale，使 Macroquad 逻辑坐标与 UIKit 点一致，触摸、读屏、原生输入框和安全区共享坐标。应用层不再直接读取 Android ACTIVITY 裸指针。验证包括 Android 目标编译、CheckJNI 三次重建、Windows 小数 DPI 单测与视觉基线，以及 iOS XCTest 系统输入。
 
 `tool/dependency_inventory.py` 生成所有锁定依赖的许可证声明、仓库来源及两份 vendor 目录的受版本控制文件摘要（换行统一为 LF）。maintenance 工作流每周保留扫描与清单；声明清单本身不等同于完整法律合规结论。
 

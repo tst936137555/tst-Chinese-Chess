@@ -330,28 +330,32 @@ pub fn define_glk_or_mtk_view_dlg(superclass: &Class) -> *const Class {
         let screen_rect: NSRect = unsafe { msg_send![main_screen, bounds] };
         let high_dpi = native_display().lock().unwrap().high_dpi;
 
-        let (screen_width, screen_height) = if high_dpi {
+        let (screen_width, screen_height, dpi_scale) = if high_dpi {
             let scale: f64 = unsafe { msg_send![main_screen, scale] };
 
             (
                 (screen_rect.size.width * scale) as i32,
                 (screen_rect.size.height * scale) as i32,
+                scale as f32,
             )
         } else {
             let content_scale_factor: f64 = unsafe { msg_send![payload.view, contentScaleFactor] };
             (
                 (screen_rect.size.width * content_scale_factor) as i32,
                 (screen_rect.size.height * content_scale_factor) as i32,
+                content_scale_factor as f32,
             )
         };
 
         if native_display().lock().unwrap().screen_width != screen_width
             || native_display().lock().unwrap().screen_height != screen_height
+            || native_display().lock().unwrap().dpi_scale != dpi_scale
         {
             {
                 let mut d = native_display().lock().unwrap();
                 d.screen_width = screen_width;
                 d.screen_height = screen_height;
+                d.dpi_scale = dpi_scale;
             }
             send_message(Message::Resize {
                 width: screen_width,
@@ -563,8 +567,16 @@ pub fn define_app_delegate() -> *const Class {
 
             let clipboard = Box::new(IosClipboard);
             let (tx, requests_rx) = std::sync::mpsc::channel();
+            let scale: f64 = if conf.high_dpi {
+                msg_send![main_screen, scale]
+            } else {
+                msg_send![view.view, contentScaleFactor]
+            };
             crate::set_display(NativeDisplayData {
                 high_dpi: conf.high_dpi,
+                screen_width: (screen_rect.size.width * scale) as i32,
+                screen_height: (screen_rect.size.height * scale) as i32,
+                dpi_scale: scale as f32,
                 gfx_api: conf.platform.apple_gfx_api,
                 blocking_event_loop: conf.platform.blocking_event_loop,
                 view: view.view,
