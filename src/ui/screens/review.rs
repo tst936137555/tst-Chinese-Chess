@@ -82,6 +82,17 @@ impl App {
                 );
                 self.open_modal(Modal::Variation(text));
             }
+        } else if self.review.as_ref().is_some_and(|r| r.bests[ply].is_some()) {
+            // Older caches retain useful scores but have no principal variation.
+            // Refresh only this position on demand, preserving its current score.
+            if self.button(
+                "补充变化",
+                Rect::new(x + w - 99., card_y + 10., 86., 37.),
+                false,
+                self.pending.is_none(),
+            ) {
+                self.search(Job::Review(ply));
+            }
         } else {
             self.fit_text(
                 &format!("{ply} / {n} 步"),
