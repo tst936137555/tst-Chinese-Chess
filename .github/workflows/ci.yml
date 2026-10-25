@@ -59,10 +59,13 @@ jobs:
   ios:
     needs: quality
     uses: ./.github/workflows/ios.yml
+  dependency-audit:
+    needs: quality
+    uses: ./.github/workflows/maintenance.yml
   ci:
     name: CI passed
     if: always()
-    needs: [quality, desktop, android, ios]
+    needs: [quality, desktop, android, ios, dependency-audit]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

@@ -37,7 +37,7 @@ def run_checks(uid,container,dest):
     smoke_env={**os.environ,"SIMCTL_CHILD_XIANGQI_SMOKE_OUTPUT":str(output)}
     def launch(phase,env,*args):
         print("iOS launch:",phase,flush=True)
-        print(sim("launch","--stdout="+str(dest/f"{phase}-stdout.log"),"--stderr="+str(dest/f"{phase}-stderr.log"),uid,PACKAGE,*args,env=env),flush=True)
+        print(sim("launch","--stdout="+str(dest/f"{phase}-stdout.log"),"--stderr="+str(dest/f"{phase}-stderr.log"),uid,PACKAGE,*args,env=env,timeout=180),flush=True)
     # The smoke app may already have exited successfully after writing its result.
     def terminate():subprocess.run(["xcrun","simctl","terminate",uid,PACKAGE],check=False,timeout=15)
     launch("smoke",smoke_env,"--smoke-test",str(output))
@@ -87,6 +87,7 @@ def main():
         print("iOS: boot simulator",uid,flush=True)
         if device["state"]!="Booted":sim("boot",uid)
         sim("bootstatus",uid,"-b",timeout=180)
+        subprocess.run(["open","-a","Simulator","--args","-CurrentDeviceUDID",uid],check=True,timeout=60)
         print("iOS: install built app",flush=True)
         sim("install",uid,str(app),timeout=180)
         container=Path(sim("get_app_container",uid,PACKAGE,"data"))

@@ -15,3 +15,5 @@
 v2.1.0 miniquad 补丁补充：Android 跨线程调用通过锁内 NewLocalRef 取得独立引用，替换全局引用时不影响读者；Activity 代际用于重新发布读屏/输入框/亮屏状态；初始 Surface 等待改为 recv，避免忙等。Windows framebuffer 直接从客户区物理像素计算，避免 225% 等小数 DPI 的整数逻辑尺寸往返。应用层不再直接读取 Android ACTIVITY 裸指针。验证包括 Android 目标编译、CheckJNI 三次重建、Windows 小数 DPI 单测与视觉基线。
 
 `tool/dependency_inventory.py` 生成所有锁定依赖的许可证声明、仓库来源及两份 vendor 目录的受版本控制文件摘要（换行统一为 LF）。maintenance 工作流每周保留扫描与清单；声明清单本身不等同于完整法律合规结论。
+
+2026-10-25 使用 cargo-audit 0.22.2 扫描 130 个锁定依赖：漏洞列表为 0，另有两条未消除的上游公告。`macroquad` 的 [RUSTSEC-2025-0035](https://rustsec.org/advisories/RUSTSEC-2025-0035.html) 报告全局状态等安全性问题，尚无修复版本；项目把图形和声音句柄留在渲染线程，工作线程通过消息传递普通数据，不使用 experimental scene/storage，但这不构成对上游库整体安全性的证明。`ttf-parser` 的 [RUSTSEC-2026-0192](https://rustsec.org/advisories/RUSTSEC-2026-0192.html) 表示停止维护；当前只解析随程序编译的字体，没有外部字体导入入口，其间接使用也来自 fontdue，替换需要同步迁移字体栅格化。两项均保留扫描警告，未添加忽略规则；后续应评估迁移维护中的图形/字体实现。CI 与发行流程要求扫描实际成功，JSON 与警告一起保留。

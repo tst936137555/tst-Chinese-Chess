@@ -68,6 +68,9 @@ def main():
     adb("shell","setprop","debug.checkjni","1")
     apk=ROOT/"dist"/f"tst-xiangqi-{version_info()['version']}-x86_64.apk"
     adb("install","-r",apk,timeout=120);adb("shell","am","force-stop",PACKAGE,timeout=60)
+    # Finish package broadcasts before launching: a pending ApplicationInfo
+    # update can relaunch the Activity and discard an in-flight system Back key.
+    adb("shell","am","wait-for-broadcast-idle","--flush-broadcast-loopers",timeout=60)
     adb("logcat","-c")
     adb("shell","rm","-f",f"{AUTOMATION_ROOT}/smoke/result.json",f"{AUTOMATION_ROOT}/smoke/startup.txt",check=False,timeout=60)
     adb("shell","am","force-stop",PACKAGE,timeout=60);adb("shell","rm","-f",f"{AUTOMATION_ROOT}/interaction/interaction.json",check=False,timeout=60);launch("--ez","xiangqiObserve","true")

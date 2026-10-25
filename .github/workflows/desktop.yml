@@ -62,10 +62,12 @@ jobs:
       - name: macOS native input
         if: runner.os == 'macOS' && inputs.native_macos_input
         run: python tool/macos_input_smoke.py target/release/tst-xiangqi
-      - name: Windows fractional-DPI visual regression
+      - name: Windows visual and DPI regression
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # The default 1024x768 console clamps portrait and desktop windows.
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
           python tool/desktop_smoke.py target/release/tst-xiangqi.exe target/windows-visual-smoke
           if ($LASTEXITCODE -ne 0) { throw 'Windows rendering failed' }
           ./target/release/examples/check_ui.exe target/windows-visual-smoke
