@@ -66,7 +66,7 @@ jobs:
         timeout-minutes: 20
         run: python tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app
       - name: XCTest system touch, rotation, lifecycle and cold resume
-        timeout-minutes: 8
+        timeout-minutes: 12
         run: python tool/ios_ui_test.py
       - name: Preserve simulator diagnostics
         if: always()

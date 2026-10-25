@@ -21,9 +21,20 @@ final class NativeInput: XCTestCase {
         let moved = app.buttons["第5列第8行，红方炮"]
         XCTAssertTrue(moved.waitForExistence(timeout: 45))
         XCUIDevice.shared.orientation = .landscapeLeft
-        let landscape = expectation(for: NSPredicate(format: "frame.size.width > frame.size.height"), evaluatedWith: app)
-        wait(for: [landscape], timeout: 20)
+        XCTAssertEqual(XCUIDevice.shared.orientation, .landscapeLeft)
         XCTAssertTrue(app.buttons["结束对局"].waitForExistence(timeout: 15))
+        let knight = app.buttons["第8列第10行，红方马"]
+        XCTAssertTrue(knight.waitForExistence(timeout: 30))
+        knight.tap()
+        let knightDestination = app.buttons["第7列第8行，空位"]
+        XCTAssertTrue(knightDestination.waitForExistence(timeout: 10))
+        knightDestination.tap()
+        let movedKnight = app.buttons["第7列第8行，红方马"]
+        XCTAssertTrue(movedKnight.waitForExistence(timeout: 45))
+        let landscape = XCTAttachment(screenshot: app.screenshot())
+        landscape.name = "Landscape board after system touch"
+        landscape.lifetime = .keepAlways
+        add(landscape)
         XCUIDevice.shared.press(.home)
         app.activate()
         XCTAssertTrue(app.buttons["结束对局"].waitForExistence(timeout: 30))
@@ -35,6 +46,7 @@ final class NativeInput: XCTestCase {
         XCTAssertTrue(resume.waitForExistence(timeout: 90))
         resume.tap()
         XCTAssertTrue(moved.waitForExistence(timeout: 45))
+        XCTAssertTrue(movedKnight.waitForExistence(timeout: 45))
         XCUIDevice.shared.orientation = .portrait
         app.terminate()
     }

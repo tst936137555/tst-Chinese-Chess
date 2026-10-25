@@ -35,6 +35,6 @@ def main():
 ''',encoding="utf-8")
     result=ROOT/"target/ios-smoke/native-input.xcresult"
     subprocess.run(["xcodebuild","test","-project",str(project),"-scheme","NativeInput","-destination",f"id={uid}",
-                    "-parallel-testing-enabled","NO","-resultBundlePath",str(result),"CODE_SIGN_IDENTITY=-"],check=True,timeout=420)
+                    "-parallel-testing-enabled","NO","-resultBundlePath",str(result),"CODE_SIGN_IDENTITY=-"],check=True,timeout=660)
 
 if __name__=="__main__":main()
