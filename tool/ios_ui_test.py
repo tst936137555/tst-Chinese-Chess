@@ -25,7 +25,7 @@ def main():
  A00000000000000000000008={isa=PBXFileReference; explicitFileType=wrapper.cfbundle; path=NativeInput.xctest; sourceTree=BUILT_PRODUCTS_DIR;};
  A00000000000000000000009={isa=XCConfigurationList; buildConfigurations=(A00000000000000000000011,); defaultConfigurationIsVisible=0; defaultConfigurationName=Debug;};
  A00000000000000000000010={isa=PBXSourcesBuildPhase; buildActionMask=2147483647; files=(A00000000000000000000012,); runOnlyForDeploymentPostprocessing=0;};
- A00000000000000000000011={isa=XCBuildConfiguration; buildSettings={PRODUCT_BUNDLE_IDENTIFIER="com.tst.xiangqi.native-input-tests"; PRODUCT_NAME="$(TARGET_NAME)"; GENERATE_INFOPLIST_FILE=YES; TARGETED_DEVICE_FAMILY=1; SUPPORTED_PLATFORMS=iphonesimulator;}; name=Debug;};
+ A00000000000000000000011={isa=XCBuildConfiguration; buildSettings={PRODUCT_BUNDLE_IDENTIFIER="com.tst.xiangqi.native-input-tests"; PRODUCT_NAME="$(TARGET_NAME)"; GENERATE_INFOPLIST_FILE=YES; ENABLE_TESTING_SEARCH_PATHS=YES; TARGETED_DEVICE_FAMILY=1; SUPPORTED_PLATFORMS=iphonesimulator;}; name=Debug;};
  A00000000000000000000012={isa=PBXBuildFile; fileRef=A00000000000000000000007;};
 }; rootObject=A00000000000000000000001; }
 '''
@@ -35,6 +35,6 @@ def main():
 ''',encoding="utf-8")
     result=ROOT/"target/ios-smoke/native-input.xcresult"
     subprocess.run(["xcodebuild","test","-project",str(project),"-scheme","NativeInput","-destination",f"id={uid}",
-                    "-parallel-testing-enabled","NO","-resultBundlePath",str(result),"CODE_SIGNING_ALLOWED=NO"],check=True,timeout=420)
+                    "-parallel-testing-enabled","NO","-resultBundlePath",str(result),"CODE_SIGN_IDENTITY=-"],check=True,timeout=420)
 
 if __name__=="__main__":main()
