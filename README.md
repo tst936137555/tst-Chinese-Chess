@@ -212,4 +212,4 @@ python tool/subset_font.py --input assets/fonts/LXGWWenKai-Medium.ttf
 
 v2.1.0 修复缺失主存档与设置备份恢复、过期命名重试、Android JNI 引用存活期及 Windows 小数 DPI 尺寸损失。schema 7 增加独立名称修订号。续局与打开复盘采用后台重放，语义缓存独立校验元数据；复盘支持「参考变化」与实际分析依据。旧收藏兼容接口最多新增 4096 个去重凭证，既有重试保留，当前界面使用的带修订号操作不受影响。首次故障在数据目录的 diagnostics/ 内保留脱敏摘要并轮换一份旧报告。Android 只在对弈与复盘分析时保持亮屏。
 
-依赖声明与本地补丁摘要可用 `python tool/dependency_inventory.py target/dependencies.json` 生成；每周维护工作流执行固定版本的 RustSec 扫描并保留结果，依赖更新由 Dependabot 提议。
+依赖声明与本地补丁摘要可用 `python tool/dependency_inventory.py target/dependencies.json` 生成；每周维护工作流执行固定版本的 RustSec 扫描并保留结果。仓库只保留 `main` 分支，依赖更新直接在 `main` 上检查和维护。
