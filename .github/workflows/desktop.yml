@@ -62,6 +62,14 @@ jobs:
       - name: macOS native input
         if: runner.os == 'macOS' && inputs.native_macos_input
         run: python tool/macos_input_smoke.py target/release/tst-xiangqi
+      - name: Windows fractional-DPI visual regression
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python tool/desktop_smoke.py target/release/tst-xiangqi.exe target/windows-visual-smoke
+          if ($LASTEXITCODE -ne 0) { throw 'Windows rendering failed' }
+          ./target/release/examples/check_ui.exe target/windows-visual-smoke
+          if ($LASTEXITCODE -ne 0) { throw 'Windows visual baseline failed' }
       - name: Real-engine legal-move differential
         if: runner.os != 'Linux'
         shell: bash
@@ -87,6 +95,7 @@ jobs:
             target/windows-input-smoke/
             target/macos-input-smoke/
             target/rules-differential.json
+            target/windows-visual-smoke/
 
   rendering:
     name: Linux rendering and OS input

@@ -56,7 +56,18 @@ impl AudioBank {
         }
     }
     pub async fn prepare(&mut self) {
-        if let Ok((target, bytes)) = self.loading.try_recv() {
+        if self.loading_complete {
+            return;
+        }
+        let (target, bytes) = match self.loading.try_recv() {
+            Ok(asset) => asset,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.loading_complete = true;
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        };
+        {
             let sound = match load_sound_from_bytes(&bytes).await {
                 Ok(s) => Some(s),
                 Err(e) => {
@@ -91,7 +102,7 @@ impl AudioBank {
         self.current = 0.;
     }
     pub fn needs_tick(&self, settings: &Settings, now: f64) -> bool {
-        let target = if settings.sound && settings.music_enabled {
+        let target = if self.music.is_some() && settings.sound && settings.music_enabled {
             settings.music_volume * if now < self.duck_until { 0.42 } else { 1. }
         } else {
             0.

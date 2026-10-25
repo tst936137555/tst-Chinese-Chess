@@ -338,6 +338,7 @@ fn review_cache_survives_worker_restart_with_typed_scores() {
                     score: Score::Mate(4),
                     best: Some("h2e2".into()),
                     depth: 12,
+                    details: None,
                 })],
             })
             .unwrap();

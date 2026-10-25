@@ -54,6 +54,20 @@ impl App {
             self.scroll = 0.;
         }
         let viewport = Rect::new(x, 238., w, self.height - 272.);
+        let plain = self.data.archives.iter().filter(|r| !r.favorite).count();
+        if plain >= crate::storage::MAX_ARCHIVES.saturating_sub(5) {
+            self.fit_text(
+                &format!(
+                    "普通棋谱 {plain}/{}，新棋谱将替换最旧记录",
+                    crate::storage::MAX_ARCHIVES
+                ),
+                x + 2.,
+                234.,
+                w - 4.,
+                12.,
+                MUTED,
+            );
+        }
         let order = self.archive_order.clone();
         let row_step = 124.;
         let max = (order.len() as f32 * row_step - 12. - viewport.h).max(0.);
@@ -165,14 +179,8 @@ impl App {
                 .is_some_and(|p| Rect::new(x, y, w - 150., 112.).contains(p))
             {
                 self.click = None;
-                match r.replay() {
-                    Ok(g) => {
-                        self.settings.user_red = r.user_red;
-                        self.open_review(g, Screen::Archives);
-                        break;
-                    }
-                    Err(e) => self.notice = e,
-                }
+                self.load_record(r, true);
+                break;
             }
             if let Some((start, _)) = self.drag.clone()
                 && self.modal.is_none()

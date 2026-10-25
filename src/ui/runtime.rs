@@ -18,7 +18,19 @@ pub async fn run() {
             profile.setup(&mut app);
         }
         app.handle_lifecycle();
+        let generation = crate::platform::ui_generation();
+        if generation != app.native_generation {
+            app.native_generation = generation;
+            crate::accessibility::invalidate();
+            app.redraw = true;
+        }
         app.poll();
+        crate::platform::keep_awake(
+            !crate::platform::suspended()
+                && ((app.screen == Screen::Game && app.game.outcome == Outcome::Playing)
+                    || (app.screen == Screen::Review
+                        && app.review.as_ref().is_some_and(|r| r.analyzing))),
+        );
         if is_quit_requested() {
             app.request_close();
         }
@@ -191,7 +203,9 @@ pub async fn run() {
                     && !app.end_ready));
         previous_mouse = mouse_position();
         previous_blink = blink;
+        let mut scene_cpu_ms = 0.;
         if paint {
+            let draw_started = std::time::Instant::now();
             app.redraw = input_changed;
             app.focus_count = 0;
             app.observed_controls.clear();
@@ -245,10 +259,8 @@ pub async fn run() {
                 app.click = notice_click;
             }
             app.draw_notice();
-            crate::diagnostics::measure(
-                "scene_draw_ms",
-                frame_started.elapsed().as_secs_f64() * 1000.,
-            );
+            scene_cpu_ms = draw_started.elapsed().as_secs_f32() * 1000.;
+            crate::diagnostics::measure("scene_draw_ms", f64::from(scene_cpu_ms));
         } else {
             crate::diagnostics::measure("scene_reused", 1.);
         }
@@ -292,6 +304,13 @@ pub async fn run() {
         }
         let present_started = std::time::Instant::now();
         app.scene.present();
+        let gpu_ms = if smoke.is_none() {
+            app.scene.completion_ms(
+                paint && (app.animation.is_some() || is_mouse_button_down(MouseButton::Left)),
+            )
+        } else {
+            None
+        };
         crate::diagnostics::measure(
             "present_submit_ms",
             present_started.elapsed().as_secs_f64() * 1000.,
@@ -359,7 +378,9 @@ pub async fn run() {
         crate::diagnostics::measure("frame_work_ms", f64::from(work_ms));
         if paint && smoke.is_none() && !crate::platform::suspended() {
             // Event-loop waiting is not rendering pressure.
-            app.scene.budget.observe(work_ms, get_frame_time());
+            app.scene
+                .budget
+                .observe(scene_cpu_ms.max(gpu_ms.unwrap_or(0.)), get_frame_time());
         }
         if crate::platform::smoke_output().is_none() && smoke.is_none() {
             app.write_test_state();
@@ -370,6 +391,7 @@ pub async fn run() {
                     || app.redraw
                     || app.animation.is_some()
                     || app.pending.is_some()
+                    || app.loading_record.is_some()
                     || app.saves.pending > 0
                     || app.close.waiting()
                     || is_mouse_button_down(MouseButton::Left)
@@ -377,7 +399,12 @@ pub async fn run() {
                     || app.name_keyboard
                     || app.audio.needs_tick(&app.settings, get_time())),
         );
+        let wait_started = std::time::Instant::now();
         next_frame().await;
+        crate::diagnostics::measure(
+            "frame_wait_ms",
+            wait_started.elapsed().as_secs_f64() * 1000.,
+        );
         // Keep input and async workers polling while reducing static-screen GPU wakeups.
         if !cfg!(any(target_os = "windows", target_os = "android"))
             && smoke.is_none()

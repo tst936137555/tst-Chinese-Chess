@@ -206,7 +206,7 @@ fn failed_operation_copy_names_the_affected_resource() {
     state.failed(Command::Settings(Settings::default()));
     assert!(state.failure_description().0.contains("设置"));
     state.failed.clear();
-    state.failed(Command::Rename("test".into(), "名称".into()));
+    state.failed(Command::Rename("test".into(), "名称".into(), 0));
     assert!(state.failure_description().0.contains("名称"));
 }
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -258,6 +258,7 @@ fn cache_deltas_survive_restart_without_dropping_deeper_results() {
                     score: Score::Cp(depth as i32),
                     depth,
                     best: Some("h2e2".into()),
+                    details: None,
                 },
             })
             .unwrap();

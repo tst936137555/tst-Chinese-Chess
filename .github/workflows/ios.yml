@@ -49,7 +49,7 @@ jobs:
     name: Install built app and exercise simulator
     needs: build
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -65,6 +65,9 @@ jobs:
       - name: Install and launch simulator app
         timeout-minutes: 20
         run: python tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app
+      - name: XCTest system touch, rotation, lifecycle and cold resume
+        timeout-minutes: 8
+        run: python tool/ios_ui_test.py
       - name: Preserve simulator diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

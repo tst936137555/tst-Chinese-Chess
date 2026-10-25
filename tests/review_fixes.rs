@@ -86,7 +86,7 @@ fn successful_metadata_remains_visible_behind_pending_and_failed_writes() {
     confirmed.archives.push(record);
     let mut saves = SaveState::default();
     saves.queued(1, Command::Favorite(game.id.clone(), "op".into()));
-    saves.queued(2, Command::Rename("missing".into(), "失败名称".into()));
+    saves.queued(2, Command::Rename("missing".into(), "失败名称".into(), 0));
     saves.succeeded(1, &confirmed);
     assert!(saves.project(confirmed.clone()).archives[0].favorite);
     let failed = saves.completed(2).unwrap();
@@ -403,6 +403,7 @@ fn review_cache_and_async_analysis_do_not_move_the_viewer() {
         depth: 3,
         index: 1,
         evaluation: Score::Cp(10),
+        line: Vec::new(),
     };
     review.analyzed(0, &variation);
     assert_eq!(review.ply, 0);
@@ -412,6 +413,7 @@ fn review_cache_and_async_analysis_do_not_move_the_viewer() {
             score: Score::Cp(20),
             best: Some(best.to_string()),
             depth: 5,
+            details: None,
         })],
         updated_at: 0,
     }));

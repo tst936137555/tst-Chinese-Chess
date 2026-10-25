@@ -40,6 +40,8 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - name: Build scripts and smoke harness regressions
         run: python -m unittest discover -s tool -p 'test_*.py'
+      - name: Record dependency and vendor inventory
+        run: python tool/dependency_inventory.py target/dependencies.json
       - name: Verify release version and changelog on every change
         shell: bash
         run: python tool/release_notes.py --tag "v$(python tool/build_info.py version)" --output target/release-notes.md

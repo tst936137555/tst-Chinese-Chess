@@ -56,10 +56,29 @@ mod tests {
         let b = Image::gen_image_color(40, 4, macroquad::prelude::WHITE);
         assert_eq!(difference(&a, &b, 64), 0.);
     }
+    #[test]
+    fn fractional_dpi_allows_only_one_physical_pixel_of_rounding() {
+        for dpi in [1., 1.25, 1.5, 1.75, 2., 2.25] {
+            let size = [
+                (390.0_f64 * dpi).floor() as u16,
+                (844.0_f64 * dpi).floor() as u16,
+            ];
+            assert!(viewport_matches(size, [390, 844], dpi));
+            assert!(!viewport_matches([size[0] - 3, size[1]], [390, 844], dpi));
+        }
+    }
 }
 fn load(path: &Path) -> Result<Image, String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     Image::from_file_with_format(&b, None).map_err(|e| e.to_string())
+}
+fn viewport_matches(actual: [u16; 2], expected: [u16; 2], dpi: f64) -> bool {
+    dpi.is_finite()
+        && dpi > 0.
+        && actual
+            .into_iter()
+            .zip(expected)
+            .all(|(a, e)| (f64::from(a) - f64::from(e) * dpi).abs() <= 1.)
 }
 fn main() -> Result<(), String> {
     let root = std::env::args()
@@ -81,11 +100,12 @@ fn main() -> Result<(), String> {
     ] {
         let expected = load(&Path::new("tests/ui_baselines").join(scene))?;
         let actual = load(&Path::new(&root).join(scene))?;
-        if (
-            (actual.width as f64 / dpi).round() as u16,
-            (actual.height as f64 / dpi).round() as u16,
-        ) != (expected.width, expected.height)
-        {
+        let dpi = metadata["viewports"][scene]["dpi"].as_f64().unwrap_or(dpi);
+        if !viewport_matches(
+            [actual.width, actual.height],
+            [expected.width, expected.height],
+            dpi,
+        ) {
             return Err(format!("{scene}: viewport changed"));
         }
         let rms = difference(&actual, &expected, 32);

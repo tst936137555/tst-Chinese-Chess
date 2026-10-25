@@ -11,6 +11,7 @@ pub mod notation;
 pub mod persistence;
 pub mod platform;
 pub mod rendering;
+pub mod replay;
 pub mod review;
 pub mod rules;
 pub mod self_test;

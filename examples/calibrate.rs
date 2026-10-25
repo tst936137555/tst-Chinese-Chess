@@ -15,7 +15,16 @@ fn search(
 ) -> Result<Analysis, String> {
     let mut cold = game.clone();
     cold.fork_identity();
-    engine.request_game(&cold, cold.history.len(), depth, ms, pv)?;
+    continuous_search(engine, &cold, depth, ms, pv)
+}
+fn continuous_search(
+    engine: &Engine,
+    game: &Game,
+    depth: u32,
+    ms: u64,
+    pv: usize,
+) -> Result<Analysis, String> {
+    engine.request_game(game, game.history.len(), depth, ms, pv)?;
     engine
         .rx
         .recv_timeout(Duration::from_secs(40))
@@ -36,7 +45,8 @@ fn main() -> Result<(), String> {
             .unwrap_or(default)
     };
     let max_plies = option("--max-plies", 512).clamp(1, 4096);
-    let pairs = option("--pairs", 1).clamp(1, 20);
+    let pairs = option("--pairs", 4).clamp(1, 20);
+    let seed = option("--seed", 936137555) as u64;
     let mut rows = Vec::new();
     for (case, game) in tst_xiangqi::calibration::positions() {
         eprintln!("Calibration: {case}");
@@ -88,18 +98,31 @@ fn main() -> Result<(), String> {
             for pair in 0..pairs {
                 for reverse in [false, true] {
                     let mut game = Game::default();
+                    let openings: &[&[&str]] =
+                        &[&[], &["h2e2", "h9g7"], &["b0c2", "h9g7"], &["h0g2", "b9c7"]];
+                    for word in openings[pair % openings.len()] {
+                        game.play(word.parse()?)?;
+                    }
+                    // Each opponent owns one persistent session, exactly as in play.
+                    let opponents = [Engine::new(), Engine::new()];
                     let mut played = 0;
                     while game.outcome == tst_xiangqi::game::Outcome::Playing && played < max_plies
                     {
                         let high = (game.board.turn == Side::Red) == reverse;
                         let index = lower + usize::from(high);
                         let level = LEVELS[index];
-                        let analysis = search(&engine, &game, level.depth, level.ms, level.pv)?;
+                        let analysis = continuous_search(
+                            &opponents[usize::from(high)],
+                            &game,
+                            level.depth,
+                            level.ms,
+                            level.pv,
+                        )?;
                         let mv = choose_variation(
                             &analysis,
                             game.board.turn,
                             level.tolerance,
-                            936137555 + lower as u64 + 1009 * pair as u64,
+                            seed.wrapping_add(lower as u64 + 1009 * pair as u64),
                             played,
                         );
                         game.play(mv)?;
@@ -124,7 +147,7 @@ fn main() -> Result<(), String> {
         } }
         serde_json::json!({"lower":LEVELS[lower as usize].name,"higher":LEVELS[lower as usize+1].name,"wins":wins,"losses":losses,"draws":draws,"unfinished":unfinished,"decisiveWin95Percent":tst_xiangqi::calibration::decisive_win_interval(wins,wins+losses)})
     }).collect();
-    let output = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"assets":tst_xiangqi::persistence::asset_fingerprint()?,"fixtureVersion":2,"seed":936137555u64,"maxPlies":max_plies,"pairsPerAdjacentLevel":pairs,"scope":"sixteen versioned positions, both colors; deeper-search reference; paired games run to rule ending or explicit limit; unfinished excluded from win rates; Wilson interval uses decisive games only; no human skill or ELO claim","rows":rows,"pairedGames":matches,"pairedSummary":summaries});
+    let output = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"assets":tst_xiangqi::persistence::asset_fingerprint()?,"fixtureVersion":2,"seed":seed,"maxPlies":max_plies,"pairsPerAdjacentLevel":pairs,"sessionModel":"independent persistent engine per opponent; four opening prefixes; paired colors","scope":"sixteen versioned positions, both colors; deeper-search reference; paired games run to rule ending or explicit limit; unfinished excluded from win rates; Wilson interval uses decisive games only; no human skill or ELO claim","rows":rows,"pairedGames":matches,"pairedSummary":summaries});
     if let Some(parent) = std::path::Path::new(&path).parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }

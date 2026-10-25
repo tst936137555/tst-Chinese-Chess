@@ -1,0 +1,26 @@
+name: Dependency and vendor maintenance
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '37 3 * * 1'
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-project
+      - name: Record exact dependencies, declared licenses and vendor source
+        run: python tool/dependency_inventory.py target/maintenance/dependencies.json
+      - name: Install pinned advisory scanner
+        run: cargo install cargo-audit --locked --version 0.21.2
+      - name: Check RustSec advisories
+        run: cargo audit --json > target/maintenance/advisories.json
+      - name: Preserve dated maintenance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-audit-${{ github.run_id }}
+          path: target/maintenance/

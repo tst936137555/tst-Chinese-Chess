@@ -220,7 +220,7 @@ impl App {
         ) || (self.name_keyboard && is_key_pressed(KeyCode::Enter))
             || crate::text_input::take_native_done()
         {
-            self.enqueue(Command::Rename(id, edit.text));
+            self.enqueue(Command::Rename(id, edit.text, self.rename_revision));
             self.finish_rename();
         }
         if self.button(

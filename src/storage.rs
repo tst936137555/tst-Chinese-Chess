@@ -9,10 +9,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_IMPORT_RECORDS: usize = 1000;
-const MAX_DRAFTS: usize = 50;
+pub const MAX_DRAFTS: usize = 50;
+pub const MAX_ARCHIVES: usize = 100;
+pub const MAX_FAVORITES: usize = 50;
+const MAX_LEGACY_OPERATIONS: usize = 4096;
 const MAX_RETIRED_IDS: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -173,7 +176,12 @@ impl Data {
         self.archives.retain(|r| {
             let n = if r.favorite { &mut fav } else { &mut plain };
             *n += 1;
-            let keep = *n <= if r.favorite { 50 } else { 100 };
+            let keep = *n
+                <= if r.favorite {
+                    MAX_FAVORITES
+                } else {
+                    MAX_ARCHIVES
+                };
             if !keep {
                 self.deleted_ids.insert(r.id.clone());
             }
@@ -216,18 +224,16 @@ impl Data {
         Ok(())
     }
 }
-/// Cache positive semantic checks by complete serialized content, never by identity alone.
-/// Metadata-only edits and forged tokens cannot reuse a result for different bytes.
+/// Validate metadata on every read; cache only the complete rules/replay input.
+/// Names, favorites and identities do not change the legality of a history.
 fn validate_record(record: &Record) -> Result<(), String> {
-    use sha2::{Digest, Sha256};
     use std::{
         collections::VecDeque,
         sync::{Mutex, OnceLock},
     };
     static VERIFIED: OnceLock<Mutex<VecDeque<[u8; 32]>>> = OnceLock::new();
     record.validate_metadata()?;
-    let key: [u8; 32] =
-        Sha256::digest(serde_json::to_vec(record).map_err(|e| e.to_string())?).into();
+    let key = record.semantic_key();
     let cache = VERIFIED.get_or_init(Default::default);
     if cache.lock().is_ok_and(|entries| entries.contains(&key)) {
         return Ok(());
@@ -310,7 +316,13 @@ impl Storage {
                 );
                 result
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Data::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match fs::metadata(self.path.with_extension("bak")) {
+                    Ok(_) => Err("主存档缺失，但仍有备份；请先恢复备份，原备份已保护".into()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Data::default()),
+                    Err(e) => Err(format!("无法检查存档备份：{e}")),
+                }
+            }
             Err(e) => Err(e.to_string()),
         }
     }
@@ -341,14 +353,14 @@ impl Storage {
     /// Read preferences even when the independent game library is damaged.
     pub fn load_preferences(&self, mut fallback: Settings) -> Settings {
         let path = self.settings_path();
-        if path.exists() {
-            match Self::decode_settings(&path) {
-                Ok(settings) => fallback = settings,
-                Err(error) => {
+        match Self::decode_settings(&path) {
+            Ok(settings) => fallback = settings,
+            Err(error) => {
+                if path.exists() {
                     crate::diagnostics::record("settings-recovery", &error);
-                    if let Ok(settings) = Self::decode_settings(&path.with_extension("bak")) {
-                        fallback = settings;
-                    }
+                }
+                if let Ok(settings) = Self::decode_settings(&path.with_extension("bak")) {
+                    fallback = settings;
                 }
             }
         }
@@ -356,6 +368,20 @@ impl Storage {
     }
     fn write_settings(&self, settings: &Settings) -> Result<(), String> {
         let path = self.settings_path();
+        // A missing primary must not permit a downgrade of its future-version backup.
+        let guard = if path.exists() {
+            path.clone()
+        } else {
+            path.with_extension("bak")
+        };
+        if let Ok(bytes) = Self::read(&guard)
+            && serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|v| v.get("version").and_then(|v| v.as_u64()))
+                .is_some_and(|version| version > 1)
+        {
+            return Err("设置来自更新版本，已禁止覆盖".into());
+        }
         if path.exists() {
             let bytes = Self::read(&path)?;
             if serde_json::from_slice::<serde_json::Value>(&bytes)
@@ -565,6 +591,7 @@ impl Storage {
                 record.favorite = old.favorite;
                 record.favorite_revision = old.favorite_revision;
                 record.title = old.title.clone();
+                record.title_revision = old.title_revision;
             }
             if let Some(s) = settings {
                 d.settings = s;
@@ -637,12 +664,17 @@ impl Storage {
             if d.applied_operations.iter().any(|o| o == operation) {
                 return Ok(());
             }
+            if d.applied_operations.len() >= MAX_LEGACY_OPERATIONS {
+                return Err("旧收藏接口已达到去重容量，请改用带修订号的收藏操作".into());
+            }
             let idx = d
                 .archives
                 .iter()
                 .position(|r| r.id == id)
                 .ok_or("棋谱已不存在")?;
-            if !d.archives[idx].favorite && d.archives.iter().filter(|r| r.favorite).count() >= 50 {
+            if !d.archives[idx].favorite
+                && d.archives.iter().filter(|r| r.favorite).count() >= MAX_FAVORITES
+            {
                 return Err("最多收藏 50 局，请先取消一个收藏".into());
             }
             d.archives[idx].favorite = !d.archives[idx].favorite;
@@ -673,7 +705,7 @@ impl Storage {
             }
             if favorite
                 && !record.favorite
-                && d.archives.iter().filter(|r| r.favorite).count() >= 50
+                && d.archives.iter().filter(|r| r.favorite).count() >= MAX_FAVORITES
             {
                 return Err("最多收藏 50 局，请先取消一个收藏".into());
             }
@@ -753,7 +785,7 @@ impl Storage {
             }
             d.archives.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
             let favorites = d.archives.iter().filter(|r| r.favorite).count();
-            if favorites > 50 || d.archives.len() - favorites > 100 {
+            if favorites > MAX_FAVORITES || d.archives.len() - favorites > MAX_ARCHIVES {
                 return Err("导入后超过普通棋谱 100 局或收藏 50 局上限；未导入任何记录，现有棋谱与原文件均已保留".into());
             }
             Ok(())

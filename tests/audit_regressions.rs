@@ -211,6 +211,7 @@ fn per_ply_randomness_survives_restore_and_varies_between_seeds() {
                 depth: 3,
                 index: i + 1,
                 evaluation: Score::Cp(score),
+                line: Vec::new(),
             })
             .collect(),
         elapsed_ms: 1,
@@ -240,6 +241,7 @@ fn put(key: &str, cp: i32, depth: u32) -> Command {
             score: Score::Cp(cp),
             best: Some("h2e2".into()),
             depth,
+            details: None,
         })],
     }
 }
@@ -315,7 +317,7 @@ fn draft_names_survive_play_and_clearing_drafts_keeps_active_game() {
     s.save_game(a.snapshot(true, 0, false), None).unwrap();
     s.save_game(b.snapshot(true, 0, false), None).unwrap();
     let w = Worker::new(s.clone());
-    w.send(Command::Rename(a.id.clone(), "残局练习".into()))
+    w.send(Command::Rename(a.id.clone(), "残局练习".into(), 0))
         .unwrap();
     event(&w);
     play(&mut a, "h2e2");

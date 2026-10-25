@@ -8,6 +8,7 @@ pub struct ReviewSession {
     pub ply: usize,
     pub scores: Vec<Option<Score>>,
     pub depths: Vec<u32>,
+    pub details: Vec<Option<AnalysisDetails>>,
     pub cache_key: String,
     pub cache_loading: bool,
     pub bests: Vec<Option<crate::rules::Move>>,
@@ -26,6 +27,7 @@ impl ReviewSession {
             ply: 0,
             scores: vec![None; n],
             depths: vec![0; n],
+            details: vec![None; n],
             cache_loading: true,
             bests: vec![None; n],
             analyzing: true,
@@ -46,6 +48,7 @@ impl ReviewSession {
                     self.scores[ply] = Some(entry.score);
                     self.bests[ply] = entry.best.and_then(|m| m.parse().ok());
                     self.depths[ply] = entry.depth;
+                    self.details[ply] = entry.details;
                 }
             }
         }
@@ -54,6 +57,7 @@ impl ReviewSession {
             self.scores[last] = Some(score);
             self.bests[last] = None;
             self.depths[last] = 0;
+            self.details[last] = None;
             self.dirty.insert(last);
         }
         self.score_version = self.score_version.wrapping_add(1);
@@ -90,15 +94,42 @@ pub fn rule_score(game: &Game, ply: usize) -> Option<Score> {
 }
 pub const ANALYSIS_LIMITS: (u32, u64) = (12, 3000);
 #[derive(Clone, Serialize, Deserialize)]
+pub struct AnalysisDetails {
+    pub line: Vec<String>,
+    pub elapsed_ms: u64,
+    pub budget_ms: u64,
+    pub requested_depth: u32,
+}
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CachedPosition {
     pub score: Score,
     pub best: Option<String>,
     pub depth: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<AnalysisDetails>,
 }
 impl CachedPosition {
     pub fn valid_for(&self, game: &Game, ply: usize) -> bool {
         if !self.score.is_valid() || self.depth > 64 {
             return false;
+        }
+        if let Some(details) = &self.details {
+            if details.line.len() > 32
+                || details.elapsed_ms > 120_000
+                || details.budget_ms > 60_000
+                || details.requested_depth > 64
+                || details.line.first() != self.best.as_ref()
+            {
+                return false;
+            }
+            let Some(mut board) = game.at_ply(ply).cloned() else {
+                return false;
+            };
+            for word in &details.line {
+                if word.parse().ok().is_none_or(|m| board.play(m).is_err()) {
+                    return false;
+                }
+            }
         }
         if let Some(score) = rule_score(game, ply) {
             return self.score == score && self.best.is_none();

@@ -75,6 +75,7 @@ enum Modal {
     About,
     License(usize),
     Audio,
+    Variation(String),
 }
 struct Animation {
     mv: Move,
@@ -102,6 +103,7 @@ struct App {
     keyboard_nav: bool,
     name_keyboard: bool,
     rename_return: Option<usize>,
+    rename_revision: u64,
     board_cursor: Option<Square>,
     observed_controls: Vec<(String, Rect)>,
     observed_at: f64,
@@ -154,6 +156,9 @@ struct App {
     semantic_counts: std::collections::HashMap<String, usize>,
     focus_request: Option<u32>,
     redraw: bool,
+    loader: crate::replay::Loader,
+    loading_record: Option<u64>,
+    native_generation: u64,
 }
 pub use runtime::run;
 

@@ -148,6 +148,7 @@ pub struct Game {
     pub finished_at: Option<u64>,
     pub end_reason: Option<EndReason>,
     position_keys: Vec<String>,
+    tracking: bool,
     pub start: Board,
     pub board: Board,
     pub history: Vec<Entry>,
@@ -161,17 +162,21 @@ impl Default for Game {
 }
 impl Game {
     pub fn new(board: Board) -> Self {
+        Self::build(board, true)
+    }
+    fn build(board: Board, tracking: bool) -> Self {
         let mut g = Self {
             source: RecordSource::Native,
-            id: new_id(),
+            id: if tracking { new_id() } else { String::new() },
             created_at: now_ms(),
             revision: 0,
-            version_token: new_id(),
+            version_token: if tracking { new_id() } else { String::new() },
             lineage: Vec::new(),
             random_seed: now_ms() ^ SEED_COUNTER.fetch_add(1, Ordering::Relaxed),
             finished_at: None,
             end_reason: None,
             position_keys: vec![board.position_key()],
+            tracking,
             start: board.clone(),
             board,
             history: Vec::new(),
@@ -182,6 +187,9 @@ impl Game {
         g
     }
     fn changed(&mut self) {
+        if !self.tracking {
+            return;
+        }
         self.lineage
             .push(std::mem::replace(&mut self.version_token, new_id()));
         if self.lineage.len() > MAX_LINEAGE {
@@ -215,7 +223,7 @@ impl Game {
         Ok(())
     }
     fn adjudicate(&mut self) {
-        if self.board.legal_moves().is_empty() {
+        if !self.board.has_legal_move() {
             self.finished_at = Some(now_ms());
             self.outcome = Outcome::winner(self.board.turn.other());
             self.end_reason = Some(if self.board.in_check(self.board.turn) {
@@ -417,6 +425,7 @@ impl Game {
             start_fen: Some(self.start.fen()),
             mode: if review { "review" } else { "normal" }.into(),
             title: String::new(),
+            title_revision: 0,
         }
     }
 }
@@ -440,6 +449,8 @@ pub struct Record {
     pub source: RecordSource,
     #[serde(default)]
     pub title: String,
+    #[serde(default)]
+    pub title_revision: u64,
     #[serde(default)]
     pub id: String,
     #[serde(default)]
@@ -492,6 +503,21 @@ fn normal() -> String {
     "normal".into()
 }
 impl Record {
+    pub(crate) fn semantic_key(&self) -> [u8; 32] {
+        Sha256::digest(
+            serde_json::to_vec(&(
+                &self.ruleset,
+                &self.start_fen,
+                &self.history,
+                self.result,
+                &self.end_reason,
+                self.id.is_empty(),
+                self.source,
+            ))
+            .expect("replay input"),
+        )
+        .into()
+    }
     pub fn content_key(&self) -> String {
         let payload = serde_json::to_vec(&(
             self.time,
@@ -563,7 +589,10 @@ impl Record {
     }
     pub fn replay(&self) -> Result<Game, String> {
         self.validate_metadata()?;
-        let mut g = Game::new(self.start_fen.as_deref().unwrap_or(START_FEN).parse()?);
+        let mut g = Game::build(
+            self.start_fen.as_deref().unwrap_or(START_FEN).parse()?,
+            false,
+        );
         for (i, m) in self.history.iter().enumerate() {
             g.play(m.uci.parse()?)
                 .map_err(|e| format!("第 {} 步：{e}", i + 1))?;
@@ -638,6 +667,7 @@ impl Record {
         g.version_token = normalized.version_token;
         g.lineage = normalized.lineage;
         g.random_seed = normalized.random_seed;
+        g.tracking = true;
         g.finished_at = if g.outcome == Outcome::Playing {
             None
         } else {

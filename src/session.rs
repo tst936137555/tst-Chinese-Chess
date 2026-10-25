@@ -97,6 +97,12 @@ impl SaveState {
         }
     }
     pub fn queued(&mut self, seq: u64, command: Command) {
+        if let Command::Rename(id, _, revision) = &command {
+            self.failed.retain(|old| {
+                !matches!(old, Command::Rename(old_id, _, old_revision)
+                if old_id == id && old_revision <= revision)
+            });
+        }
         if let Command::SetFavorite { id, revision, .. } = &command {
             self.failed.retain(|old| !matches!(old,Command::SetFavorite {id:old_id,revision:old_revision,..} if old_id==id && old_revision<=revision));
         }
@@ -168,16 +174,32 @@ impl SaveState {
                     && r.favorite == *favorite
                     && r.favorite_revision == revision.saturating_add(1)
             }),
-            Command::Rename(id, title) => !data
+            Command::Rename(id, title, revision) => !data
                 .active
                 .iter()
                 .chain(&data.drafts)
                 .chain(&data.archives)
-                .any(|r| r.id == *id && r.title == title.trim()),
+                .any(|r| {
+                    r.id == *id
+                        && r.title == title.trim()
+                        && r.title_revision == revision.saturating_add(1)
+                }),
             _ => true,
         });
     }
     pub fn failed(&mut self, command: Command) {
+        if let Command::Rename(id, _, revision) = &command {
+            if self.commands.values().any(|newer| {
+                matches!(newer, Command::Rename(new_id, _, new_revision)
+                if new_id == id && new_revision >= revision)
+            }) {
+                return;
+            }
+            self.failed.retain(|old| {
+                !matches!(old, Command::Rename(old_id, _, old_revision)
+                if old_id == id && old_revision <= revision)
+            });
+        }
         if let Command::SetFavorite { id, revision, .. } = &command {
             if self.commands.values().any(|newer|matches!(newer,Command::SetFavorite {id:new_id,revision:new_revision,..} if new_id==id && new_revision>=revision)) {
                 return;
@@ -265,6 +287,7 @@ fn overlay_record(data: &mut Data, record: &Record) {
     let mut record = record.clone();
     if let Some(old) = old {
         record.title = old.title.clone();
+        record.title_revision = old.title_revision;
         record.favorite = old.favorite;
         record.favorite_revision = old.favorite_revision;
     }

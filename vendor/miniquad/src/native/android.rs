@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TOUCH_RECEIVED: AtomicU64 = AtomicU64::new(0);
 static TOUCH_DISPATCHED: AtomicU64 = AtomicU64::new(0);
+static ACTIVITY_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn activity_generation() -> u64 { ACTIVITY_GENERATION.load(Ordering::Acquire) }
 
 /// Delivery counters for the optional native-input regression observer.
 pub fn touch_delivery() -> [u64; 2] {
@@ -90,7 +93,18 @@ fn send_message(message: Message) {
     MESSAGES_TX.get().expect("Android runtime not initialized").send(message).unwrap();
 }
 
-pub static mut ACTIVITY: ndk_sys::jobject = std::ptr::null_mut();
+// Raw access stays on the renderer. Other threads obtain a local JNI reference
+// under this lock, so replacing the global never invalidates an active reader.
+static ACTIVITY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static mut ACTIVITY: ndk_sys::jobject = std::ptr::null_mut();
+
+/// Clone the current Activity into a local reference owned by the calling thread.
+/// Safety: `env` must be the current thread's attached JNI environment. The caller
+/// must delete the returned local reference before detaching that thread.
+pub unsafe fn activity_ref(env: *mut ndk_sys::JNIEnv) -> ndk_sys::jobject {
+    let _guard = ACTIVITY_LOCK.lock().unwrap();
+    (**env).NewLocalRef.unwrap()(env, ACTIVITY)
+}
 static mut VM: *mut ndk_sys::JavaVM = std::ptr::null_mut();
 
 pub unsafe fn console_debug(msg: *const ::core::ffi::c_char) {
@@ -421,18 +435,18 @@ where
         // sometimes before launching an app android will show a permission dialog
         // it is important to create GL context only after a first SurfaceChanged
         let window = 'a: loop {
-            match rx.try_recv() {
-                Ok(Message::ActivityRecreated { activity }) => replace_activity(activity),
-                Ok(Message::SurfaceCreated { window }) => {
+            match rx.recv().expect("Android startup event channel closed") {
+                Message::ActivityRecreated { activity } => replace_activity(activity),
+                Message::SurfaceCreated { window } => {
                     break 'a window;
                 }
                 _ => {}
             }
         };
         let (screen_width, screen_height) = 'a: loop {
-            match rx.try_recv() {
-                Ok(Message::ActivityRecreated { activity }) => replace_activity(activity),
-                Ok(Message::SurfaceChanged { width, height }) => {
+            match rx.recv().expect("Android startup event channel closed") {
+                Message::ActivityRecreated { activity } => replace_activity(activity),
+                Message::SurfaceChanged { width, height } => {
                     break 'a (width as f32, height as f32);
                 }
                 _ => {}
@@ -575,15 +589,17 @@ pub unsafe extern "C" fn Java_quad_1native_QuadNative_activityOnCreate(
         // the rendering thread/context and rebind JNI calls in message order.
         send_message(Message::ActivityRecreated { activity });
     } else {
-        ACTIVITY = activity;
+        replace_activity(activity);
         quad_main();
     }
 }
 
 unsafe fn replace_activity(activity: ndk_sys::jobject) {
     let env = attach_jni_env();
+    let _guard = ACTIVITY_LOCK.lock().unwrap();
     let previous = ACTIVITY;
     ACTIVITY = activity;
+    ACTIVITY_GENERATION.fetch_add(1, Ordering::Release);
     if !previous.is_null() {
         (**env).DeleteGlobalRef.unwrap()(env, previous);
     }

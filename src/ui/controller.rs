@@ -121,6 +121,7 @@ impl App {
         }
     }
     pub(super) fn cancel(&mut self) {
+        self.loading_record = None;
         self.redraw = true;
         self.board_cursor = None;
         self.recovery.resume = None;
@@ -151,6 +152,7 @@ impl App {
             .find(|r| r.id == record.id)
         {
             record.title = old.title.clone();
+            record.title_revision = old.title_revision;
             record.favorite = old.favorite;
             record.favorite_revision = old.favorite_revision;
         }
@@ -316,6 +318,7 @@ impl App {
                             score,
                             best: r.bests[i].map(|m| m.to_string()),
                             depth: r.depths[i],
+                            details: r.details[i].clone(),
                         },
                     });
                 }
@@ -326,6 +329,25 @@ impl App {
         }
     }
     pub(super) fn poll(&mut self) {
+        while let Ok(reply) = self.loader.rx.try_recv() {
+            if self.loading_record != Some(reply.id) {
+                continue;
+            }
+            self.loading_record = None;
+            self.redraw = true;
+            match reply.result {
+                Ok(game) => {
+                    self.notice.clear();
+                    if reply.review {
+                        self.settings.user_red = reply.record.user_red;
+                        self.open_review(game, Screen::Archives);
+                    } else {
+                        self.finish_resume(reply.record, game);
+                    }
+                }
+                Err(error) => self.notice = format!("棋谱读取失败：{error}"),
+            }
+        }
         if self.ready_move.is_some_and(|(_, at)| get_time() >= at) && !crate::platform::suspended()
         {
             let (mv, _) = self.ready_move.take().unwrap();
@@ -458,6 +480,12 @@ impl App {
                                 analysis.variations.iter().find(|v| v.mv == analysis.best)
                         {
                             r.analyzed(ply, v);
+                            r.details[ply] = Some(crate::review::AnalysisDetails {
+                                line: v.line.iter().map(ToString::to_string).collect(),
+                                elapsed_ms: analysis.elapsed_ms,
+                                budget_ms: analysis.budget_ms,
+                                requested_depth: analysis.requested_depth,
+                            });
                         }
                         self.save_review_cache();
                     }

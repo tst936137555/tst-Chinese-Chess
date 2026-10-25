@@ -31,7 +31,7 @@ pub enum Command {
     Clear,
     ClearDrafts,
     Activate(String),
-    Rename(String, String),
+    Rename(String, String, u64),
     Load,
     RestoreBackup,
     CacheLoad {
@@ -212,7 +212,7 @@ impl Worker {
                             d.clear_drafts();
                             Ok(())
                         })?,
-                        Command::Rename(id, title) => store.update(|d| {
+                        Command::Rename(id, title, revision) => store.update(|d| {
                             let r = d
                                 .active
                                 .iter_mut()
@@ -220,12 +220,24 @@ impl Worker {
                                 .chain(d.archives.iter_mut())
                                 .find(|r| r.id == *id)
                                 .ok_or("对局或棋谱已不存在")?;
-                            r.title = title
+                            let title: String = title
                                 .trim()
                                 .chars()
                                 .filter(|c| !c.is_control())
                                 .take(40)
                                 .collect();
+                            if r.title_revision != *revision {
+                                if r.title == title
+                                    && r.title_revision == revision.saturating_add(1)
+                                {
+                                    return Ok(());
+                                }
+                                return Err(
+                                    "[conflict] 名称已由另一操作更新，请重新读取后命名".into()
+                                );
+                            }
+                            r.title = title;
+                            r.title_revision = revision.checked_add(1).ok_or("名称修订号已满")?;
                             Ok(())
                         })?,
                         Command::Activate(id) => store.activate(id)?,

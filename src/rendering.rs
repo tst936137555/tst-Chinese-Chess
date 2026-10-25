@@ -178,6 +178,8 @@ pub struct AdaptiveScene {
     present_material: Option<Material>,
     resize_candidate: Option<((u32, u32), std::time::Instant)>,
     pub budget: RenderBudget,
+    completion_sample: u16,
+    gpu_ms: Option<f32>,
 }
 impl Default for AdaptiveScene {
     fn default() -> Self {
@@ -217,6 +219,8 @@ impl AdaptiveScene {
             present_material,
             resize_candidate: None,
             budget,
+            completion_sample: 0,
+            gpu_ms: None,
         }
     }
     fn allocate((w, h): (u32, u32), _resolve: bool) -> RenderTarget {
@@ -316,6 +320,30 @@ impl AdaptiveScene {
             },
         );
         gl_use_default_material();
+    }
+    /// Sparse completion samples include queued GPU work, rather than treating
+    /// fast CPU submission as proof that the GPU kept up. No timestamp support
+    /// is assumed on GLES2; unsupported backends retain CPU-based feedback.
+    pub fn completion_ms(&mut self, continuous: bool) -> Option<f32> {
+        if !continuous {
+            self.gpu_ms = None;
+            return None;
+        }
+        self.completion_sample = self.completion_sample.wrapping_add(1);
+        if self.completion_sample.is_multiple_of(30) {
+            unsafe {
+                let mut gl = macroquad::window::get_internal_gl();
+                if gl.quad_context.info().backend == macroquad::miniquad::Backend::OpenGl {
+                    let started = std::time::Instant::now();
+                    gl.flush();
+                    macroquad::miniquad::gl::glFinish();
+                    let elapsed = started.elapsed().as_secs_f32() * 1000.;
+                    self.gpu_ms = Some(elapsed);
+                    crate::diagnostics::measure("gpu_completion_ms", f64::from(elapsed));
+                }
+            }
+        }
+        self.gpu_ms
     }
 }
 #[cfg(test)]

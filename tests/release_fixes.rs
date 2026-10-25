@@ -84,6 +84,7 @@ fn old_cache_and_equal_depth_cache_cannot_replace_live_analysis() {
             depth: 12,
             index: 1,
             evaluation: Score::Cp(120),
+            line: Vec::new(),
         },
     );
     for depth in [3, 12] {
@@ -92,6 +93,7 @@ fn old_cache_and_equal_depth_cache_cannot_replace_live_analysis() {
                 score: Score::Cp(10),
                 best: Some("h2e2".into()),
                 depth,
+                details: None,
             })],
             updated_at: 0,
         }));

@@ -6,6 +6,8 @@ pub(super) struct Smoke {
     frame: usize,
     started: std::time::Instant,
     headless: Option<std::thread::JoinHandle<Result<(), String>>>,
+    viewports: std::collections::BTreeMap<String, serde_json::Value>,
+    requested: [f32; 2],
 }
 impl Smoke {
     pub(super) fn from_args() -> Option<Self> {
@@ -24,10 +26,16 @@ impl Smoke {
             frame: 0,
             started: std::time::Instant::now(),
             headless: None,
+            viewports: Default::default(),
+            requested: [1100., 800.],
         })
     }
     pub(super) fn state_path(&self) -> PathBuf {
         self.root.join("state.json")
+    }
+    fn request_size(&mut self, width: f32, height: f32) {
+        self.requested = [width, height];
+        request_new_screen_size(width, height);
     }
     pub(super) fn boot(&self, stage: &str) {
         eprintln!("smoke startup: {stage}");
@@ -70,7 +78,7 @@ impl Smoke {
                 if engine_present && crate::platform::nnue_path().is_ok() {
                     self.headless = Some(std::thread::spawn(crate::self_test::run));
                 }
-                request_new_screen_size(390., 844.);
+                self.request_size(390., 844.);
                 app.screen = Screen::Home;
             }
             1 => {
@@ -82,7 +90,7 @@ impl Smoke {
                 app.selected = Square::new(1, 2);
             }
             3 => {
-                request_new_screen_size(844., 390.);
+                self.request_size(844., 390.);
                 app.settings.user_red = true;
                 app.selected = None;
             }
@@ -99,7 +107,7 @@ impl Smoke {
                 });
             }
             5 => {
-                request_new_screen_size(390., 844.);
+                self.request_size(390., 844.);
             }
             6 => {
                 app.back();
@@ -135,27 +143,27 @@ impl Smoke {
                 app.open_modal(Modal::Audio);
             }
             11 => {
-                request_new_screen_size(844., 390.);
+                self.request_size(844., 390.);
                 app.open_modal(Modal::Audio);
             }
             12 => {
-                request_new_screen_size(390., 844.);
+                self.request_size(390., 844.);
                 app.open_modal(Modal::Side(Some(Box::default())));
             }
             13 => {
-                request_new_screen_size(1100., 800.);
+                self.request_size(1100., 800.);
                 app.screen = Screen::Home;
             }
             14 => {
-                request_new_screen_size(768., 1024.);
+                self.request_size(768., 1024.);
                 app.start_game(None, true);
             }
             15 => {
-                request_new_screen_size(1440., 768.);
+                self.request_size(1440., 768.);
                 app.engine_failed = true;
             }
             16 => {
-                request_new_screen_size(390., 844.);
+                self.request_size(390., 844.);
                 app.game.resign(Side::Red);
             }
             17 => {
@@ -176,15 +184,15 @@ impl Smoke {
                 }
             }
             18 => {
-                request_new_screen_size(1280., 800.);
+                self.request_size(1280., 800.);
             }
             19 => {
-                request_new_screen_size(320., 568.);
+                self.request_size(320., 568.);
                 app.screen = Screen::Home;
                 app.open_modal(Modal::Difficulty);
             }
             20 => {
-                request_new_screen_size(390., 844.);
+                self.request_size(390., 844.);
                 app.screen = Screen::Archives;
                 app.archive_favorites = true;
                 app.archive_dirty = true;
@@ -215,7 +223,7 @@ impl Smoke {
                 app.open_modal(Modal::Delete("smoke-0".into()));
             }
             24 => {
-                request_new_screen_size(390., 844.);
+                self.request_size(390., 844.);
                 app.notice = "此局已由另一窗口更新，当前棋盘仍保留。请重新载入或另存分支。".into();
                 app.saves
                     .failed(Command::save(app.game.snapshot(true, 2, false), None));
@@ -228,7 +236,7 @@ impl Smoke {
             }
             26 => {
                 // A short viewport also models the space above an on-screen keyboard.
-                request_new_screen_size(844., 320.);
+                self.request_size(844., 320.);
                 let id = app.data.archives[0].id.clone();
                 app.open_modal(Modal::Rename(id, "残局复盘".into()));
             }
@@ -320,6 +328,7 @@ impl Smoke {
                         depth: 8,
                         index: 1,
                         evaluation: Score::Cp(15),
+                        line: Vec::new(),
                     }],
                     elapsed_ms: 20,
                     requested_depth: 8,
@@ -500,6 +509,16 @@ impl Smoke {
                 "4k-game",
             ][stage];
             let path = self.root.join(format!("{stage:02}-{name}.png"));
+            self.viewports.insert(
+                format!("{stage:02}-{name}.png"),
+                serde_json::json!({
+                    "requested": self.requested, "logical": [screen_width(),screen_height()],
+                    "dpi": screen_dpi_scale(), "canvas": [app.width,app.height],
+                    "safeViewport": [app.viewport.x,app.viewport.y,app.viewport.w,app.viewport.h],
+                    "framebuffer": [(screen_width()*screen_dpi_scale()).round() as u32,
+                        (screen_height()*screen_dpi_scale()).round() as u32],
+                }),
+            );
             let mut ids = std::collections::BTreeSet::new();
             for node in &app.accessible {
                 assert!(
@@ -547,7 +566,7 @@ impl Smoke {
             } else {
                 "assets unavailable"
             };
-            let result = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"realEngine":engine,"deviceScale":screen_dpi_scale(),"scenes":29,"frames":self.frame,"elapsedMs":self.started.elapsed().as_millis(),"input":"internal hit-testing; OS input tested separately","archives":"resignation saved","cursor":"controlled asynchronous reply applied without moving cursor","renderTarget":[app.scene.target.texture.width(),app.scene.target.texture.height()],"performance":crate::diagnostics::snapshot()});
+            let result = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"realEngine":engine,"deviceScale":screen_dpi_scale(),"viewports":self.viewports,"scenes":29,"frames":self.frame,"elapsedMs":self.started.elapsed().as_millis(),"input":"internal hit-testing; OS input tested separately","archives":"resignation saved","cursor":"controlled asynchronous reply applied without moving cursor","renderTarget":[app.scene.target.texture.width(),app.scene.target.texture.height()],"performance":crate::diagnostics::snapshot()});
             std::fs::write(
                 self.root.join("result.json"),
                 serde_json::to_vec_pretty(&result).unwrap(),

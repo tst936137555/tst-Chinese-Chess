@@ -9,6 +9,16 @@ impl App {
             self.name_keyboard = false;
         }
         if matches!(m, Modal::Rename(..)) {
+            if let Modal::Rename(id, _) = &m {
+                self.rename_revision = self
+                    .data
+                    .active
+                    .iter()
+                    .chain(&self.data.drafts)
+                    .chain(&self.data.archives)
+                    .find(|r| r.id == *id)
+                    .map_or(0, |r| r.title_revision);
+            }
             self.rename_return = match &self.modal {
                 Some(Modal::Drafts(page)) => Some(*page),
                 _ => None,
@@ -87,7 +97,7 @@ impl App {
     }
     pub(super) fn start_game(&mut self, board: Option<Game>, red: bool) {
         self.accessible.clear();
-        if self.data.drafts.len() >= 50 && self.data.active.is_some() {
+        if self.data.drafts.len() >= crate::storage::MAX_DRAFTS && self.data.active.is_some() {
             self.notice = "对局已满，请先删除旧对局后开始新局".into();
             self.open_modal(Modal::Drafts(0));
             return;
@@ -136,30 +146,41 @@ impl App {
             .filter(|failed| !record.acknowledges(failed))
             .cloned()
             .unwrap_or(record);
-        match record.replay() {
-            Ok(game) => {
-                self.cancel();
-                self.navigation.clear();
-                self.navigation.push(PageState::Home);
-                self.settings.user_red = record.user_red;
-                self.settings.level = LEVELS
-                    .iter()
-                    .position(|l| l.name == record.level_name)
-                    .unwrap_or(0);
-                self.preferences.user_red = self.settings.user_red;
-                self.preferences.level = self.settings.level;
-                self.review_game = record.mode == "review";
-                self.game = game;
-                self.enqueue(Command::Activate(record.id));
-                self.engine_failed = false;
-                self.ended_at = None;
-                self.end_ready = false;
-                self.modal = None;
-                self.reset_move_view();
-                self.screen = Screen::Game;
-            }
-            Err(e) => self.notice = format!("续局无效：{e}"),
+        self.load_record(record, false);
+    }
+    pub(super) fn load_record(&mut self, record: crate::game::Record, review: bool) {
+        if self.loading_record.is_some() {
+            return;
         }
+        match self.loader.request(record, review) {
+            Ok(id) => {
+                self.loading_record = Some(id);
+                self.notice = "正在读取棋谱…".into();
+                self.redraw = true;
+            }
+            Err(error) => self.notice = error,
+        }
+    }
+    pub(super) fn finish_resume(&mut self, record: crate::game::Record, game: Game) {
+        self.cancel();
+        self.navigation.clear();
+        self.navigation.push(PageState::Home);
+        self.settings.user_red = record.user_red;
+        self.settings.level = LEVELS
+            .iter()
+            .position(|l| l.name == record.level_name)
+            .unwrap_or(0);
+        self.preferences.user_red = self.settings.user_red;
+        self.preferences.level = self.settings.level;
+        self.review_game = record.mode == "review";
+        self.game = game;
+        self.enqueue(Command::Activate(record.id));
+        self.engine_failed = false;
+        self.ended_at = None;
+        self.end_ready = false;
+        self.modal = None;
+        self.reset_move_view();
+        self.screen = Screen::Game;
     }
     pub(super) fn open_review(&mut self, game: Game, _origin: Screen) {
         self.accessible.clear();

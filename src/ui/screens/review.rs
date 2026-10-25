@@ -41,6 +41,47 @@ impl App {
                 self.notice.clear();
                 self.review.as_mut().unwrap().analyzing = true;
             }
+        } else if self
+            .review
+            .as_ref()
+            .is_some_and(|r| r.details[ply].as_ref().is_some_and(|d| !d.line.is_empty()))
+        {
+            if self.button(
+                "参考变化",
+                Rect::new(x + w - 99., card_y + 10., 86., 37.),
+                false,
+                true,
+            ) {
+                let r = self.review.as_ref().unwrap();
+                let details = r.details[ply].as_ref().unwrap();
+                let mut position = board.clone();
+                let mut words = Vec::new();
+                for (index, word) in details.line.iter().take(16).enumerate() {
+                    let Ok(m) = word.parse() else { break };
+                    let Ok(notation) = crate::notation::chinese(&position, m) else {
+                        break;
+                    };
+                    if position.play(m).is_err() {
+                        break;
+                    }
+                    words.push(format!(
+                        "{}. {}{}",
+                        index + 1,
+                        position.turn.other().label(),
+                        notation
+                    ));
+                }
+                let text = format!(
+                    "{}\n实际深度 {} / 请求 {}\n用时 {} ms / 预算 {} ms\n\n{}\n\n变化展示当前引擎的主要预测，实际应手可随局面改变。",
+                    r.scores[ply].map_or_else(|| "待分析".into(), Score::label),
+                    r.depths[ply],
+                    details.requested_depth,
+                    details.elapsed_ms,
+                    details.budget_ms,
+                    words.join("\n")
+                );
+                self.open_modal(Modal::Variation(text));
+            }
         } else {
             self.fit_text(
                 &format!("{ply} / {n} 步"),

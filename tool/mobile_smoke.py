@@ -65,6 +65,7 @@ def wait_for_smoke(timeout=300, stall_timeout=90):
 
 def main():
     if adb("shell","getprop","ro.kernel.qemu").stdout.strip()!=b"1":raise SystemExit("This isolated release install test requires an Android emulator")
+    adb("shell","setprop","debug.checkjni","1")
     apk=ROOT/"dist"/f"tst-xiangqi-{version_info()['version']}-x86_64.apk"
     adb("install","-r",apk,timeout=120);adb("shell","am","force-stop",PACKAGE,timeout=60)
     adb("logcat","-c")
@@ -92,9 +93,11 @@ def main():
         adb("shell","input","tap",round(q["x"]*dpi+ox),round(q["y"]*dpi+oy))
         s=wait(state,lambda s:s.get("selectedSquare")==[file,rank] if step==0 else s.get("plies",0)>=1,45)
     s=wait(state,lambda s:s.get("plies",0)>=2 and s.get("saved") and not s.get("pending"),45)
-    before=s["pauseSerial"];tap("结束对局")
-    launch("--ez","xiangqiRecreate","true")
-    wait(state,lambda s:s.get("pauseSerial",0)>before and s.get("modal") and s.get("sceneStable"),45)
+    tap("结束对局")
+    for _ in range(3):
+        before=state()["pauseSerial"]
+        launch("--ez","xiangqiRecreate","true")
+        wait(state,lambda s:s.get("pauseSerial",0)>before and s.get("modal") and s.get("sceneStable"),45)
     before=state()["pauseSerial"]
     adb("shell","input","keyevent",3);time.sleep(.5);launch()
     wait(state,lambda s:s.get("pauseSerial",0)>before and any(c["label"]=="按当前局势结算" for c in s.get("controls",[])),45)
@@ -122,6 +125,8 @@ def main():
     adb("shell","am","force-stop",PACKAGE,timeout=60)
     launch("--ez","xiangqiSmoke","true")
     result=wait_for_smoke()
+    assert b"JNI DETECTED ERROR IN APPLICATION" not in adb("logcat","-d").stdout
+    result["checkJni"]="enabled; no JNI fatal errors; three Activity recreations"
     result["osInput"]={"backModal":"passed","foregroundActivity":"passed","nativeAiReply":"passed","activityRecreation":"passed","endAnalysisPauseResume":"passed","rotation":"passed","coldResume":"passed","homeBackResume":"passed"}
     output=ROOT/"target/android-smoke";output.mkdir(parents=True,exist_ok=True)
     (output/"result.json").write_text(json.dumps(result,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")

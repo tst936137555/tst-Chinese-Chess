@@ -27,3 +27,6 @@ Linux 运行图形测试需要 Xvfb、Openbox 和 ALSA null sink，具体命令�
 
 
 v2.0.3 起 Android 受信任构建必须使用正式签名，正式包 debuggable=false，缺少密钥立即失败；外部 fork PR 仅执行未签名编译验证。正式包模拟器回归使用隔离外部目录，不再要求 run-as。发布任务再次验证真实 APK 证书、包名、版本和 SHA256 后直接生成正式 Release。iOS 构建以 verification-ios-* 保留，不进入正式发布资产。细节见 [正式发布说明](RELEASE.md)。
+
+
+v2.1.0：Windows 增加真实截图与视觉基线检查，逐场景保存实际 DPI/视口；Android 开启 CheckJNI 并连续三次重建 Activity；iOS 在已有安装/引擎/冷启动检查后运行 `python tool/ios_ui_test.py`，XCTest 以隔离数据完成系统触摸、横屏、前后台和冷启动续局，结果保留为 xcresult。维护工作流和 Dependabot 定期检查依赖，清单记录所有目标平台的声明及 vendor 摘要。

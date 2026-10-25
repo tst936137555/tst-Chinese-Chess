@@ -1052,15 +1052,11 @@ impl WindowsDisplay {
             // Get the client area rectangle in client coordinates
             let mut client_rect: RECT = std::mem::zeroed();
             if GetClientRect(hwnd, &mut client_rect as *mut _ as _) != 0 {
-                // Calculate window width and height based on the client area
-                let window_width =
-                    ((client_rect.right - client_rect.left) as f32 / self.window_scale) as i32;
-                let window_height =
-                    ((client_rect.bottom - client_rect.top) as f32 / self.window_scale) as i32;
-
-                // Prevent a framebuffer size of 0 when the window is minimized
-                let fb_width = ((window_width as f32 * self.content_scale) as i32).max(1);
-                let fb_height = ((window_height as f32 * self.content_scale) as i32).max(1);
+                // Keep physical client pixels intact. Rounding through integer logical
+                // units loses up to two pixels at fractional DPI (for example 225%).
+                let ratio = self.content_scale / self.window_scale;
+                let fb_width = (((client_rect.right - client_rect.left) as f32 * ratio).round() as i32).max(1);
+                let fb_height = (((client_rect.bottom - client_rect.top) as f32 * ratio).round() as i32).max(1);
 
                 // Check for size changes
                 if fb_width != d.screen_width || fb_height != d.screen_height {

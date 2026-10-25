@@ -1,5 +1,18 @@
 use std::path::PathBuf;
 
+#[cfg(target_os = "android")]
+fn activity<'local>(
+    env: &jni::JNIEnv<'local>,
+) -> jni::objects::AutoLocal<'local, jni::objects::JObject<'local>> {
+    // NewLocalRef runs under miniquad's replacement lock. AutoLocal releases it
+    // before the AttachGuard detaches, including all early-return/error paths.
+    env.auto_local(unsafe {
+        jni::objects::JObject::from_raw(
+            macroquad::miniquad::native::android::activity_ref(env.get_raw().cast()).cast(),
+        )
+    })
+}
+
 pub fn touch_delivery() -> [u64; 2] {
     #[cfg(target_os = "android")]
     return macroquad::miniquad::native::android::touch_delivery();
@@ -9,22 +22,62 @@ pub fn touch_delivery() -> [u64; 2] {
 
 #[cfg(target_os = "android")]
 pub fn background_app() -> Result<(), String> {
-    use jni::objects::JObject;
     let vm = JVM.get().ok_or("Android 运行环境尚未就绪")?;
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
-    let activity =
-        unsafe { JObject::from_raw(macroquad::miniquad::native::android::ACTIVITY.cast()) };
+    let activity = activity(&env);
     env.call_method(&activity, "xiangqiBackground", "()V", &[])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 pub fn observation_path() -> Option<PathBuf> {
+    #[cfg(target_os = "ios")]
+    if std::env::args().any(|a| a == "--native-ui-test") {
+        return data_dir().ok().map(|p| p.join("interaction.json"));
+    }
     #[cfg(target_os = "android")]
     if let Some(path) = OBSERVATION.get() {
         return Some(path.clone());
     }
     std::env::var_os("XIANGQI_OBSERVE_PATH").map(PathBuf::from)
+}
+pub fn keep_awake(enabled: bool) {
+    #[cfg(target_os = "android")]
+    {
+        use jni::objects::JValue;
+        static PREVIOUS: std::sync::Mutex<Option<(u64, bool)>> = std::sync::Mutex::new(None);
+        let Ok(mut previous) = PREVIOUS.lock() else {
+            return;
+        };
+        let current = (ui_generation(), enabled);
+        if *previous == Some(current) {
+            return;
+        }
+        let Some(vm) = JVM.get() else { return };
+        let Ok(mut env) = vm.attach_current_thread() else {
+            return;
+        };
+        let activity = activity(&env);
+        if env
+            .call_method(
+                &activity,
+                "xiangqiKeepAwake",
+                "(Z)V",
+                &[JValue::Bool(u8::from(enabled))],
+            )
+            .is_ok()
+        {
+            *previous = Some(current);
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = enabled;
+}
+pub fn ui_generation() -> u64 {
+    #[cfg(target_os = "android")]
+    return macroquad::miniquad::native::android::activity_generation();
+    #[cfg(not(target_os = "android"))]
+    0
 }
 static VIEW_ORIGIN: [std::sync::atomic::AtomicI32; 2] =
     [const { std::sync::atomic::AtomicI32::new(0) }; 2];
@@ -33,15 +86,14 @@ pub fn view_origin() -> [i32; 2] {
 }
 #[cfg(target_os = "android")]
 pub fn publish_accessibility(json: &str) {
-    use jni::objects::{JObject, JValue};
+    use jni::objects::JValue;
     let Some(vm) = JVM.get() else {
         return;
     };
     let Ok(mut env) = vm.attach_current_thread() else {
         return;
     };
-    let activity =
-        unsafe { JObject::from_raw(macroquad::miniquad::native::android::ACTIVITY.cast()) };
+    let activity = activity(&env);
     if let Ok(text) = env.new_string(json) {
         let _ = env.call_method(
             &activity,
@@ -98,15 +150,18 @@ pub fn data_dir() -> Result<PathBuf, String> {
     }
     #[cfg(target_os = "android")]
     {
-        use jni::objects::{JObject, JString};
-        use macroquad::miniquad::native::android;
+        use jni::objects::JString;
+        static DATA_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        if let Some(path) = DATA_DIR.get() {
+            return Ok(path.clone());
+        }
         // Called on miniquad's persistent rendering thread; the Activity is a global JNI ref.
-        let path = unsafe {
+        let path = {
             // The persistence/search threads are native workers. AttachGuard detaches
             // only threads attached here; an already attached rendering thread stays attached.
             let vm = JVM.get().ok_or("Android JVM 尚未初始化")?;
             let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
-            let activity = JObject::from_raw(android::ACTIVITY.cast());
+            let activity = activity(&env);
             let dir = env
                 .call_method(&activity, "getFilesDir", "()Ljava/io/File;", &[])
                 .and_then(|v| v.l())
@@ -121,7 +176,9 @@ pub fn data_dir() -> Result<PathBuf, String> {
             env.delete_local_ref(dir).map_err(|e| e.to_string())?;
             path
         };
-        return Ok(PathBuf::from(path));
+        let path = PathBuf::from(path);
+        let _ = DATA_DIR.set(path.clone());
+        return Ok(path);
     }
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("APPDATA")
@@ -141,7 +198,14 @@ pub fn data_dir() -> Result<PathBuf, String> {
         .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/share")))
         .ok_or("无法定位数据目录")?;
     #[cfg(not(target_os = "android"))]
-    Ok(base.join("tst-xiangqi-rust"))
+    {
+        let path = base.join("tst-xiangqi-rust");
+        #[cfg(target_os = "ios")]
+        if std::env::args().any(|a| a == "--native-ui-test") {
+            return Ok(path.join("ui-acceptance"));
+        }
+        Ok(path)
+    }
 }
 
 pub fn engine_path() -> Result<PathBuf, String> {
@@ -235,9 +299,16 @@ pub fn take_back() -> bool {
 pub fn name_editor(text: &str, start: usize, end: usize, rect: [f32; 4], visible: bool) {
     #[cfg(any(target_os = "ios", target_os = "android"))]
     {
-        type State = (String, usize, usize, [u32; 4], bool);
+        type State = (String, usize, usize, [u32; 4], bool, u64);
         static PREVIOUS: std::sync::Mutex<Option<State>> = std::sync::Mutex::new(None);
-        let next = (text.to_owned(), start, end, rect.map(f32::to_bits), visible);
+        let next = (
+            text.to_owned(),
+            start,
+            end,
+            rect.map(f32::to_bits),
+            visible,
+            ui_generation(),
+        );
         if let Ok(mut previous) = PREVIOUS.lock() {
             if previous.as_ref() == Some(&next) {
                 return;
@@ -263,15 +334,14 @@ pub fn name_editor(text: &str, start: usize, end: usize, rect: [f32; 4], visible
     }
     #[cfg(target_os = "android")]
     {
-        use jni::objects::{JObject, JValue};
+        use jni::objects::JValue;
         let Some(vm) = JVM.get() else {
             return;
         };
         let Ok(mut env) = vm.attach_current_thread() else {
             return;
         };
-        let activity =
-            unsafe { JObject::from_raw(macroquad::miniquad::native::android::ACTIVITY.cast()) };
+        let activity = activity(&env);
         if let Ok(value) = env.new_string(text) {
             let _ = env.call_method(
                 &activity,
@@ -396,8 +466,7 @@ pub fn prepare_nnue(destination: &std::path::Path, expected: &str) -> Result<(),
         use jni::objects::{JObject, JValue};
         let vm = JVM.get().ok_or("Android JVM 尚未初始化")?;
         let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
-        let activity =
-            unsafe { JObject::from_raw(macroquad::miniquad::native::android::ACTIVITY.cast()) };
+        let activity = activity(&env);
         let assets = env
             .call_method(
                 &activity,

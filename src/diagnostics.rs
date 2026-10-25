@@ -4,6 +4,56 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 static LOG: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
+static LOCAL: OnceLock<std::sync::mpsc::SyncSender<String>> = OnceLock::new();
+static CAPTURED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Keep the first failure of a process locally, off the rendering thread. Rotate
+/// one previous report; never capture game libraries, names or environment values.
+pub fn enable_local(directory: &std::path::Path) {
+    if LOCAL.get().is_some() {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::sync_channel::<String>(1);
+    if LOCAL.set(tx).is_err() {
+        return;
+    }
+    let directory = directory.to_owned();
+    std::thread::spawn(move || {
+        if let Ok(report) = rx.recv() {
+            if std::fs::create_dir_all(&directory).is_err() {
+                return;
+            }
+            let path = directory.join("last-failure.txt");
+            if let Ok(previous) = std::fs::read(&path)
+                && previous.len() <= 256 * 1024
+            {
+                let _ = crate::storage::Storage::atomic_write(
+                    &directory.join("previous-failure.txt"),
+                    &previous,
+                );
+            }
+            let _ = crate::storage::Storage::atomic_write(&path, report.as_bytes());
+        }
+    });
+}
+pub fn redact(message: &str) -> String {
+    let mut result: String = message.chars().take(2048).collect();
+    for name in [
+        "USERPROFILE",
+        "HOME",
+        "XIANGQI_DATA_DIR",
+        "PIKAFISH_PATH",
+        "PIKAFISH_NNUE",
+    ] {
+        if let Some(value) = std::env::var_os(name).filter(|s| !s.is_empty()) {
+            let path = value.to_string_lossy();
+            result = result
+                .replace(path.as_ref(), "<local>")
+                .replace(&path.replace('\\', "/"), "<local>");
+        }
+    }
+    result
+}
 pub fn record(stage: &str, message: &str) {
     if let Ok(mut lines) = LOG.get_or_init(|| Mutex::new(VecDeque::new())).lock() {
         if lines.len() >= 200 {
@@ -71,6 +121,22 @@ pub fn measure(name: &str, value: f64) {
 }
 pub fn failure(kind: FailureKind, stage: &str, message: &str) {
     record(stage, &format!("{kind:?}: {message}"));
+    if let Some(tx) = LOCAL.get()
+        && !CAPTURED.swap(true, std::sync::atomic::Ordering::AcqRel)
+    {
+        // Store structural evidence and timings, not arbitrary engine stderr or
+        // user-entered text from the in-memory log.
+        let report = format!(
+            "version={} platform={} arch={} time={}\nstage={} kind={kind:?}\nmessage={}\n",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            crate::game::now_ms(),
+            stage,
+            redact(message)
+        );
+        let _ = tx.try_send(report);
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureKind {

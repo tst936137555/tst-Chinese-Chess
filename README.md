@@ -40,10 +40,10 @@ cargo +1.99.1-x86_64-pc-windows-gnu run --release --locked
 ./tool/package_windows_rust.ps1 -Toolchain 1.99.1-x86_64-pc-windows-gnu
 ```
 
-完整便携包输出 `dist/tst-xiangqi-2.0.3-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
+完整便携包输出 `dist/tst-xiangqi-2.1.0-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
 
 ```text
-tst-xiangqi-2.0.3-windows/
+tst-xiangqi-2.1.0-windows/
 ├── tst-xiangqi.exe
 ├── assets/
 │   ├── engine/       # 皮卡鱼引擎与 NNUE 权重
@@ -99,7 +99,7 @@ bash tool/build_ios_rust.sh aarch64-apple-ios
 
 ## 数据与旧版迁移
 
-Rust 数据与旧版分开保存：Windows `%APPDATA%/tst-xiangqi-rust/state.json`；macOS/iOS `$HOME/Library/Application Support/tst-xiangqi-rust/state.json`；Android 私有 files 目录。`XIANGQI_DATA_DIR` 可覆盖目录。当前存档 schema 为 6，旧数据读取时迁移；显式删除身份会阻止旧窗口重新写回。设置独立保存到同目录的 `state.settings.json`，采用原子写入与 `state.settings.bak` 备份，不再因调音量重写整库；损坏设置先读取其备份或主存档内的迁移值，更新时另存损坏文件，未来版本设置拒绝覆盖。恢复主存档不会回退独立设置。棋谱日期统一显示北京时间（UTC+8）。
+Rust 数据与旧版分开保存：Windows `%APPDATA%/tst-xiangqi-rust/state.json`；macOS/iOS `$HOME/Library/Application Support/tst-xiangqi-rust/state.json`；Android 私有 files 目录。`XIANGQI_DATA_DIR` 可覆盖目录。当前存档 schema 为 7，旧数据读取时迁移；显式删除身份会阻止旧窗口重新写回。设置独立保存到同目录的 `state.settings.json`，采用原子写入与 `state.settings.bak` 备份，不再因调音量重写整库；损坏设置先读取其备份或主存档内的迁移值，更新时另存损坏文件，未来版本设置拒绝覆盖。恢复主存档不会回退独立设置。棋谱日期统一显示北京时间（UTC+8）。
 
 ```powershell
 cargo run --release -- --import "C:/path/to/game_archive.json"
@@ -107,7 +107,7 @@ cargo run --release -- --import "C:/path/to/game_archive.json"
 
 导入旧 JSON 棋谱时逐步重放验证走法，重建局面和记谱，去重并保留原文件。旧 SharedPreferences 的偏好和未结束对局尚不自动迁移；不会跨移动端沙盒读取旧应用数据。
 
-项目当前版本为 Rust 2.0.3。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
+项目当前版本为 Rust 2.1.0。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
 
 ## 验证
 
@@ -138,7 +138,7 @@ cargo test --all-targets --locked
 
 Windows 使用 `.exe` 文件。`--self-test` 验证真实引擎、历史、续局及归档；`--smoke-test` 使用指定输出目录保存测试数据，自动生成 29 个场景截图并验证横屏落子、新局设置、音量调节、选子取消、收藏筛选和复盘跳转。不会修改正常用户存档。Android 正式包可在模拟器运行 `python tool/mobile_smoke.py`。本轮通过 29 场景（含独立 2K/4K 内部画布）与原有视觉基准检查，字体首帧与稳定帧对比 RMS 为 0。
 
-内部冒烟直接调用命中处理；另外提供真实输入回归，不能把截图通过解释为真机触摸已验收：Linux 在 Xvfb 下运行 `python3 tool/ui_input_smoke.py target/release/tst-xiangqi`（需要 xdotool）；Android 模拟器运行 `python3 tool/mobile_smoke.py`；macOS 构建模拟器 app 后运行 `python3 tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app`。iOS 脚本验证安装/启动/冷启动，系统触摸和旋转仍需 XCTest 或设备验证。
+内部冒烟直接调用命中处理；另外提供真实输入回归，不能把截图通过解释为真机触摸已验收：Linux 在 Xvfb 下运行 `python3 tool/ui_input_smoke.py target/release/tst-xiangqi`（需要 xdotool）；Android 模拟器运行 `python3 tool/mobile_smoke.py`；macOS 构建模拟器 app 后运行 `python3 tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app`。iOS 基础脚本验证安装/启动/冷启动，CI 另外运行 XCTest 系统触摸、旋转、后台恢复和续局；物理设备体验仍需验收。
 
 主项目新增保存失败/重读/分支/重启、异步响应、删除屏障、独立设置、评分类型转换、阻塞管道、渲染预算、Unicode 输入与规则局面回归，覆盖分歧历史、冲突确认、四类任务恢复、缓存空闲定时落盘/合并/失败退出、旧记录碰撞、对局容量、评分证据和固定随机种子，以及非法元数据导入、棋谱改名保留、备份恢复任务、设置失败确认、名称编辑和渲染尺寸边界。以下示例输出独立文件，使用临时数据，不改用户存档：
 
@@ -146,7 +146,7 @@ Windows 使用 `.exe` 文件。`--self-test` 验证真实引擎、历史、续�
 cargo run --release --locked --example check_ui -- target/ui-smoke
 cargo run --release --locked --example font_regression -- target/font-regression
 cargo run --release --locked --example benchmark -- target/performance-baseline.json
-cargo run --release --locked --example calibrate -- target/difficulty-calibration.json --matches --max-plies 512 --pairs 1
+cargo run --release --locked --example calibrate -- target/difficulty-calibration.json --matches --max-plies 512 --pairs 8
 cargo run --release --locked --example profile_ui -- target/ui-profile
 cargo run --release --locked --example fuzz_inputs -- 10000
 ```
@@ -208,3 +208,8 @@ python tool/subset_font.py --input assets/fonts/LXGWWenKai-Medium.ttf
 
 
 版本 2.0.3 增加逐局语义验证、导入容量事务保护、复盘缓存单调合并、收藏目标状态修订、独立设置恢复及退出状态机。schema 6 记录 simplified-v1 裁决版本；长期删除身份使用有界明细和时间屏障压缩，未知旧窗口身份需另存新分支，显式导入仍保留容量与重复检查。正式签名与发布流程见 [发布说明](docs/RELEASE.md)，第三方本地补丁见 [维护清单](docs/VENDOR_PATCHES.md)。
+
+
+v2.1.0 修复缺失主存档与设置备份恢复、过期命名重试、Android JNI 引用存活期及 Windows 小数 DPI 尺寸损失。schema 7 增加独立名称修订号。续局与打开复盘采用后台重放，语义缓存独立校验元数据；复盘支持「参考变化」与实际分析依据。旧收藏兼容接口最多新增 4096 个去重凭证，既有重试保留，当前界面使用的带修订号操作不受影响。首次故障在数据目录的 diagnostics/ 内保留脱敏摘要并轮换一份旧报告。Android 只在对弈与复盘分析时保持亮屏。
+
+依赖声明与本地补丁摘要可用 `python tool/dependency_inventory.py target/dependencies.json` 生成；每周维护工作流执行固定版本的 RustSec 扫描并保留结果，依赖更新由 Dependabot 提议。

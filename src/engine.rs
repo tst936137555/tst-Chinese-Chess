@@ -143,6 +143,7 @@ pub struct Variation {
     pub depth: u32,
     pub index: usize,
     pub evaluation: Score,
+    pub line: Vec<Move>,
 }
 #[derive(Clone, Debug)]
 pub struct Analysis {

@@ -55,6 +55,11 @@ struct Snapshot {
     focus: Option<u32>,
 }
 static SNAPSHOT: OnceLock<Mutex<Snapshot>> = OnceLock::new();
+pub fn invalidate() {
+    if let Ok(mut snapshot) = SNAPSHOT.get_or_init(Default::default).lock() {
+        *snapshot = Snapshot::default();
+    }
+}
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 static DESKTOP_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

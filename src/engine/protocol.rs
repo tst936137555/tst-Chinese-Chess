@@ -282,11 +282,21 @@ pub fn parse_info(line: &str, board: &Board) -> Option<Variation> {
     if !board.is_legal(mv) {
         return None;
     }
+    let mut position = board.clone();
+    let mut line_moves = Vec::new();
+    for word in words.iter().skip(at("pv")? + 1).take(32) {
+        let Ok(m) = word.parse() else { break };
+        if position.play(m).is_err() {
+            break;
+        }
+        line_moves.push(m);
+    }
     Some(Variation {
         mv,
         depth,
         index,
         score: evaluation.value(),
         evaluation,
+        line: line_moves,
     })
 }

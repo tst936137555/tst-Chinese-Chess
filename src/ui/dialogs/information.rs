@@ -1,5 +1,18 @@
 use super::*;
 impl App {
+    pub(super) fn modal_variation(&mut self, text: String, x: f32, y: f32, w: f32) {
+        self.center("参考变化", self.width / 2., y + 38., 26., INK);
+        self.modal_text(&text, x + 24., y + 80., w - 48., 400., 18.);
+        self.modal = Some(Modal::Variation(text));
+        if self.button(
+            "返回复盘",
+            Rect::new(x + 24., y + 520., w - 48., 49.),
+            true,
+            true,
+        ) {
+            self.modal = None;
+        }
+    }
     pub(super) fn modal_help(&mut self, x: f32, y: f32, w: f32) {
         self.center("规则说明", self.width / 2., y + 38., 26., INK);
         let body = super::copy::HELP;

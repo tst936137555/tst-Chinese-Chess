@@ -7,7 +7,8 @@ def activity_source(template, package="com.tst.xiangqi.rust"):
     if template.count("QuadNative.activityOnCreate(this);") != 1:
         raise ValueError("miniquad activity initialization template changed")
     main_activity = template.replace("TARGET_PACKAGE_NAME", package).replace("LIBRARY_NAME", "tst_xiangqi")
-    main_activity = main_activity.replace("//% MAIN_ACTIVITY_ON_CREATE", "getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);")
+    main_activity = main_activity.replace("//% MAIN_ACTIVITY_ON_CREATE", "// Keep-awake follows the game state, rather than every foreground page.")
+    main_activity = main_activity.replace("    //% MAIN_ACTIVITY_BODY", "    //% MAIN_ACTIVITY_BODY\n    public void xiangqiKeepAwake(boolean enabled) { runOnUiThread(() -> { if(enabled) getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); }); }")
     # Automation writes only isolated external app files, so the exact non-debuggable
     # release APK can be exercised without run-as or access to normal user saves.
     main_activity = main_activity.replace("QuadNative.activityOnCreate(this);", 'QuadNative.xiangqiInit();\n        java.io.File automationRoot=getExternalFilesDir(null);\n        if (automationRoot!=null && getIntent().getBooleanExtra("xiangqiSmoke", false)) { QuadNative.xiangqiSmoke(automationRoot.getAbsolutePath() + "/smoke"); }\n        if (automationRoot!=null && getIntent().getBooleanExtra("xiangqiObserve", false)) { QuadNative.xiangqiObserve(automationRoot.getAbsolutePath() + "/interaction/interaction.json"); }\n        view.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,orr,ob) -> { int[] xy = new int[2]; view.getLocationOnScreen(xy); QuadNative.xiangqiViewOrigin(xy[0], xy[1]); });\n        QuadNative.activityOnCreate(this);')

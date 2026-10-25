@@ -68,7 +68,7 @@ fn archived_names_survive_reload_favorite_and_an_older_game_snapshot() {
     store.save_game(snapshot.clone(), None).unwrap();
     let worker = Worker::new(store.clone());
     worker
-        .send(Command::Rename(game.id.clone(), "  首局复盘  ".into()))
+        .send(Command::Rename(game.id.clone(), "  首局复盘  ".into(), 0))
         .unwrap();
     assert_eq!(receive(&worker).archives[0].title, "首局复盘");
     store.favorite_by_id(&game.id).unwrap();
@@ -77,7 +77,7 @@ fn archived_names_survive_reload_favorite_and_an_older_game_snapshot() {
     assert_eq!(saved.title, "首局复盘");
     assert!(saved.favorite);
     worker
-        .send(Command::Rename(game.id, String::new()))
+        .send(Command::Rename(game.id, String::new(), 1))
         .unwrap();
     assert!(receive(&worker).archives[0].title.is_empty());
 }
@@ -114,7 +114,8 @@ fn cache_rejects_zero_mate_and_unproven_terminal_scores() {
             !CachedPosition {
                 score,
                 best: Some("h2e2".into()),
-                depth: 12
+                depth: 12,
+                details: None,
             }
             .valid_for(&game, 0)
         );
@@ -123,7 +124,8 @@ fn cache_rejects_zero_mate_and_unproven_terminal_scores() {
         CachedPosition {
             score: Score::Cp(42),
             best: Some("h2e2".into()),
-            depth: 12
+            depth: 12,
+            details: None,
         }
         .valid_for(&game, 0)
     );
@@ -132,7 +134,8 @@ fn cache_rejects_zero_mate_and_unproven_terminal_scores() {
         CachedPosition {
             score: Score::Terminal(1),
             best: None,
-            depth: 0
+            depth: 0,
+            details: None,
         }
         .valid_for(&terminal, 0)
     );
@@ -140,7 +143,8 @@ fn cache_rejects_zero_mate_and_unproven_terminal_scores() {
         !CachedPosition {
             score: Score::Terminal(-1),
             best: None,
-            depth: 0
+            depth: 0,
+            details: None,
         }
         .valid_for(&terminal, 0)
     );

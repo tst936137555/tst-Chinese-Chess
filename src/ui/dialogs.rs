@@ -76,6 +76,7 @@ impl App {
             Modal::ClearDrafts => self.modal_clear_drafts(x, y, w),
             Modal::Rename(id, edit) => self.modal_rename(id, edit, compact_name, x, y, w),
             Modal::Audio => self.modal_audio(x, y, w),
+            Modal::Variation(text) => self.modal_variation(text, x, y, w),
             Modal::SaveFailed => self.modal_save_failed(x, y, w),
             Modal::StorageRecovery => self.modal_storage_recovery(x, y, w),
             Modal::Drafts(page) => self.modal_drafts(page, x, y, w),

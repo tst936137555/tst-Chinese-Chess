@@ -134,6 +134,9 @@ pub(super) async fn initialize() -> (App, Option<smoke::Smoke>, Option<profile::
         s.boot("storage");
     }
     let store = Storage::new(path);
+    if let Some(parent) = store.path.parent() {
+        crate::diagnostics::enable_local(&parent.join("diagnostics"));
+    }
     let args: Vec<_> = std::env::args().collect();
     let import = args
         .iter()
@@ -175,6 +178,7 @@ pub(super) async fn initialize() -> (App, Option<smoke::Smoke>, Option<profile::
         keyboard_nav: false,
         name_keyboard: false,
         rename_return: None,
+        rename_revision: 0,
         board_cursor: None,
         observed_controls: Vec::new(),
         observed_at: 0.,
@@ -227,6 +231,9 @@ pub(super) async fn initialize() -> (App, Option<smoke::Smoke>, Option<profile::
         semantic_counts: Default::default(),
         focus_request: None,
         redraw: true,
+        loader: Default::default(),
+        loading_record: None,
+        native_generation: 0,
     };
     (app.width, app.height) = layout::canvas_size(app.viewport.w, app.viewport.h, false);
     if let Some(s) = &smoke {

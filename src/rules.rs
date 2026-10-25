@@ -427,6 +427,17 @@ impl Board {
         next.apply_unchecked(m);
         !next.in_check(p.side)
     }
+    pub fn has_legal_move(&self) -> bool {
+        self.pieces().any(|(from, p)| {
+            p.side == self.turn
+                && (0..90).any(|i| {
+                    self.is_legal(Move {
+                        from,
+                        to: Square(i),
+                    })
+                })
+        })
+    }
     pub fn legal_moves(&self) -> Vec<Move> {
         let mut moves = Vec::new();
         for (from, p) in self.pieces() {
