@@ -49,7 +49,7 @@ jobs:
     name: Install built app and exercise simulator
     needs: build
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -63,7 +63,7 @@ jobs:
           mkdir -p dist/ios
           unzip rust-ios-aarch64-apple-ios-sim.zip -d dist/ios
       - name: Install and launch simulator app
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: python tool/ios_smoke.py dist/ios/aarch64-apple-ios-sim/tst-xiangqi.app
       - name: Preserve simulator diagnostics
         if: always()

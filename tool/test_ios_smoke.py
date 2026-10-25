@@ -90,6 +90,26 @@ class SimulatorSmokeTest(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "unsuccessful result"):
                 ios_smoke.wait_for_smoke(root)
 
+    def test_slow_but_progressing_scenes_finish_after_five_minutes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/"startup.txt").touch()
+            clock=[0];scenes=[0]
+            expected={"scenes":29,"realEngine":"passed"}
+            def now():
+                clock[0]+=15
+                return clock[0]
+            def read(path,*args,**kwargs):
+                if path.name=="startup.txt":
+                    scenes[0]+=1
+                    return f"scene-{scenes[0]}/29"
+                if scenes[0]>=10:return json.dumps(expected)
+                raise FileNotFoundError(path)
+            with patch.object(ios_smoke.time,"monotonic",side_effect=now), \
+                 patch.object(ios_smoke.time,"sleep"), \
+                 patch.object(Path,"read_text",read):
+                self.assertEqual(ios_smoke.wait_for_smoke(root),expected)
+            self.assertGreater(clock[0],300)
+
     def test_completed_smoke_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -10,7 +10,7 @@ import time
 from ui_input_smoke import wait
 PACKAGE="com.tst.xiangqi.rust"
 def sim(*args,**kw):return subprocess.check_output(["xcrun","simctl",*args],text=True,timeout=kw.pop("timeout",60),**kw).strip()
-def wait_for_smoke(output, timeout=300, stall_timeout=60):
+def wait_for_smoke(output, timeout=600, stall_timeout=60):
     started=changed=time.monotonic();last_stage=None
     while time.monotonic()-started < timeout:
         stage_path=output/"startup.txt"
@@ -84,8 +84,11 @@ def main():
     device=next((d for d in candidates if d["state"]=="Booted"),candidates[0]);uid=device["udid"]
     container=None
     try:
+        print("iOS: boot simulator",uid,flush=True)
         if device["state"]!="Booted":sim("boot",uid)
-        sim("bootstatus",uid,"-b",timeout=180);sim("install",uid,str(app),timeout=180)
+        sim("bootstatus",uid,"-b",timeout=180)
+        print("iOS: install built app",flush=True)
+        sim("install",uid,str(app),timeout=180)
         container=Path(sim("get_app_container",uid,PACKAGE,"data"))
         run_checks(uid,container,dest)
     finally:collect_diagnostics(uid,container,dest)
