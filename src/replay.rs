@@ -16,7 +16,7 @@ pub struct Loader {
 impl Default for Loader {
     fn default() -> Self {
         let (tx, requests) = mpsc::sync_channel::<(u64, Record, bool)>(1);
-        let (replies, rx) = mpsc::channel();
+        let (replies, rx) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             while let Ok((id, record, review)) = requests.recv() {
                 let result = record.replay();
