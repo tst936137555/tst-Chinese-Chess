@@ -30,6 +30,7 @@ class SimulatorSmokeTest(unittest.TestCase):
                     return str(container)
                 if args[0] == "launch":
                     self.assertEqual(kwargs["timeout"], 180)
+                    self.assertIn("--terminate-running-process", args)
                     launches.append((args, kwargs["env"]))
                     (output / "startup.txt").write_text("audio-start")
                 if args[0] == "io":

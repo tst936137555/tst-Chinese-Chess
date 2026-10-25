@@ -37,12 +37,11 @@ def run_checks(uid,container,dest):
     smoke_env={**os.environ,"SIMCTL_CHILD_XIANGQI_SMOKE_OUTPUT":str(output)}
     def launch(phase,env,*args):
         print("iOS launch:",phase,flush=True)
-        print(sim("launch","--stdout="+str(dest/f"{phase}-stdout.log"),"--stderr="+str(dest/f"{phase}-stderr.log"),uid,PACKAGE,*args,env=env,timeout=180),flush=True)
-    # The smoke app may already have exited successfully after writing its result.
-    def terminate():subprocess.run(["xcrun","simctl","terminate",uid,PACKAGE],check=False,timeout=15)
+        # One CoreSimulator request terminates any old instance and starts a new
+        # process, including when the smoke app has already closed itself.
+        print(sim("launch","--terminate-running-process","--stdout="+str(dest/f"{phase}-stdout.log"),"--stderr="+str(dest/f"{phase}-stderr.log"),uid,PACKAGE,*args,env=env,timeout=180),flush=True)
     launch("smoke",smoke_env,"--smoke-test",str(output))
     result=wait_for_smoke(output)
-    terminate()
     observation=container/"Documents/interaction.json"
     env={**os.environ,"SIMCTL_CHILD_XIANGQI_OBSERVE_PATH":str(observation),"SIMCTL_CHILD_XIANGQI_DATA_DIR":str(container/"Documents/isolated-input-data")}
     observation.unlink(missing_ok=True)
@@ -50,7 +49,7 @@ def run_checks(uid,container,dest):
     wait(lambda:json.loads(observation.read_text()),lambda s:s.get("screen")=="home" and bool(s.get("controls")))
     sim("io",uid,"screenshot",str(output/"native-launch.png"))
     shutil.copy2(output/"native-launch.png",dest/"native-launch.png")
-    terminate();observation.unlink(missing_ok=True);launch("cold",env)
+    observation.unlink(missing_ok=True);launch("cold",env)
     wait(lambda:json.loads(observation.read_text()),lambda s:s.get("screen")=="home")
     result["simulator"]={"install":"passed","nativeLaunch":"passed","coldLaunch":"passed","rotationAndOsTouch":"requires XCTest/device verification"}
     (dest/"result.json").write_text(json.dumps(result,indent=2)+"\n")
