@@ -24,37 +24,28 @@ impl App {
                 self.review_game,
             );
             for source in crate::session::recovery_records(&record, Some(&current)) {
-                match source.replay() {
-                    Ok(mut game) => {
-                        game.fork_identity();
-                        let level = LEVELS
-                            .iter()
-                            .position(|l| l.name == source.level_name)
-                            .unwrap_or(0);
-                        let mut branch =
-                            game.snapshot(source.user_red, level, source.mode == "review");
-                        branch.title = if source.title.is_empty() {
-                            self.data
-                                .active
-                                .iter()
-                                .chain(&self.data.drafts)
-                                .chain(&self.data.archives)
-                                .find(|r| r.id == source.id)
-                                .map_or_else(String::new, |r| r.title.clone())
-                        } else {
-                            source.title.clone()
-                        };
-                        if self.game.id == original && source.acknowledges(&current) {
-                            self.game = game;
-                            self.reset_move_view();
-                        }
-                        self.enqueue(Command::save(branch, settings.clone()));
-                    }
-                    Err(e) => {
-                        self.saves.failed(Command::save(source, settings.clone()));
-                        self.notice = e;
-                    }
+                let mut branch = source.clone();
+                branch.fork_identity();
+                if self.game.id == original && source.acknowledges(&current) {
+                    self.game.fork_identity();
+                    branch.id = self.game.id.clone();
+                    branch.version_token = self.game.version_token.clone();
+                    branch.created_at = self.game.created_at;
+                    branch.finished_at = self.game.finished_at;
+                    self.reset_move_view();
                 }
+                if branch.title.is_empty() {
+                    branch.title = self
+                        .data
+                        .active
+                        .iter()
+                        .chain(&self.data.drafts)
+                        .chain(&self.data.archives)
+                        .find(|r| r.id == source.id)
+                        .map_or_else(String::new, |r| r.title.clone());
+                }
+                // Replay validation stays in the persistence worker, never in drawing/input.
+                self.enqueue(Command::save(branch, settings.clone()));
             }
         }
         if self.notice.is_empty() {
@@ -83,7 +74,7 @@ impl App {
         let (origin, cell) = self.board_rect();
         let unit = self.width / self.viewport.w;
         let squares:Vec<_>=(0..10).flat_map(|rank|(0..9).map(move|file|(file,rank))).map(|(file,rank)|{let square=Square::new(file,rank).unwrap();let point=Self::point(origin,cell,square,!self.settings.user_red);serde_json::json!({"file":file,"rank":rank,"x":self.viewport.x+point.x/unit,"y":self.viewport.y+point.y/unit})}).collect();
-        let value = serde_json::json!({"nativeTouchDelivery":crate::platform::touch_delivery(),"observedTime":get_time(),"screen":screen,"pointerEvents":self.observed_pointer,"lastRelease":self.observed_release,"backSerial":crate::platform::back_serial(),"nameEdit":match &self.modal {Some(Modal::Rename(_,edit))=>Some(&edit.text),_=>None},"pointer":[mouse_position().0,mouse_position().1],"pointerDown":is_mouse_button_down(MouseButton::Left),"selectedSquare":self.selected.map(|s|[s.file(),s.rank()]),"sceneStable":!self.redraw,"modal":self.modal.is_some(),"fen":self.game.board.fen(),"plies":self.game.history.len(),"pending":self.pending.is_some(),"pauseSerial":self.pause_serial,"pendingSaves":self.saves.pending,"failedSaves":self.saves.failed.len(),"saved":self.saves.pending==0&&self.saves.failed.is_empty(),"reviewPly":self.review.as_ref().map(|r|r.ply),"controls":controls,"squares":squares,"keyboardFocus":self.focus_index,"keyboardNavigation":self.keyboard_nav,"focusedControl":self.accessible.iter().find(|e|Some(e.id)==self.accessibility_focus).map(|e|e.label.clone()),"deviceScale":screen_dpi_scale(),"viewOrigin":crate::platform::view_origin(),"screenWidth":screen_width(),"screenHeight":screen_height()});
+        let value = serde_json::json!({"nativeTouchDelivery":crate::platform::touch_delivery(),"observedTime":get_time(),"screen":screen,"pointerEvents":self.observed_pointer,"lastRelease":self.observed_release,"backSerial":crate::platform::back_serial(),"nameEdit":match &self.modal {Some(Modal::Rename(_,edit) | Modal::Search(edit))=>Some(&edit.text),_=>None},"pointer":[mouse_position().0,mouse_position().1],"pointerDown":is_mouse_button_down(MouseButton::Left),"selectedSquare":self.selected.map(|s|[s.file(),s.rank()]),"sceneStable":!self.redraw,"modal":self.modal.is_some(),"fen":self.game.board.fen(),"plies":self.game.history.len(),"pending":self.pending.is_some(),"pauseSerial":self.pause_serial,"pendingSaves":self.saves.pending,"failedSaves":self.saves.failed.len(),"saved":self.saves.pending==0&&self.saves.failed.is_empty(),"reviewPly":self.review.as_ref().map(|r|r.ply),"controls":controls,"squares":squares,"keyboardFocus":self.focus_index,"keyboardNavigation":self.keyboard_nav,"focusedControl":self.accessible.iter().find(|e|Some(e.id)==self.accessibility_focus).map(|e|e.label.clone()),"deviceScale":screen_dpi_scale(),"viewOrigin":crate::platform::view_origin(),"screenWidth":screen_width(),"screenHeight":screen_height()});
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -270,12 +261,20 @@ impl App {
                 self.engine
                     .request_game(&self.game, self.game.history.len(), l.depth, l.ms, l.pv)
             }
-            Job::Hint => self
-                .engine
-                .request_game(&self.game, self.game.history.len(), 12, 3000, 2),
-            Job::End => self
-                .engine
-                .request_game(&self.game, self.game.history.len(), 12, 3000, 1),
+            Job::Hint => self.engine.request_game(
+                &self.game,
+                self.game.history.len(),
+                crate::review::ANALYSIS_LIMITS.0,
+                crate::review::ANALYSIS_LIMITS.1,
+                2,
+            ),
+            Job::End => self.engine.request_game(
+                &self.game,
+                self.game.history.len(),
+                crate::review::ANALYSIS_LIMITS.0,
+                crate::review::ANALYSIS_LIMITS.1,
+                1,
+            ),
             Job::Review(ply) => {
                 let Some(r) = &self.review else {
                     return;
@@ -338,7 +337,9 @@ impl App {
             match reply.result {
                 Ok(game) => {
                     self.notice.clear();
-                    if reply.review {
+                    if reply.branch {
+                        self.open_modal(Modal::Side(Some(Box::new(game))));
+                    } else if reply.review {
                         self.settings.user_red = reply.record.user_red;
                         self.open_review(game, Screen::Archives);
                     } else {
@@ -357,6 +358,13 @@ impl App {
         while let Ok(event) = self.io.rx.try_recv() {
             self.redraw = true;
             match event.result {
+                Ok(Response::Backups(paths)) => self.open_modal(Modal::Backups(paths)),
+                Ok(Response::Exported(path)) => {
+                    self.saves.completed(event.seq);
+                    self.notice = "备份已导出".into();
+                    crate::diagnostics::record("backup-export", &path.display().to_string());
+                    self.enqueue(Command::Backups);
+                }
                 Ok(Response::Settings(settings)) => {
                     self.data.settings = settings;
                     self.saves.succeeded(event.seq, &self.data);
@@ -480,12 +488,14 @@ impl App {
                                 analysis.variations.iter().find(|v| v.mv == analysis.best)
                         {
                             r.analyzed(ply, v);
-                            r.details[ply] = Some(crate::review::AnalysisDetails {
-                                line: v.line.iter().map(ToString::to_string).collect(),
-                                elapsed_ms: analysis.elapsed_ms,
-                                budget_ms: analysis.budget_ms,
-                                requested_depth: analysis.requested_depth,
-                            });
+                            if r.depths[ply] == v.depth && r.bests[ply] == Some(v.mv) {
+                                r.details[ply] = Some(crate::review::AnalysisDetails {
+                                    line: v.line.iter().map(ToString::to_string).collect(),
+                                    elapsed_ms: analysis.elapsed_ms,
+                                    budget_ms: analysis.budget_ms,
+                                    requested_depth: analysis.requested_depth,
+                                });
+                            }
                         }
                         self.save_review_cache();
                     }
@@ -500,7 +510,9 @@ impl App {
             {
                 if let Some(i) = crate::review::next_missing(
                     r.ply,
-                    &r.scores.iter().map(Option::is_some).collect::<Vec<_>>(),
+                    &(0..r.scores.len())
+                        .map(|i| r.complete(i))
+                        .collect::<Vec<_>>(),
                 ) {
                     if let Some(score) = crate::review::rule_score(&r.game, i) {
                         r.scores[i] = Some(score);

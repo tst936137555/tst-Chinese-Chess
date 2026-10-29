@@ -2,7 +2,12 @@
 use crate::{engine::Score, game::Game};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-pub type ChartCache = (u64, usize, Vec<(usize, Option<Score>)>);
+pub struct ChartCache {
+    pub version: u64,
+    pub columns: usize,
+    pub points: Vec<(usize, Option<Score>)>,
+    pub mistakes: Vec<usize>,
+}
 pub struct ReviewSession {
     pub game: Game,
     pub ply: usize,
@@ -14,9 +19,11 @@ pub struct ReviewSession {
     pub bests: Vec<Option<crate::rules::Move>>,
     pub analyzing: bool,
     pub user_red: bool,
+    pub flipped: bool,
     pub score_version: u64,
     pub chart_cache: ChartCache,
     pub dirty: std::collections::BTreeSet<usize>,
+    pub attempted: Vec<bool>,
 }
 impl ReviewSession {
     pub fn new(game: Game, user_red: bool) -> Self {
@@ -32,9 +39,16 @@ impl ReviewSession {
             bests: vec![None; n],
             analyzing: true,
             user_red,
+            flipped: !user_red,
             score_version: 0,
-            chart_cache: (u64::MAX, 0, Vec::new()),
+            chart_cache: ChartCache {
+                version: u64::MAX,
+                columns: 0,
+                points: Vec::new(),
+                mistakes: Vec::new(),
+            },
             dirty: Default::default(),
+            attempted: vec![false; n],
         }
     }
     pub fn cache_loaded(&mut self, cache: Option<CachedReview>) {
@@ -43,7 +57,12 @@ impl ReviewSession {
             for (ply, entry) in cache.entries.into_iter().enumerate() {
                 if let Some(entry) = entry.filter(|e| {
                     e.valid_for(&self.game, ply)
-                        && (self.scores[ply].is_none() || e.depth > self.depths[ply])
+                        && (self.scores[ply].is_none()
+                            || e.depth > self.depths[ply]
+                            || (e.depth == self.depths[ply]
+                                && self.details[ply].is_none()
+                                && !self.attempted[ply]
+                                && e.details.is_some()))
                 }) {
                     self.scores[ply] = Some(entry.score);
                     self.bests[ply] = entry.best.and_then(|m| m.parse().ok());
@@ -66,11 +85,45 @@ impl ReviewSession {
         if ply >= self.scores.len() {
             return;
         }
+        self.attempted[ply] = true;
+        if self.scores[ply].is_some() && self.depths[ply] > variation.depth {
+            return;
+        }
+        self.details[ply] = None;
         self.scores[ply] = Some(variation.evaluation);
         self.bests[ply] = Some(variation.mv);
         self.depths[ply] = variation.depth;
         self.dirty.insert(ply);
         self.score_version = self.score_version.wrapping_add(1);
+    }
+    pub fn complete(&self, ply: usize) -> bool {
+        self.attempted[ply]
+            || rule_score(&self.game, ply).is_some()
+            || self.details[ply]
+                .as_ref()
+                .is_some_and(AnalysisDetails::current)
+    }
+    /// One assessment for the board badge, detail text, chart and mistake navigation.
+    pub fn assessment(&self, ply: usize) -> Option<crate::engine::MoveAssessment> {
+        use crate::engine::{MoveAssessment, assess_move};
+        let index = ply.checked_sub(1)?;
+        let entry = self.game.history.get(index)?;
+        let assessment = self.scores[index]
+            .zip(self.scores[ply])
+            .map(|(before, after)| assess_move(before, after, entry.mover));
+        // A newly discovered forced loss takes priority over an earlier best-move result.
+        if assessment == Some(MoveAssessment::AllowsMate) {
+            assessment
+        } else if self.bests[index] == Some(entry.mv) {
+            Some(MoveAssessment::Centipawns(0))
+        } else {
+            assessment
+        }
+    }
+    pub fn mistake_plies(&self) -> Vec<usize> {
+        (1..=self.game.history.len())
+            .filter(|&ply| self.assessment(ply).is_some_and(|a| a.is_mistake()))
+            .collect()
     }
 }
 pub fn rule_score(game: &Game, ply: usize) -> Option<Score> {
@@ -92,13 +145,18 @@ pub fn rule_score(game: &Game, ply: usize) -> Option<Score> {
         Outcome::Playing => None,
     }
 }
-pub const ANALYSIS_LIMITS: (u32, u64) = (12, 3000);
+pub const ANALYSIS_LIMITS: (u32, u64) = (crate::game::LEVELS[4].depth, crate::game::LEVELS[4].ms);
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AnalysisDetails {
     pub line: Vec<String>,
     pub elapsed_ms: u64,
     pub budget_ms: u64,
     pub requested_depth: u32,
+}
+impl AnalysisDetails {
+    pub fn current(&self) -> bool {
+        self.requested_depth == ANALYSIS_LIMITS.0 && self.budget_ms == ANALYSIS_LIMITS.1
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CachedPosition {
@@ -109,6 +167,10 @@ pub struct CachedPosition {
     pub details: Option<AnalysisDetails>,
 }
 impl CachedPosition {
+    pub fn supersedes(&self, old: &Self) -> bool {
+        self.depth > old.depth
+            || (self.depth == old.depth && (self.details.is_some() || old.details.is_none()))
+    }
     pub fn valid_for(&self, game: &Game, ply: usize) -> bool {
         if !self.score.is_valid() || self.depth > 64 {
             return false;
@@ -150,7 +212,10 @@ pub struct CachedReview {
 }
 pub fn key(game: &Game) -> String {
     let mut hash = Sha256::new();
-    hash.update(b"review-v2\0");
+    hash.update(b"review-v3\0");
+    hash.update(crate::game::RULESET);
+    hash.update(ANALYSIS_LIMITS.0.to_le_bytes());
+    hash.update(ANALYSIS_LIMITS.1.to_le_bytes());
     hash.update(game.start.fen());
     for e in &game.history {
         hash.update(e.mv.to_string());
@@ -198,6 +263,22 @@ pub fn chart_samples(scores: &[Option<Score>], columns: usize) -> Vec<(usize, Op
         }
     }
     indices.into_iter().map(|i| (i, scores[i])).collect()
+}
+
+/// Keep marked moves on the actual polyline even when long games are downsampled.
+pub fn marked_chart_samples(
+    scores: &[Option<Score>],
+    columns: usize,
+    markers: &[usize],
+) -> Vec<(usize, Option<Score>)> {
+    let mut points: std::collections::BTreeMap<_, _> =
+        chart_samples(scores, columns).into_iter().collect();
+    for &ply in markers {
+        if let Some(&score) = scores.get(ply) {
+            points.insert(ply, score);
+        }
+    }
+    points.into_iter().collect()
 }
 #[cfg(test)]
 mod tests {

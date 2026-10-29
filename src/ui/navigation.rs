@@ -1,6 +1,29 @@
 use super::*;
 impl App {
     pub(super) fn open_modal(&mut self, m: Modal) {
+        self.delete_targets = match &m {
+            Modal::Delete(id) => self
+                .data
+                .archives
+                .iter()
+                .chain(&self.data.drafts)
+                .filter(|r| &r.id == id)
+                .map(|r| (r.id.clone(), r.version_token.clone()))
+                .collect(),
+            Modal::Clear => self
+                .data
+                .archives
+                .iter()
+                .map(|r| (r.id.clone(), r.version_token.clone()))
+                .collect(),
+            Modal::ClearDrafts => self
+                .data
+                .drafts
+                .iter()
+                .map(|r| (r.id.clone(), r.version_token.clone()))
+                .collect(),
+            _ => Vec::new(),
+        };
         self.redraw = true;
         self.accessible.clear();
         if self.name_keyboard {
@@ -8,7 +31,7 @@ impl App {
             macroquad::miniquad::window::show_keyboard(false);
             self.name_keyboard = false;
         }
-        if matches!(m, Modal::Rename(..)) {
+        if matches!(m, Modal::Rename(..) | Modal::Search(..)) {
             if let Modal::Rename(id, _) = &m {
                 self.rename_revision = self
                     .data

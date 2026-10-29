@@ -10,6 +10,10 @@
 extern "C" {
 #endif
 
+/// Reap the previous thread and all callbacks before installing a new receiver.
+__attribute__((visibility("default")))
+int sf_prepare(void);
+
 /// 启动引擎线程（运行 Stockfish::main，即原 main 收编版本）。
 /// on_line：引擎 stdout 行回调（UTF-8，malloc 分配，调用方用完须 sf_free）；
 /// on_exit：引擎线程结束回调（code = main 返回值；'quit' 后正常为 0）。

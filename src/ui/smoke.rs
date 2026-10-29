@@ -178,7 +178,8 @@ impl Smoke {
                 r.scores = [0, 20, 110, 70, -65, 160, 350]
                     .map(|cp| Some(Score::Cp(cp)))
                     .to_vec();
-                r.depths.fill(18);
+                r.depths.fill(crate::review::ANALYSIS_LIMITS.0);
+                r.attempted.fill(true);
                 for (i, entry) in r.game.history.iter().enumerate() {
                     r.bests[i] = Some(entry.mv);
                 }

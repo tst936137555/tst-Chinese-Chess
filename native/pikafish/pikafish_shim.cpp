@@ -139,6 +139,20 @@ void engineThreadMain() {
 extern "C" {
 
 __attribute__((visibility("default")))
+int sf_prepare(void) {
+  std::thread finished;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_thread.joinable()) {
+      if (!g_finished) return -1;
+      finished = std::move(g_thread);
+    }
+  }
+  if (finished.joinable()) finished.join();
+  return 0;
+}
+
+__attribute__((visibility("default")))
 int sf_start(void (*on_line)(const uint8_t*), void (*on_exit)(int32_t)) {
   std::lock_guard<std::mutex> lock(g_mutex);
   // 回收上一轮线程：正常结束后仍 joinable，直到本次回收；未结束（挂死）则拒绝

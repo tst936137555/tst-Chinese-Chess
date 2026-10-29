@@ -28,6 +28,11 @@ pub enum Command {
         revision: u64,
     },
     Remove(String),
+    RemoveChecked(Vec<(String, String)>),
+    Repair,
+    Export,
+    Backups,
+    ImportBackup(std::path::PathBuf),
     Clear,
     ClearDrafts,
     Activate(String),
@@ -63,6 +68,10 @@ impl Command {
                 | Self::Favorite(..)
                 | Self::SetFavorite { .. }
                 | Self::Remove(..)
+                | Self::RemoveChecked(..)
+                | Self::Repair
+                | Self::Export
+                | Self::ImportBackup(..)
                 | Self::Clear
                 | Self::ClearDrafts
                 | Self::Activate(..)
@@ -83,6 +92,8 @@ impl Command {
     }
 }
 pub enum Response {
+    Backups(Vec<std::path::PathBuf>),
+    Exported(std::path::PathBuf),
     Data(Box<Data>),
     Settings(Settings),
     Cache {
@@ -113,6 +124,10 @@ pub struct Worker {
     handle: Option<JoinHandle<()>>,
 }
 impl Worker {
+    /// Atomic replacement protects the library even if the process exits during IO.
+    pub fn detach_on_exit(&mut self) {
+        self.handle.take();
+    }
     pub fn new(store: Storage) -> Self {
         let (tx, requests) = mpsc::channel::<(u64, Command, Instant)>();
         let (events, rx) = mpsc::channel();
@@ -204,6 +219,13 @@ impl Worker {
                             revision,
                         } => store.set_favorite(id, *favorite, *revision)?,
                         Command::Remove(id) => store.remove_by_id(id)?,
+                        Command::RemoveChecked(targets) => store.remove_checked(targets)?,
+                        Command::Repair => store.repair()?,
+                        Command::Backups => return store.backups().map(Response::Backups),
+                        Command::ImportBackup(path) => store.import_backup(path)?,
+                        Command::Export => {
+                            return store.export_backup().map(Response::Exported);
+                        }
                         Command::Clear => store.update(|d| {
                             d.clear_archives();
                             Ok(())
@@ -307,7 +329,7 @@ fn merge_review(old: &mut CachedReview, new: &CachedReview) {
     }
     for (a, b) in old.entries.iter_mut().zip(&new.entries) {
         if let Some(b) = b
-            && a.as_ref().is_none_or(|a| b.depth >= a.depth)
+            && a.as_ref().is_none_or(|a| b.supersedes(a))
         {
             *a = Some(b.clone());
         }
@@ -431,7 +453,7 @@ fn cache_worker(
                     {
                         if review.entries[ply]
                             .as_ref()
-                            .is_none_or(|old| entry.depth >= old.depth)
+                            .is_none_or(|old| entry.supersedes(old))
                         {
                             review.entries[ply] = Some(entry);
                         }

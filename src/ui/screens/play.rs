@@ -163,7 +163,7 @@ impl App {
         let max = (total - text_width).max(0.);
         let mouse = self.pointer();
         if self.modal.is_none() && strip.contains(mouse) {
-            let wheel = mouse_wheel().1;
+            let wheel = self.wheel().1;
             if wheel != 0. {
                 self.move_follow = false;
                 self.move_scroll -= wheel * 45.;

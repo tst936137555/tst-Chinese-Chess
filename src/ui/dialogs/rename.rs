@@ -2,7 +2,7 @@ use super::*;
 impl App {
     pub(super) fn modal_rename(
         &mut self,
-        id: String,
+        id: Option<String>,
         mut edit: crate::text_input::NameEdit,
         compact_name: bool,
         x: f32,
@@ -12,9 +12,15 @@ impl App {
         if let Some((text, start, end)) = crate::text_input::take_native_edit() {
             edit.replace_native(text, start, end);
         }
-        let archived = self.data.archives.iter().any(|r| r.id == id);
+        let archived = self
+            .data
+            .archives
+            .iter()
+            .any(|r| Some(&r.id) == id.as_ref());
         self.center(
-            if archived {
+            if id.is_none() {
+                "查找棋谱"
+            } else if archived {
                 "棋谱名称"
             } else {
                 "对局名称"
@@ -194,7 +200,7 @@ impl App {
             edit.insert(&value);
         }
         for (i, label) in ["开局练习", "残局练习", "待续对局"].iter().enumerate() {
-            if compact_name {
+            if compact_name || id.is_none() {
                 break;
             }
             if self.button(
@@ -211,16 +217,29 @@ impl App {
                 edit = (*label).into();
             }
         }
-        self.modal = Some(Modal::Rename(id.clone(), edit.clone()));
+        self.modal = Some(match &id {
+            Some(id) => Modal::Rename(id.clone(), edit.clone()),
+            None => Modal::Search(edit.clone()),
+        });
         if self.button(
-            "保存名称",
+            if id.is_some() {
+                "保存名称"
+            } else {
+                "查找"
+            },
             Rect::new(x + w / 2. + 4., y + actions_y, (w - 56.) / 2., 48.),
             true,
             true,
         ) || (self.name_keyboard && is_key_pressed(KeyCode::Enter))
             || crate::text_input::take_native_done()
         {
-            self.enqueue(Command::Rename(id, edit.text, self.rename_revision));
+            if let Some(id) = id {
+                self.enqueue(Command::Rename(id, edit.text, self.rename_revision));
+            } else {
+                self.archive_query = edit.text.trim().to_owned();
+                self.archive_dirty = true;
+                self.scroll = 0.;
+            }
             self.finish_rename();
         }
         if self.button(

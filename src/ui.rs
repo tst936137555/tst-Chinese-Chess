@@ -61,6 +61,10 @@ enum PageState {
     Review(Box<Review>),
 }
 enum Modal {
+    ReviewMoves(usize),
+    Search(crate::text_input::NameEdit),
+    Backups(Vec<std::path::PathBuf>),
+    ImportBackup(std::path::PathBuf),
     Difficulty,
     Side(Option<Box<Game>>),
     Drafts(usize),
@@ -104,6 +108,7 @@ struct App {
     name_keyboard: bool,
     rename_return: Option<usize>,
     rename_revision: u64,
+    delete_targets: Vec<(String, String)>,
     board_cursor: Option<Square>,
     observed_controls: Vec<(String, Rect)>,
     observed_at: f64,
@@ -142,6 +147,7 @@ struct App {
     archive_order: Vec<usize>,
     archive_dirty: bool,
     archive_favorites: bool,
+    archive_query: String,
     legal_key: String,
     legal_cache: Vec<Move>,
     text_cache: std::collections::HashMap<String, Vec<String>>,

@@ -49,7 +49,12 @@ pub async fn run() {
                 }
             }
             #[cfg(not(target_os = "android"))]
-            break;
+            {
+                if app.close == crate::session::CloseState::Forced {
+                    app.io.detach_on_exit();
+                }
+                break;
+            }
         }
         if app.close.waiting() && !app.saves.failed.is_empty() {
             app.close.cancel();
@@ -129,6 +134,14 @@ pub async fn run() {
                 crate::accessibility::ControlAction::Click(id)
                 | crate::accessibility::ControlAction::Focus(id) => id,
             };
+            if crate::platform::observation_path().is_some() {
+                app.observed_release["actionId"] = id.into();
+                app.observed_release["actionMatched"] = app
+                    .accessible
+                    .iter()
+                    .any(|e| e.id == id && !e.disabled)
+                    .into();
+            }
             if let Some(element) = app.accessible.iter().find(|e| e.id == id && !e.disabled) {
                 let [x, y, w, h] = element.rect;
                 let point = crate::interaction::map_point(
@@ -143,6 +156,9 @@ pub async fn run() {
                 );
                 match action {
                     crate::accessibility::ControlAction::Click(_) if element.actionable => {
+                        if crate::platform::observation_path().is_some() {
+                            app.observed_release = serde_json::json!({"uia":element.label,"point":point,"canvas":[app.width,app.height]});
+                        }
                         app.click = Some(vec2(point[0], point[1]))
                     }
                     crate::accessibility::ControlAction::Focus(_) => {
@@ -191,7 +207,7 @@ pub async fn run() {
             || mouse_wheel() != (0., 0.);
         let paint = !crate::platform::suspended()
             && (smoke.is_some()
-                || (matches!(app.modal, Some(Modal::Rename(..)))
+                || (matches!(app.modal, Some(Modal::Rename(..) | Modal::Search(..)))
                     && crate::text_input::has_native_input())
                 || app.redraw
                 || input_changed
@@ -206,7 +222,9 @@ pub async fn run() {
         let mut scene_cpu_ms = 0.;
         if paint {
             let draw_started = std::time::Instant::now();
-            app.redraw = input_changed;
+            // OS accessibility clicks do not produce mouse/key input. Their handlers
+            // may change page/modal state after the underlying page was drawn.
+            app.redraw = input_changed || app.click.is_some();
             app.focus_count = 0;
             app.observed_controls.clear();
             app.accessible.clear();
@@ -287,7 +305,7 @@ pub async fn run() {
                 if matches!(app.modal, Some(Modal::End(_))) {
                     app.cancel();
                 }
-                if matches!(app.modal, Some(Modal::Rename(..))) {
+                if matches!(app.modal, Some(Modal::Rename(..) | Modal::Search(..))) {
                     app.finish_rename();
                 } else {
                     app.modal = None;
@@ -316,7 +334,7 @@ pub async fn run() {
             present_started.elapsed().as_secs_f64() * 1000.,
         );
         let summary = match &app.modal {
-            Some(Modal::Rename(_, edit)) => format!(
+            Some(Modal::Rename(_, edit) | Modal::Search(edit)) => format!(
                 "名称编辑：{}。已选中 {} 个字",
                 edit.text,
                 edit.selection().len()
@@ -418,7 +436,7 @@ pub async fn run() {
         {
             std::thread::sleep(std::time::Duration::from_millis(16));
         }
-        if app.name_keyboard && !matches!(app.modal, Some(Modal::Rename(..))) {
+        if app.name_keyboard && !matches!(app.modal, Some(Modal::Rename(..) | Modal::Search(..))) {
             macroquad::miniquad::window::show_keyboard(false);
             app.name_keyboard = false;
         }

@@ -10,7 +10,7 @@ impl App {
             true,
             true,
         ) {
-            self.enqueue(Command::ClearDrafts);
+            self.enqueue(Command::RemoveChecked(self.delete_targets.clone()));
             self.open_modal(Modal::Drafts(0));
         }
         if self.button(
@@ -51,10 +51,13 @@ impl App {
                 self.modal = Some(Modal::Drafts(0));
             }
         } else {
-            let pages = records.len().max(1).div_ceil(5);
+            let compact = self.height < 500.;
+            let rows = if compact { 2 } else { 5 };
+            let step = if compact { 76. } else { 73. };
+            let pages = records.len().max(1).div_ceil(rows);
             let page = page.min(pages - 1);
             self.modal = Some(Modal::Drafts(page));
-            for (i, r) in records.iter().skip(page * 5).take(5).enumerate() {
+            for (i, r) in records.iter().skip(page * rows).take(rows).enumerate() {
                 self.semantic_scope = format!("draft:{}", r.id);
                 let label = format!(
                     "{} · {} · {}步",
@@ -65,7 +68,7 @@ impl App {
                 if self.button_named(
                     "resume",
                     &label,
-                    Rect::new(x + 24., y + 80. + i as f32 * 73., w - 160., 40.),
+                    Rect::new(x + 24., y + 80. + i as f32 * step, w - 160., 40.),
                     false,
                     true,
                 ) {
@@ -83,14 +86,14 @@ impl App {
                         super::screens::date_label(r.updated_at)
                     ),
                     x + 28.,
-                    y + 139. + i as f32 * 73.,
+                    y + 150. + i as f32 * step,
                     w - 56.,
-                    13.,
+                    15.,
                     MUTED,
                 );
                 if self.button(
                     "命名",
-                    Rect::new(x + w - 128., y + 80. + i as f32 * 73., 50., 40.),
+                    Rect::new(x + w - 128., y + 80. + i as f32 * step, 50., 40.),
                     false,
                     true,
                 ) {
@@ -98,7 +101,7 @@ impl App {
                 }
                 if self.button(
                     "删除",
-                    Rect::new(x + w - 72., y + 80. + i as f32 * 73., 48., 40.),
+                    Rect::new(x + w - 72., y + 80. + i as f32 * step, 48., 40.),
                     false,
                     self.data.active.as_ref().is_none_or(|a| a.id != r.id),
                 ) {
@@ -108,7 +111,12 @@ impl App {
             self.semantic_scope.clear();
             if self.button(
                 "清理旧对局",
-                Rect::new(x + 24., y + 510., w - 48., 36.),
+                Rect::new(
+                    x + 24.,
+                    y + if compact { 286. } else { 510. },
+                    if compact { (w - 56.) / 2. } else { w - 48. },
+                    40.,
+                ),
                 false,
                 !self.data.drafts.is_empty(),
             ) {
@@ -116,7 +124,12 @@ impl App {
             }
             if self.button(
                 "上一页",
-                Rect::new(x + 24., y + 460., (w - 56.) / 2., 40.),
+                Rect::new(
+                    x + 24.,
+                    y + if compact { 236. } else { 460. },
+                    (w - 56.) / 2.,
+                    40.,
+                ),
                 false,
                 page > 0,
             ) {
@@ -124,7 +137,12 @@ impl App {
             }
             if self.button(
                 "下一页",
-                Rect::new(x + w / 2. + 4., y + 460., (w - 56.) / 2., 40.),
+                Rect::new(
+                    x + w / 2. + 4.,
+                    y + if compact { 236. } else { 460. },
+                    (w - 56.) / 2.,
+                    40.,
+                ),
                 false,
                 page + 1 < pages,
             ) {
@@ -132,7 +150,12 @@ impl App {
             }
             if self.button(
                 "取消",
-                Rect::new(x + 24., y + 556., w - 48., 36.),
+                Rect::new(
+                    if compact { x + w / 2. + 4. } else { x + 24. },
+                    y + if compact { 286. } else { 556. },
+                    if compact { (w - 56.) / 2. } else { w - 48. },
+                    40.,
+                ),
                 false,
                 true,
             ) {
@@ -150,7 +173,7 @@ impl App {
             true,
             true,
         ) {
-            self.enqueue(Command::Remove(id));
+            self.enqueue(Command::RemoveChecked(self.delete_targets.clone()));
             self.modal = None;
         }
         if self.button(
@@ -178,7 +201,7 @@ impl App {
             true,
             true,
         ) {
-            self.enqueue(Command::Clear);
+            self.enqueue(Command::RemoveChecked(self.delete_targets.clone()));
             self.modal = None;
         }
         if self.button(

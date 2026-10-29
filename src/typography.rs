@@ -188,6 +188,24 @@ pub fn ellipsize(text: &str, max_width: f32, measure: impl Fn(&str) -> f32) -> S
     format!("{}…", &text[..boundaries[low]])
 }
 
+/// Wrap without dropping UTF-8 characters. The caller reserves the line height.
+pub fn wrap_text(text: &str, max_width: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        for ch in paragraph.chars() {
+            let mut next = line.clone();
+            next.push(ch);
+            if !line.is_empty() && measure(&next) > max_width {
+                lines.push(std::mem::take(&mut line));
+            }
+            line.push(ch);
+        }
+        lines.push(line);
+    }
+    lines
+}
+
 pub fn fallback_text(text: &str, supported: impl Fn(char) -> bool) -> std::borrow::Cow<'_, str> {
     if text.chars().all(|c| c.is_control() || supported(c)) {
         return std::borrow::Cow::Borrowed(text);

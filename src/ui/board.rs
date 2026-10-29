@@ -37,7 +37,11 @@ impl App {
     }
     pub(super) fn board(&mut self, board: &Board, last: Option<Move>, interactive: bool) {
         let (origin, cell) = self.board_rect();
-        let flip = !self.settings.user_red;
+        let flip = if self.screen == Screen::Review {
+            self.review.as_ref().is_some_and(|r| r.flipped)
+        } else {
+            !self.settings.user_red
+        };
         for rank in 0..10 {
             for file in 0..9 {
                 let square = Square::new(file, rank).unwrap();
@@ -85,9 +89,7 @@ impl App {
         let mut hints = self.hints.clone();
         if self.screen == Screen::Review
             && let Some(r) = &self.review
-            && r.ply > 0
-            && let Some(m) = r.bests[r.ply - 1]
-            && r.game.history[r.ply - 1].mv != m
+            && let Some(m) = r.bests[r.ply]
         {
             hints.push(m);
         }
@@ -146,30 +148,12 @@ impl App {
         if self.screen == Screen::Review
             && let Some(r) = &self.review
             && r.ply > 0
-            && let (Some(before), Some(after)) = (r.scores[r.ply - 1], r.scores[r.ply])
+            && let Some(assessment) = r.assessment(r.ply)
         {
             let e = &r.game.history[r.ply - 1];
-            let q = if r.bests[r.ply - 1] == Some(e.mv) {
-                "优秀"
-            } else {
-                crate::engine::assess_move(before, after, e.mover).label()
-            };
             let p = Self::point(origin, cell, e.mv.to, flip) + vec2(cell * 0.3, -cell * 0.3);
             draw_circle(p.x, p.y, 10., RED_INK);
-            self.center(
-                match q {
-                    "优秀" => "优",
-                    "良好" => "良",
-                    "平庸" => "平",
-                    "较差" => "差",
-                    "错招" => "错",
-                    _ => "析",
-                },
-                p.x,
-                p.y,
-                14.,
-                PAPER,
-            );
+            self.center(assessment.badge(), p.x, p.y, 14., PAPER);
         }
         if let Some(s) = self.selected {
             let p = Self::point(origin, cell, s, flip);

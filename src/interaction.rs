@@ -1,5 +1,14 @@
 //! Coordinate and hit-area rules shared by pointer and keyboard interaction.
 use crate::rules::Square;
+pub fn wheel_delta(raw: f32, windows: bool) -> f32 {
+    if !raw.is_finite() {
+        return 0.;
+    }
+    if windows { raw / 120. } else { raw }
+}
+pub fn wheel_volume(volume: f32, delta: f32) -> f32 {
+    (volume + delta * 0.05).clamp(0., 1.)
+}
 pub struct Scrollbar {
     pub thumb_offset: f32,
     pub thumb_height: f32,

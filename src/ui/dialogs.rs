@@ -11,18 +11,51 @@ impl App {
         let Some(modal) = self.modal.take() else {
             return;
         };
-        if self.landscape() && matches!(modal, Modal::Audio) {
-            self.wide_audio();
+        if self.viewport.w / self.viewport.h >= 1.35
+            && matches!(modal, Modal::Audio | Modal::Difficulty)
+        {
+            let old = (self.width, self.height);
+            let new = super::layout::canvas_size(self.viewport.w, self.viewport.h, true);
+            let scale = new.1 / old.1;
+            (self.width, self.height) = new;
+            self.click = self.click.map(|p| p * scale);
+            if let Some((p, id)) = self.drag.take() {
+                self.drag = Some((p * scale, id));
+            }
+            self.camera();
+            if matches!(modal, Modal::Audio) {
+                self.wide_audio();
+            } else {
+                self.wide_difficulty();
+            }
+            (self.width, self.height) = old;
+            self.click = self.click.map(|p| p / scale);
+            if let Some((p, id)) = self.drag.take() {
+                self.drag = Some((p / scale, id));
+            }
+            self.camera();
             return;
         }
         let old_canvas = (self.width, self.height);
-        let compact_name = matches!(modal, Modal::Rename(..)) && self.viewport.h < 380.;
+        let compact_name =
+            matches!(modal, Modal::Rename(..) | Modal::Search(..)) && self.viewport.h < 380.;
         let required_height: f32 = match &modal {
-            Modal::Side(_) => 460.,
+            Modal::Drafts(_)
+            | Modal::Backups(_)
+            | Modal::ReviewMoves(_)
+            | Modal::Help
+            | Modal::About
+            | Modal::License(_)
+            | Modal::Variation(_)
+                if self.viewport.h < 500. =>
+            {
+                360.
+            }
+            Modal::Side(_) | Modal::ImportBackup(_) => 460.,
             Modal::End(_) => 540.,
             Modal::SaveFailed => 500.,
             Modal::StorageRecovery => 500.,
-            Modal::Rename(..) => {
+            Modal::Rename(..) | Modal::Search(..) => {
                 if compact_name {
                     240.
                 } else {
@@ -52,11 +85,22 @@ impl App {
         let w = (self.width - 40.).min(480.);
         let x = (self.width - w) / 2.;
         let modal_height = match &modal {
-            Modal::Side(_) => 380.,
+            Modal::Drafts(_)
+            | Modal::Backups(_)
+            | Modal::ReviewMoves(_)
+            | Modal::Help
+            | Modal::About
+            | Modal::License(_)
+            | Modal::Variation(_)
+                if self.height < 500. =>
+            {
+                self.height - 32.
+            }
+            Modal::Side(_) | Modal::ImportBackup(_) => 380.,
             Modal::End(_) => 460.,
             Modal::SaveFailed => 420.,
             Modal::StorageRecovery => 420.,
-            Modal::Rename(..) => {
+            Modal::Rename(..) | Modal::Search(..) => {
                 if compact_name {
                     212.
                 } else {
@@ -73,8 +117,12 @@ impl App {
         let y = (self.height - modal_height) / 2.;
         self.card(Rect::new(x, y, w, modal_height));
         match modal {
+            Modal::Backups(paths) => self.modal_backups(paths, x, y, w),
+            Modal::ImportBackup(path) => self.modal_import_backup(path, x, y, w),
             Modal::ClearDrafts => self.modal_clear_drafts(x, y, w),
-            Modal::Rename(id, edit) => self.modal_rename(id, edit, compact_name, x, y, w),
+            Modal::Rename(id, edit) => self.modal_rename(Some(id), edit, compact_name, x, y, w),
+            Modal::Search(edit) => self.modal_rename(None, edit, compact_name, x, y, w),
+            Modal::ReviewMoves(page) => self.modal_review_moves(page, x, y, w),
             Modal::Audio => self.modal_audio(x, y, w),
             Modal::Variation(text) => self.modal_variation(text, x, y, w),
             Modal::SaveFailed => self.modal_save_failed(x, y, w),

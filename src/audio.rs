@@ -18,10 +18,13 @@ pub struct AudioBank {
     loading: std::sync::mpsc::Receiver<AudioAsset>,
     loading_started: std::time::Instant,
     loading_complete: bool,
+    pending_effects: usize,
+    music_start: Option<std::sync::mpsc::Sender<()>>,
 }
 impl AudioBank {
     pub async fn load() -> Self {
         let (tx, loading) = std::sync::mpsc::sync_channel(2);
+        let (music_start, music_gate) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             for kind in 0..6 {
                 let mono = effect_samples(kind);
@@ -39,7 +42,9 @@ impl AudioBank {
                     }
                 }
             }
-            let _ = tx.send((None, wav(&music_samples())));
+            if music_gate.recv().is_ok() {
+                let _ = tx.send((None, wav(&music_samples())));
+            }
         });
         Self {
             music: None,
@@ -53,6 +58,8 @@ impl AudioBank {
             loading,
             loading_started: std::time::Instant::now(),
             loading_complete: false,
+            pending_effects: 30,
+            music_start: Some(music_start),
         }
     }
     pub async fn prepare(&mut self) {
@@ -63,6 +70,7 @@ impl AudioBank {
             Ok(asset) => asset,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.loading_complete = true;
+                self.pending_effects = 0;
                 return;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
@@ -81,6 +89,7 @@ impl AudioBank {
             };
             if let Some((kind, index)) = target {
                 self.effects[kind][index] = sound;
+                self.pending_effects = self.pending_effects.saturating_sub(1);
             } else {
                 self.loading_complete = true;
                 self.music = sound;
@@ -107,11 +116,22 @@ impl AudioBank {
         } else {
             0.
         };
-        !self.loading_complete || (self.current - target).abs() > 0.001 || now < self.duck_until
+        self.pending_effects > 0
+            || (!self.loading_complete && self.music_start.is_none())
+            || (self.current - target).abs() > 0.001
+            || now < self.duck_until
     }
     pub fn tick(&mut self, s: &Settings, dt: f32, now: f64) {
         if crate::platform::suspended() {
             return;
+        }
+        if s.sound
+            && s.music_enabled
+            && s.music_volume > 0.
+            && let Some(start) = self.music_start.take()
+        {
+            self.loading_started = std::time::Instant::now();
+            let _ = start.send(());
         }
         if let Some(music) = &self.music {
             let audible = s.sound && s.music_enabled && s.music_volume > 0.;

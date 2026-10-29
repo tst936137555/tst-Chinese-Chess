@@ -80,6 +80,16 @@ impl App {
             let track_w = w - 216.;
             let track = Rect::new(track_x - 8., row + 87., track_w + 16., 36.);
             let pointer = self.pointer();
+            let wheel = self.wheel().1;
+            if track.contains(pointer) && wheel != 0. {
+                let value = crate::interaction::wheel_volume(volume, wheel);
+                if i == 0 {
+                    self.settings.music_volume = value;
+                } else {
+                    self.settings.effects_volume = value;
+                }
+                changed = true;
+            }
             let dragging = is_mouse_button_down(MouseButton::Left)
                 && self
                     .drag
@@ -227,6 +237,17 @@ impl App {
             let tw = cw - 48.;
             let ty = cy + 177.;
             let hit = Rect::new(tx - 8., ty - 22., tw + 16., 44.);
+            let pointer = self.pointer();
+            let wheel = self.wheel().1;
+            if hit.contains(pointer) && wheel != 0. {
+                let value = crate::interaction::wheel_volume(volume, wheel);
+                if i == 0 {
+                    self.settings.music_volume = value;
+                } else {
+                    self.settings.effects_volume = value;
+                }
+                changed = true;
+            }
             let dragging = is_mouse_button_down(MouseButton::Left)
                 && self
                     .drag

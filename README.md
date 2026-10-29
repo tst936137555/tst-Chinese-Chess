@@ -23,6 +23,8 @@
 
 桌面以 1080p 为初始清晰度基准，按 DPI 自动提高；移动端将额外超采样限制在原生像素量的 2.25 倍内。持续帧耗时过高时自动降低内部画布，稳定恢复后再提高，保留设备与显存余量，不增加分辨率选项。棋盘和棋子按密度缓存，静止页面降低绘制频率，长复盘曲线按像素保留极值并缓存；后台任务与输入仍持续处理。
 
+棋谱页提供查找、备份导出和合并恢复。自动快照与手动导出位于数据目录的 `backups/`；自动保留最近八个有变更小时的快照，手动导出独立保留。损坏棋谱库可显式隔离坏局并保留原始文件及恢复报告；无法解析的 JSON 可恢复原备份。完整导出备份也可通过 `--import <备份路径>` 在其他设备合并导入。复盘可打开分页着法列表、跳转失误、独立翻转棋盘及重新分析。
+
 ## Windows
 
 安装 [Rust](https://rustup.rs/) 和 Visual Studio C++ Build Tools（MSVC），首次获取引擎需要网络与 7-Zip：
@@ -40,10 +42,10 @@ cargo +1.99.1-x86_64-pc-windows-gnu run --release --locked
 ./tool/package_windows_rust.ps1 -Toolchain 1.99.1-x86_64-pc-windows-gnu
 ```
 
-完整便携包输出 `dist/tst-xiangqi-2.1.0-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
+完整便携包输出 `dist/tst-xiangqi-2.1.1-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
 
 ```text
-tst-xiangqi-2.1.0-windows/
+tst-xiangqi-2.1.1-windows/
 ├── tst-xiangqi.exe
 ├── assets/
 │   ├── engine/       # 皮卡鱼引擎与 NNUE 权重
@@ -107,7 +109,7 @@ cargo run --release -- --import "C:/path/to/game_archive.json"
 
 导入旧 JSON 棋谱时逐步重放验证走法，重建局面和记谱，去重并保留原文件。旧 SharedPreferences 的偏好和未结束对局尚不自动迁移；不会跨移动端沙盒读取旧应用数据。
 
-项目当前版本为 Rust 2.1.0。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
+项目当前版本为 Rust 2.1.1。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
 
 ## 验证
 
@@ -209,6 +211,8 @@ python tool/subset_font.py --input assets/fonts/LXGWWenKai-Medium.ttf
 
 版本 2.0.3 增加逐局语义验证、导入容量事务保护、复盘缓存单调合并、收藏目标状态修订、独立设置恢复及退出状态机。schema 6 记录 simplified-v1 裁决版本；长期删除身份使用有界明细和时间屏障压缩，未知旧窗口身份需另存新分支，显式导入仍保留容量与重复检查。正式签名与发布流程见 [发布说明](docs/RELEASE.md)，第三方本地补丁见 [维护清单](docs/VENDOR_PATCHES.md)。
 
+
+v2.1.1 优化复盘红黑优势走势与失误标记，陷入杀棋显示错招角标；改善按钮、长文字与短横屏布局，支持音量条滚轮调整。分析和提示统一使用最高难度参数，对弈难度与步时保持不变。
 
 v2.1.0 修复缺失主存档与设置备份恢复、过期命名重试、Android JNI 引用存活期及 Windows 小数 DPI 尺寸损失。schema 7 增加独立名称修订号。续局与打开复盘采用后台重放，语义缓存独立校验元数据；复盘支持「参考变化」与实际分析依据。旧收藏兼容接口最多新增 4096 个去重凭证，既有重试保留，当前界面使用的带修订号操作不受影响。首次故障在数据目录的 diagnostics/ 内保留脱敏摘要并轮换一份旧报告。Android 只在对弈与复盘分析时保持亮屏。
 

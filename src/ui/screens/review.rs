@@ -72,12 +72,8 @@ impl App {
                     ));
                 }
                 let text = format!(
-                    "{}\n实际深度 {} / 请求 {}\n用时 {} ms / 预算 {} ms\n\n{}\n\n变化展示当前引擎的主要预测，实际应手可随局面改变。",
+                    "{}\n\n{}",
                     r.scores[ply].map_or_else(|| "待分析".into(), Score::label),
-                    r.depths[ply],
-                    details.requested_depth,
-                    details.elapsed_ms,
-                    details.budget_ms,
                     words.join("\n")
                 );
                 self.open_modal(Modal::Variation(text));
@@ -107,21 +103,16 @@ impl App {
         let mut detail = "点击走势可跳转到任意一步".to_owned();
         if ply > 0 {
             let e = &r.game.history[ply - 1];
-            let quality = if r.bests[ply - 1] == Some(e.mv) {
-                Some("优秀")
-            } else {
-                r.scores[ply - 1]
-                    .zip(r.scores[ply])
-                    .map(|(a, b)| crate::engine::assess_move(a, b, e.mover).label())
-            };
+            let assessment = r.assessment(ply);
+            let quality = assessment.map(|a| a.label());
             detail = quality.map_or_else(
                 || "着法评价将在分析后显示".into(),
                 |q| format!("按当前分析：{q}"),
             );
             if let Some(m) = r.bests[ply - 1] {
-                if m == e.mv {
+                if m == e.mv && assessment != Some(crate::engine::MoveAssessment::AllowsMate) {
                     detail.push_str(" · 最佳走法");
-                } else {
+                } else if m != e.mv {
                     detail.push_str(&format!(
                         " · 建议 {}",
                         crate::notation::chinese(r.game.at_ply(ply - 1).unwrap(), m)
@@ -142,7 +133,7 @@ impl App {
             );
         }
         let r = self.review.as_ref().unwrap();
-        let done = r.scores.iter().filter(|s| s.is_some()).count();
+        let done = (0..r.scores.len()).filter(|&i| r.complete(i)).count();
         let score = r.scores[ply].map_or_else(|| "局势待分析".into(), Score::label);
         let progress_y = if split && self.height < 560. {
             220.
@@ -264,14 +255,11 @@ impl App {
     pub(in crate::ui) fn draw_review_chart(&mut self, chart: Rect) {
         self.card(chart);
         self.text("局势走势", chart.x + 12., chart.y + 23., 15., INK);
-        self.fit_text(
-            "红优 / 黑优",
-            chart.x + chart.w - 102.,
-            chart.y + 23.,
-            92.,
-            13.,
-            MUTED,
-        );
+        for (offset, label, color) in [(108., "红优", RED_INK), (54., "黑优", BLACK)] {
+            let x = chart.x + chart.w - offset;
+            draw_line(x, chart.y + 19., x + 12., chart.y + 19., 2.5, color);
+            self.text(label, x + 17., chart.y + 23., 13., color);
+        }
         let plot = Rect::new(
             chart.x + 14.,
             chart.y + 34.,
@@ -280,12 +268,14 @@ impl App {
         );
         let r = self.review.as_mut().unwrap();
         let columns = plot.w.ceil().max(1.) as usize;
-        if r.chart_cache.0 != r.score_version || r.chart_cache.1 != columns {
-            r.chart_cache = (
-                r.score_version,
+        if r.chart_cache.version != r.score_version || r.chart_cache.columns != columns {
+            let mistakes = r.mistake_plies();
+            r.chart_cache = crate::review::ChartCache {
+                version: r.score_version,
                 columns,
-                crate::review::chart_samples(&r.scores, columns),
-            );
+                points: crate::review::marked_chart_samples(&r.scores, columns, &mistakes),
+                mistakes,
+            };
         }
         let r = self.review.as_ref().unwrap();
         let n = r.game.history.len();
@@ -307,31 +297,51 @@ impl App {
                 middle - (cp as f32 / 600.).tanh() * plot.h * 0.44,
             )
         };
-        for pair in r.chart_cache.2.windows(2) {
+        let advantage_color = |y: f32| {
+            if y < middle {
+                RED_INK
+            } else if y > middle {
+                BLACK
+            } else {
+                MUTED
+            }
+        };
+        let segment = |a: Vec2, b: Vec2| {
+            let color = advantage_color((a.y + b.y) / 2.);
+            let fill = Color::new(color.r, color.g, color.b, 0.08);
+            draw_triangle(vec2(a.x, middle), a, b, fill);
+            draw_triangle(vec2(a.x, middle), b, vec2(b.x, middle), fill);
+            draw_line(a.x, a.y, b.x, b.y, 2.5, color);
+        };
+        for pair in r.chart_cache.points.windows(2) {
             if let (Some(a), Some(b)) = (pair[0].1, pair[1].1) {
                 let a = point(pair[0].0, a.value());
                 let b = point(pair[1].0, b.value());
-                draw_triangle(
-                    vec2(a.x, middle),
-                    a,
-                    b,
-                    Color::new(JADE.r, JADE.g, JADE.b, 0.09),
-                );
-                draw_triangle(
-                    vec2(a.x, middle),
-                    b,
-                    vec2(b.x, middle),
-                    Color::new(JADE.r, JADE.g, JADE.b, 0.09),
-                );
-                draw_line(a.x, a.y, b.x, b.y, 2.5, JADE);
+                if (a.y < middle && b.y > middle) || (a.y > middle && b.y < middle) {
+                    let crossing = vec2(a.x + (b.x - a.x) * (middle - a.y) / (b.y - a.y), middle);
+                    segment(a, crossing);
+                    segment(crossing, b);
+                } else {
+                    segment(a, b);
+                }
             }
         }
         let cursor = plot.x + r.ply as f32 / n.max(1) as f32 * plot.w;
         draw_line(cursor, plot.y, cursor, plot.y + plot.h, 1.5, GOLD);
+        for &ply in &r.chart_cache.mistakes {
+            if let Some(score) = r.scores[ply] {
+                let p = point(ply, score.value());
+                draw_circle(p.x, p.y, 4.5, SURFACE);
+                draw_circle(p.x, p.y, 3., RED_INK);
+            }
+        }
         if let Some(score) = r.scores[r.ply] {
             let p = point(r.ply, score.value());
-            draw_circle(p.x, p.y, 5., SURFACE);
-            draw_circle(p.x, p.y, 3.5, JADE);
+            draw_circle_lines(p.x, p.y, 6., 1.5, GOLD);
+            if !r.chart_cache.mistakes.contains(&r.ply) {
+                draw_circle(p.x, p.y, 4.5, SURFACE);
+                draw_circle(p.x, p.y, 3., advantage_color(p.y));
+            }
         }
         if r.scores.iter().all(Option::is_none) {
             self.center(

@@ -97,7 +97,7 @@ impl MoveAssessment {
         match self {
             Self::Centipawns(loss) => crate::game::move_quality(loss, false),
             Self::MissedMate => "错失杀棋",
-            Self::AllowsMate => "陷入杀棋",
+            Self::AllowsMate => "错招",
             Self::EscapedMate => "化解杀棋",
             Self::FoundMate => "找到杀棋",
             Self::MateContinuation => "杀棋延续",
@@ -112,6 +112,10 @@ impl MoveAssessment {
             "错招" | "错失杀棋" | "陷入杀棋" => "错",
             _ => "杀",
         }
+    }
+    pub fn is_mistake(self) -> bool {
+        matches!(self, Self::Centipawns(loss) if loss >= 250)
+            || matches!(self, Self::MissedMate | Self::AllowsMate)
     }
 }
 pub fn assess_move(before: Score, after: Score, mover: Side) -> MoveAssessment {

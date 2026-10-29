@@ -40,6 +40,85 @@ impl Profile {
             return;
         }
         match self.scene.as_str() {
+            "review-tactics" | "review-tactics-portrait" => {
+                let portrait = self.scene.ends_with("portrait");
+                request_new_screen_size(
+                    if portrait { 390. } else { 1100. },
+                    if portrait { 844. } else { 800. },
+                );
+                let mut game = Game::default();
+                for mv in ["h2e2", "h7e7", "b0c2", "b9c7", "a3a4", "a6a5"] {
+                    game.play(mv.parse().unwrap()).unwrap();
+                }
+                let mut review = Review::new(game, true);
+                review.scores = [
+                    Score::Cp(0),
+                    Score::Cp(400),
+                    Score::Cp(700),
+                    Score::Cp(100),
+                    Score::Cp(-300),
+                    Score::Mate(-3),
+                    Score::Mate(-2),
+                ]
+                .map(Some)
+                .to_vec();
+                review.ply = 5;
+                review.analyzing = false;
+                review.cache_loading = false;
+                review.attempted.fill(true);
+                app.review = Some(review);
+                app.screen = Screen::Review;
+            }
+            "compact-drafts" | "compact-review" | "compact-help" | "wide-setup" | "wide-audio"
+            | "long-title" => {
+                request_new_screen_size(
+                    if self.scene == "long-title" {
+                        390.
+                    } else {
+                        844.
+                    },
+                    if self.scene == "long-title" {
+                        844.
+                    } else {
+                        320.
+                    },
+                );
+                match self.scene.as_str() {
+                    "compact-drafts" => {
+                        for _ in 0..4 {
+                            let mut r = Game::default().snapshot(true, 0, false);
+                            r.title = "春日残局练习与中炮对局复盘记录完整名称显示检查".into();
+                            app.data.drafts.push(r);
+                        }
+                        app.open_modal(Modal::Drafts(0));
+                    }
+                    "compact-review" => {
+                        let mut game = Game::default();
+                        for mv in ["h2e2", "h9g7", "h0g2", "b9c7"] {
+                            game.play(mv.parse().unwrap()).unwrap();
+                        }
+                        let mut review = Review::new(game, true);
+                        review.analyzing = false;
+                        review.cache_loading = false;
+                        app.review = Some(review);
+                        app.screen = Screen::Review;
+                        app.open_modal(Modal::ReviewMoves(0));
+                    }
+                    "compact-help" => app.open_modal(Modal::Help),
+                    "wide-setup" => app.open_modal(Modal::Difficulty),
+                    "wide-audio" => app.open_modal(Modal::Audio),
+                    "long-title" => {
+                        let mut game = Game::default();
+                        game.resign(Side::Red);
+                        let mut r = game.snapshot(true, 0, false);
+                        r.title = "春日残局练习与中炮对局复盘记录完整名称显示检查".into();
+                        app.data.archives.push(r);
+                        app.archive_dirty = true;
+                        app.screen = Screen::Archives;
+                    }
+                    _ => unreachable!(),
+                }
+            }
             "game" | "4k" => {
                 app.screen = Screen::Game;
                 if self.scene == "4k" {

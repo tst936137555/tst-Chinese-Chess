@@ -66,28 +66,48 @@ impl App {
                 }
             }
             Screen::Archives => {
-                if self.button("说明", Rect::new(right - 80., 18., 64., 42.), false, true) {
-                    self.open_modal(Modal::Help);
+                if self.button("备份", Rect::new(right - 80., 18., 64., 42.), false, true) {
+                    self.enqueue(Command::Backups);
                 }
             }
             Screen::Review => {
+                let action_width = ((hw - 178.) / 2.).clamp(88., 112.);
+                let action_right = right - 16.;
                 let can_continue = self
                     .review
                     .as_ref()
                     .is_some_and(|r| r.game.can_branch_at(r.ply));
                 if self.button(
                     "此处续下",
-                    Rect::new(right - 174., 18., 108., 42.),
+                    Rect::new(
+                        action_right - action_width * 2. - 10.,
+                        16.,
+                        action_width,
+                        46.,
+                    ),
                     false,
                     can_continue,
                 ) {
                     let r = self.review.as_ref().unwrap();
-                    if let Ok(b) = r.game.branch_at(r.ply) {
-                        self.open_modal(Modal::Side(Some(Box::new(b))));
+                    let record = r.game.snapshot(r.user_red, self.settings.level, true);
+                    match self.loader.branch(record, r.ply) {
+                        Ok(id) => {
+                            self.loading_record = Some(id);
+                            self.notice = "正在准备续下…".into();
+                        }
+                        Err(error) => self.notice = error,
                     }
                 }
-                if self.button("?", Rect::new(right - 58., 18., 42., 42.), false, true) {
-                    self.open_modal(Modal::Help);
+                if self.button(
+                    "棋谱",
+                    Rect::new(action_right - action_width, 16., action_width, 46.),
+                    false,
+                    true,
+                ) {
+                    let page = self.review.as_ref().map_or(0, |r| {
+                        r.ply.saturating_sub(1) / if self.viewport.h < 500. { 2 } else { 8 }
+                    });
+                    self.open_modal(Modal::ReviewMoves(page));
                 }
             }
         }

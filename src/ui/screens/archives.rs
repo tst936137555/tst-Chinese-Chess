@@ -5,6 +5,19 @@ impl App {
         if self.archive_dirty {
             self.archive_order = (0..self.data.archives.len())
                 .filter(|&i| !self.archive_favorites || self.data.archives[i].favorite)
+                .filter(|&i| {
+                    let r = &self.data.archives[i];
+                    let query = self.archive_query.to_lowercase();
+                    format!(
+                        "{} {} {} {}",
+                        r.title,
+                        date_label(r.time),
+                        r.result.label(),
+                        r.level_name
+                    )
+                    .to_lowercase()
+                    .contains(&query)
+                })
                 .collect();
             self.archive_order.sort_by_key(|&i| {
                 let r = &self.data.archives[i];
@@ -13,6 +26,18 @@ impl App {
             self.archive_dirty = false;
         }
         self.text("每一局，都值得回看", x + 2., 116., 24., INK);
+        if self.button(
+            if self.archive_query.is_empty() {
+                "查找"
+            } else {
+                "筛选中"
+            },
+            Rect::new(x + w - 108., 82., 108., 40.),
+            false,
+            true,
+        ) {
+            self.open_modal(Modal::Search(self.archive_query.clone().into()));
+        }
         self.fit_text(
             &format!(
                 "{} 局棋谱 · {} 局收藏",
@@ -27,7 +52,7 @@ impl App {
         );
         if self.button(
             "清空棋谱",
-            Rect::new(x + w - 108., 119., 108., 38.),
+            Rect::new(x + w - 108., 130., 108., 40.),
             false,
             !self.data.archives.is_empty(),
         ) {
@@ -72,7 +97,7 @@ impl App {
         let row_step = 124.;
         let max = (order.len() as f32 * row_step - 12. - viewport.h).max(0.);
         if self.modal.is_none() && viewport.contains(self.pointer()) {
-            self.scroll -= mouse_wheel().1 * 46.;
+            self.scroll -= self.wheel().1 * 46.;
         }
         self.scroll = self.scroll.clamp(0., max);
         if is_mouse_button_down(MouseButton::Left)

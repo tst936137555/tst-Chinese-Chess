@@ -387,10 +387,17 @@ impl Game {
         if ply > self.history.len() {
             return Err("续下步数无效".into());
         }
-        let mut g = Game::new(self.start.clone());
-        for entry in self.history.iter().take(ply) {
-            g.play(entry.mv)?;
-        }
+        let mut g = self.clone();
+        g.history.truncate(ply);
+        g.position_keys.truncate(ply + 1);
+        g.board = self.at_ply(ply).ok_or("续下步数无效")?.clone();
+        g.outcome = Outcome::Playing;
+        g.end_reason = None;
+        g.reason.clear();
+        g.finished_at = None;
+        g.fork_identity();
+        g.source = RecordSource::Native;
+        g.adjudicate();
         if g.outcome != Outcome::Playing {
             return Err("终局不能继续走棋".into());
         }
@@ -503,6 +510,17 @@ fn normal() -> String {
     "normal".into()
 }
 impl Record {
+    pub fn fork_identity(&mut self) {
+        self.id = new_id();
+        self.version_token = new_id();
+        self.lineage.clear();
+        self.revision = 0;
+        self.created_at = now_ms();
+        self.updated_at = self.created_at;
+        if self.finished_at.is_some() {
+            self.finished_at = Some(self.created_at);
+        }
+    }
     pub(crate) fn semantic_key(&self) -> [u8; 32] {
         Sha256::digest(
             serde_json::to_vec(&(

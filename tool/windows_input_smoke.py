@@ -73,8 +73,13 @@ def main():
             child=subprocess.Popen([str(binary)],env=env,stdout=log,stderr=subprocess.STDOUT)
         wait(read,lambda s:s.get("screen")=="home" and s.get("controls"))
         window=wait(lambda:hwnd(child.pid),lambda h:h is not None)
-        user.ShowWindow(window,9);user.SetForegroundWindow(window)
+        user.ShowWindow(window,4 if uia_only else 9)
+        if not uia_only:user.SetForegroundWindow(window)
         return child,window
+    uia_only="--uia-only" in sys.argv
+    if uia_only:
+        data_dir.mkdir(parents=True,exist_ok=True)
+        (data_dir/"state.json").write_text(json.dumps({"version":7,"settings":{},"active":{"time":1,"id":"native-ui-fixture","versionToken":"native-ui-fixture-v1","levelName":"入门","history":[{"uci":"h2e2"},{"uci":"h9g7"}]},"archives":[],"drafts":[]}),encoding="utf-8")
     child=None;locked=None
     try:
         child,window=launch()
@@ -89,48 +94,78 @@ def main():
             released=wait(read,lambda s:s.get("pointerDown") is False)
             print(json.dumps({"click":[x,y],"pointer":released.get("pointer"),"selectedSquare":released.get("selectedSquare"),"plies":released.get("plies")}),flush=True)
         def tap(label):
+            print("UIA invoke:",label,flush=True)
             time.sleep(.35)
             wait(read,lambda s:s.get("sceneStable",True) and any(c["label"]==label for c in s.get("controls",[])))
+            before=read().get("observedTime",0)
             subprocess.run([str(helper),str(child.pid),label,"invoke"],check=True,timeout=20,creationflags=0x08000000)
-            user.SetForegroundWindow(window)
+            if not uia_only:user.SetForegroundWindow(window)
+            wait(read,lambda s:s.get("observedTime",0)>before and (s.get("lastRelease") or {}).get("activatedLabel")==label)
         def focus(label):
             subprocess.run([str(helper),str(child.pid),label,"focus"],check=True,timeout=20,creationflags=0x08000000)
             user.SetForegroundWindow(window)
-        focus("开始新对局");time.sleep(.4);assert not read()["modal"],"UIA Focus invoked new game"
-        tap("开始新对局");tap("执红开始")
-        state=wait(read,lambda s:s["screen"]=="game" and not s["modal"] and s.get("sceneStable") and any(c["label"]=="结束对局" for c in s.get("controls",[])))
-        for file,rank in [(7,7),(4,7)]:
-            square=next(q for q in state["squares"] if (q["file"],q["rank"])==(file,rank));click(square["x"],square["y"],state);time.sleep(.2)
-        saved=wait(read,lambda s:s.get("plies",0)>=2 and s.get("saved") and not s.get("pending"),45)
-        # Deny atomic replacement of this isolated save, then recover through actual UI.
-        locked=kernel.CreateFileW(str(data_dir/"state.json"),0x80000000,1,None,3,0,None)
-        assert locked not in (None,ctypes.c_void_p(-1).value)
-        for file,rank in [(0,6),(0,5)]:
-            square=next(q for q in saved["squares"] if (q["file"],q["rank"])==(file,rank));click(square["x"],square["y"],saved);time.sleep(.2)
-        wait(read,lambda s:s.get("plies",0)>=4 and not s.get("pending") and s.get("pendingSaves",1)==0 and s.get("failedSaves",0)>0 and any(c["label"]=="处理保存" for c in s.get("controls",[])),45)
-        kernel.CloseHandle(locked);locked=None
-        tap("处理保存");tap("重试保存")
-        saved=wait(read,lambda s:s.get("saved") and not s.get("modal") and not s.get("pending"))
-        focus("结束对局");time.sleep(.4);assert not read()["modal"],"UIA Focus invoked end dialog"
-        focused=read();print(json.dumps({"focusedControl":focused.get("focusedControl"),"focusIndex":focused.get("keyboardFocus"),"plies":focused.get("plies")}),flush=True)
-        print(json.dumps({"targetWindow":window,"foregroundWindow":user.GetForegroundWindow()}),flush=True)
-        assert user.GetForegroundWindow()==window,"Test window is not receiving OS keyboard input"
-        press(13);wait(read,lambda s:s["modal"]);press(27);wait(read,lambda s:not s["modal"])
-        tap("返回");tap("开始新对局");tap("执红开始");wait(read,lambda s:s["screen"]=="game" and not s["modal"])
-        tap("返回");tap("继续未完成对局");tap("命名")
-        wait(read,lambda s:s.get("nameEdit") == "" and s.get("sceneStable"))
-        commit("中文残局")
-        wait(read,lambda s:s.get("nameEdit") == "中文残局")
-        press(13)
-        wait(lambda:json.loads((data_dir/"state.json").read_text(encoding="utf-8")),lambda d:any(r.get("title")=="中文残局" for r in [d.get("active")]+d.get("drafts",[]) if r))
+        if not uia_only:
+            focus("开始新对局");time.sleep(.4);assert not read()["modal"],"UIA Focus invoked new game"
+            tap("开始新对局");tap("执红开始")
+            state=wait(read,lambda s:s["screen"]=="game" and not s["modal"] and s.get("sceneStable") and any(c["label"]=="结束对局" for c in s.get("controls",[])))
+            for file,rank in [(7,7),(4,7)]:
+                square=next(q for q in state["squares"] if (q["file"],q["rank"])==(file,rank));click(square["x"],square["y"],state);time.sleep(.2)
+            saved=wait(read,lambda s:s.get("plies",0)>=2 and s.get("saved") and not s.get("pending"),45)
+            # Deny atomic replacement of this isolated save, then recover through actual UI.
+            locked=kernel.CreateFileW(str(data_dir/"state.json"),0x80000000,1,None,3,0,None)
+            assert locked not in (None,ctypes.c_void_p(-1).value)
+            for file,rank in [(0,6),(0,5)]:
+                square=next(q for q in saved["squares"] if (q["file"],q["rank"])==(file,rank));click(square["x"],square["y"],saved);time.sleep(.2)
+            wait(read,lambda s:s.get("plies",0)>=4 and not s.get("pending") and s.get("pendingSaves",1)==0 and s.get("failedSaves",0)>0 and any(c["label"]=="处理保存" for c in s.get("controls",[])),45)
+            kernel.CloseHandle(locked);locked=None
+            tap("处理保存");tap("重试保存")
+            saved=wait(read,lambda s:s.get("saved") and not s.get("modal") and not s.get("pending"))
+            focus("结束对局");time.sleep(.4);assert not read()["modal"],"UIA Focus invoked end dialog"
+            focused=read();print(json.dumps({"focusedControl":focused.get("focusedControl"),"focusIndex":focused.get("keyboardFocus"),"plies":focused.get("plies")}),flush=True)
+            print(json.dumps({"targetWindow":window,"foregroundWindow":user.GetForegroundWindow()}),flush=True)
+            assert user.GetForegroundWindow()==window,"Test window is not receiving OS keyboard input"
+            press(13);wait(read,lambda s:s["modal"]);press(27);wait(read,lambda s:not s["modal"])
+            tap("返回");tap("开始新对局");tap("执红开始");wait(read,lambda s:s["screen"]=="game" and not s["modal"])
+            tap("返回");tap("继续未完成对局");tap("命名")
+            wait(read,lambda s:s.get("nameEdit") == "" and s.get("sceneStable"))
+            commit("中文残局")
+            wait(read,lambda s:s.get("nameEdit") == "中文残局")
+            press(13)
+            wait(lambda:json.loads((data_dir/"state.json").read_text(encoding="utf-8")),lambda d:any(r.get("title")=="中文残局" for r in [d.get("active")]+d.get("drafts",[]) if r))
+            user.PostMessageW(window,0x0010,0,0);child.wait(timeout=20)
+            child,window=launch();tap("继续未完成对局");tap(f"执红 · 入门 · {saved['plies']}步")
+            restored=wait(read,lambda s:s["screen"]=="game" and not s["modal"])
+            assert restored["fen"]==saved["fen"] and restored["plies"]==saved["plies"]
+            key(17);press(81);key(17,True);time.sleep(.3)
+            assert child.poll() is None,"Ctrl+Q must not close the game"
+        else:
+            tap("继续未完成对局")
+            wait(read,lambda s:s["screen"]=="game" and s.get("saved") and not s.get("modal"))
+        tap("结束对局");tap("认输并归档")
+        wait(read,lambda s:s.get("saved") and any(c["label"]=="复盘此局" for c in s.get("controls",[])))
+        tap("复盘此局");tap("棋谱");tap("翻转")
+        wait(read,lambda s:s["screen"]=="review" and not s["modal"])
+        tap("棋谱")
+        rows=wait(read,lambda s:any(c["label"].startswith("1. ") for c in s["controls"]))
+        first=next(c["label"] for c in rows["controls"] if c["label"].startswith("1. "))
+        tap(first);wait(read,lambda s:s.get("reviewPly")==1 and not s["modal"])
+        tap("返回");tap("返回首页");tap("浏览与复盘棋谱")
+        def edit_query(text):
+            if uia_only:
+                subprocess.run([str(helper),str(child.pid),"名称输入","value",text],check=True,timeout=20,creationflags=0x08000000)
+                wait(read,lambda s:s.get("nameEdit")==text)
+                subprocess.run([str(helper),str(child.pid),"查找","invoke"],check=True,timeout=20,creationflags=0x08000000)
+            else:
+                key(17);press(65);key(17,True);press(8);commit(text);press(13)
+        tap("查找");edit_query("黑方胜")
+        wait(read,lambda s:not s["modal"] and any(c["label"]=="筛选中" for c in s["controls"]))
+        tap("筛选中");edit_query("")
+        wait(read,lambda s:not s["modal"] and any(c["label"]=="查找" for c in s["controls"]))
+        tap("备份");tap("导出当前棋谱备份")
+        wait(lambda:list((data_dir/"backups").glob("export-*.json")),lambda paths:len(paths)==1)
+        wait(read,lambda s:s.get("saved"))
         user.PostMessageW(window,0x0010,0,0);child.wait(timeout=20)
-        child,window=launch();tap("继续未完成对局");tap(f"执红 · 入门 · {saved['plies']}步")
-        restored=wait(read,lambda s:s["screen"]=="game" and not s["modal"])
-        assert restored["fen"]==saved["fen"] and restored["plies"]==saved["plies"]
-        key(17);press(81);key(17,True);time.sleep(.3)
-        assert child.poll() is None,"Ctrl+Q must not close the game"
-        user.PostMessageW(window,0x0010,0,0);child.wait(timeout=20)
-        (dest/"result.json").write_text(json.dumps({"mouseMoves":"passed","uiaFocusDoesNotInvoke":"passed","keyboardInvokeEscape":"passed","windowCloseSave":"passed","ctrlQIgnored":"passed","unicodeCommit":"passed","saveFailureRetry":"passed","coldResume":"passed","imeComposition":"requires real IME/device acceptance"},indent=2),encoding="utf-8")
+        (dest/"result.json").write_text(json.dumps({"mouseMoves":"not run (UIA only)" if uia_only else "passed","uiaFocusDoesNotInvoke":"not run (UIA only)" if uia_only else "passed","keyboardInvokeEscape":"not run (UIA only)" if uia_only else "passed","windowCloseSave":"passed","ctrlQIgnored":"not run (UIA only)" if uia_only else "passed","unicodeCommit":"UIA value passed" if uia_only else "passed","saveFailureRetry":"not run (UIA only)" if uia_only else "passed","coldResume":"not run (UIA only)" if uia_only else "passed","reviewMoveListAndFlip":"passed","archiveSearch":"passed","backupExport":"passed","imeComposition":"requires real IME/device acceptance"},indent=2),encoding="utf-8")
     finally:
         if locked not in (None,ctypes.c_void_p(-1).value):kernel.CloseHandle(locked)
         if child and child.poll() is None:

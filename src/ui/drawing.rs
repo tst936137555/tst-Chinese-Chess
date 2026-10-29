@@ -66,6 +66,13 @@ impl Surfaces {
     }
 }
 impl App {
+    pub(super) fn wheel(&self) -> (f32, f32) {
+        let (x, y) = mouse_wheel();
+        (
+            crate::interaction::wheel_delta(x, cfg!(target_os = "windows")),
+            crate::interaction::wheel_delta(y, cfg!(target_os = "windows")),
+        )
+    }
     pub(super) fn background(&self) {
         draw_texture_ex(
             &self.surfaces.paper,
@@ -127,9 +134,33 @@ impl App {
             self.text(text, x, y, size, color);
             return;
         }
-        let shown =
-            crate::typography::ellipsize(text, max_width, |s| self.font.measure(s, size).width);
-        self.text(&shown, x, y, size, color);
+        let mut fitted = size;
+        while fitted > size * 0.85 {
+            fitted -= 1.;
+            if self.font.measure(text, fitted).width <= max_width {
+                self.text(text, x, y, fitted, color);
+                return;
+            }
+        }
+        let mut lines =
+            crate::typography::wrap_text(text, max_width, |s| self.font.measure(s, fitted).width);
+        while lines.len() > 2 && fitted > 8. {
+            fitted -= 1.;
+            lines = crate::typography::wrap_text(text, max_width, |s| {
+                self.font.measure(s, fitted).width
+            });
+        }
+        // Two-line labels stay inside the space preceding the original baseline.
+        let leading = fitted * 1.2;
+        for (i, line) in lines.iter().enumerate() {
+            self.text(
+                line,
+                x,
+                y - (lines.len() - 1 - i) as f32 * leading,
+                fitted,
+                color,
+            );
+        }
     }
     pub(super) fn player(&self) -> Side {
         if self.settings.user_red {
@@ -271,7 +302,14 @@ impl App {
             let cy = r.y + r.h / 2.;
             draw_line(cx - 6., cy, cx + 6., cy, 2., ink);
         } else {
-            let size = 20_f32.min((r.w - 12.) / label.chars().count().max(1) as f32);
+            let padding = if r.w < 80. { 8. } else { 20. };
+            let mut size = 20_f32;
+            while size > 16. && self.font.measure(label, size).width > r.w - padding {
+                size -= 1.;
+            }
+            while size > 1. && self.font.measure(label, size).width > r.w - padding {
+                size -= 1.;
+            }
             self.center(label, r.x + r.w / 2., r.y + r.h / 2., size, ink);
         }
         if enabled
@@ -281,6 +319,9 @@ impl App {
                     && index == self.focus_index
                     && is_key_pressed(KeyCode::Enter)))
         {
+            if crate::platform::observation_path().is_some() {
+                self.observed_release["activatedLabel"] = label.into();
+            }
             self.click = None;
             true
         } else {

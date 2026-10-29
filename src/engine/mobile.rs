@@ -4,6 +4,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 unsafe extern "C" {
+    fn sf_prepare() -> i32;
     fn sf_start(line: extern "C" fn(*const u8), exit: extern "C" fn(i32)) -> i32;
     fn sf_send(line: *const u8) -> i32;
     fn sf_stop();
@@ -35,6 +36,10 @@ pub struct Ffi {
 }
 impl Ffi {
     pub fn open() -> Result<Self, String> {
+        // Drain the old exit callback before publishing the new receiver.
+        if unsafe { sf_prepare() } != 0 {
+            return Err("进程内引擎尚未停止，请保存后重启应用".into());
+        }
         let (tx, rx) = mpsc::channel();
         *OUTPUT
             .get_or_init(|| Mutex::new(None))
@@ -42,6 +47,9 @@ impl Ffi {
             .map_err(|e| e.to_string())? = Some(tx);
         let rc = unsafe { sf_start(on_line, on_exit) };
         if rc != 0 {
+            if let Ok(mut guard) = OUTPUT.get_or_init(|| Mutex::new(None)).lock() {
+                *guard = None;
+            }
             return Err("进程内引擎未能启动，可能需要重启应用".into());
         }
         Ok(Self { rx })
