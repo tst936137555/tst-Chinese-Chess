@@ -20,6 +20,7 @@ def collect_diagnostics():
         "input.txt": ("shell","dumpsys","input"),
         "startup.txt": ("shell","cat",f"{AUTOMATION_ROOT}/smoke/startup.txt"),
         "memory.txt": ("shell","cat",f"{AUTOMATION_ROOT}/smoke/memory.txt"),
+        "interaction.txt": ("shell","cat",f"{AUTOMATION_ROOT}/interaction/interaction.json"),
     }
     for name,args in commands.items():
         try:

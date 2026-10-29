@@ -79,8 +79,13 @@ impl App {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(bytes) = serde_json::to_vec(&value) {
-            // Readers must see either the previous snapshot or the complete new one.
+            // Protect Windows readers from truncate/write races. Android's
+            // external test directory must retain its shared-readable file mode;
+            // the private-save writer deliberately creates owner-only files.
+            #[cfg(target_os = "windows")]
             let _ = Storage::atomic_write(&path, &bytes);
+            #[cfg(not(target_os = "windows"))]
+            let _ = std::fs::write(path, bytes);
         }
     }
     pub(super) fn enqueue(&mut self, command: Command) {

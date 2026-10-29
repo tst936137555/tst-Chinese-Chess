@@ -65,6 +65,7 @@ class AndroidSmokeTest(unittest.TestCase):
                      result,
                      result,
                      result,
+                     result,
                  ]):
                 mobile_smoke.collect_diagnostics()
             output = root / "target/android-smoke"
@@ -74,6 +75,7 @@ class AndroidSmokeTest(unittest.TestCase):
             self.assertEqual((output / "input.txt").read_bytes(), b"startup")
             self.assertEqual((output / "startup.txt").read_bytes(), b"startup")
             self.assertEqual((output / "memory.txt").read_bytes(), b"startup")
+            self.assertEqual((output / "interaction.txt").read_bytes(), b"startup")
 
 
 if __name__ == "__main__":
