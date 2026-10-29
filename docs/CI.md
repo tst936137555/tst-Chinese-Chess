@@ -10,7 +10,7 @@
 | `android.yml` | 两种 ABI 的 APK 构建、实际生成的 Java 桥接编译；独立模拟器安装本次 x86_64 APK，验证真实引擎、输入和续局 |
 | `ios.yml` | UIKit 桥接提前语法检查、真机及模拟器完整链接；独立模拟器安装本次 `.app`，验证启动、引擎和冷启动 |
 
-固定 runner 系列以减少镜像漂移；`macos-15` 使用 Apple Silicon，匹配 arm64 模拟器目标（[GitHub runner 说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)）。第三方 Actions 固定提交。构建与模拟器检查分开，后者下载前者产物，避免重建另一个包。失败时仍上传诊断。`CI passed` 必须看到所有依赖成功，失败、取消和跳过均不会放行。tag 构建不被新推送自动取消；只有通过完整 CI 的 tag 才发布正式 Release。
+固定 runner 系列以减少镜像漂移；`macos-15` 使用 Apple Silicon，匹配 arm64 模拟器目标（[GitHub runner 说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)）。第三方 Actions 固定提交。构建与模拟器检查分开，后者下载前者产物，避免重建另一个包。失败时仍上传诊断。`CI passed` 必须看到所有依赖成功，失败、取消和跳过均不会放行。主分支与 tag 构建不被新推送自动取消。主分支推送、主分支手动 CI 和版本 tag 在完整 CI 成功后，按 `Cargo.toml` 自动补建 tag 并发布尚未发布的版本，复用本次 CI 的正式产物；已发布版本跳过，PR 不发布。发布前再次验证 APK 签名与完整资产，全部上传成功后才公开发行版，失败重跑可恢复草稿。详见 [正式发布说明](RELEASE.md)。
 
 桌面、Android、iOS 冒烟均报告启动阶段并检测停止推进；桌面同时捕获进程退出和日志，Android 保留完整 logcat，避免最后几千行系统噪声覆盖启动错误。结果文件要求全部 29 个场景完成；移动端还必须通过真实引擎校验。Linux 不携带桌面引擎，真实引擎检查由 Windows/macOS 和移动端承担。
 

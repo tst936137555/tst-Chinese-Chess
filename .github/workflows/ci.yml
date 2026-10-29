@@ -14,7 +14,8 @@ permissions:
   contents: read
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  # Let versioned main-branch builds finish even when another commit arrives.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
@@ -76,34 +77,41 @@ jobs:
           python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); print(results); assert results and all(r == "success" for r in results), "Required CI jobs failed, were cancelled, or were skipped"'
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
     needs: ci
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
+    concurrency:
+      group: publish-release-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          path: release-artifacts
-          pattern: rust-*
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
+      - name: Check Cargo version and skip published releases
+        id: version
+        run: python tool/release_automation.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: steps.version.outputs.publish == 'true'
+        with:
+          path: release-artifacts
+          pattern: rust-*
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        if: steps.version.outputs.publish == 'true'
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        if: steps.version.outputs.publish == 'true'
         with:
           packages: build-tools;35.0.0
-      - name: Validate tag, release notes and verified artifacts
-        run: python tool/release_notes.py --tag "$GITHUB_REF_NAME" --output target/release-notes.md --assets release-artifacts --android-build-tools "$ANDROID_HOME/build-tools/35.0.0"
-      - name: Publish verified stable release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          mapfile -d '' assets < <(find release-artifacts -type f \( -name '*.zip' -o -name '*.apk' -o -name '*.build.json' -o -name SHA256SUMS \) -print0)
-          gh release create "$GITHUB_REF_NAME" "${assets[@]}" --verify-tag --latest --title "$GITHUB_REF_NAME" --notes-file target/release-notes.md
+      - name: Verify signatures and publish stable release from this CI commit
+        if: steps.version.outputs.publish == 'true'
+        run: python tool/release_automation.py --publish --android-build-tools "$ANDROID_HOME/build-tools/35.0.0"
