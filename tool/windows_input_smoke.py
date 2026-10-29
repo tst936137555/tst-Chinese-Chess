@@ -21,6 +21,10 @@ def wait(read, predicate, timeout=30):
     raise AssertionError(f"Windows input smoke timed out: {detail}")
 
 def main():
+    # GitHub's redirected Windows streams default to cp1252, which cannot log
+    # the Chinese UIA labels. Keep both progress and diagnostics lossless.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     if sys.platform!="win32":raise SystemExit("Windows desktop required")
     user=ctypes.WinDLL("user32",use_last_error=True)
     user.SetProcessDPIAware()
