@@ -74,12 +74,13 @@ impl App {
         let (origin, cell) = self.board_rect();
         let unit = self.width / self.viewport.w;
         let squares:Vec<_>=(0..10).flat_map(|rank|(0..9).map(move|file|(file,rank))).map(|(file,rank)|{let square=Square::new(file,rank).unwrap();let point=Self::point(origin,cell,square,!self.settings.user_red);serde_json::json!({"file":file,"rank":rank,"x":self.viewport.x+point.x/unit,"y":self.viewport.y+point.y/unit})}).collect();
-        let value = serde_json::json!({"nativeTouchDelivery":crate::platform::touch_delivery(),"observedTime":get_time(),"screen":screen,"pointerEvents":self.observed_pointer,"lastRelease":self.observed_release,"backSerial":crate::platform::back_serial(),"nameEdit":match &self.modal {Some(Modal::Rename(_,edit) | Modal::Search(edit))=>Some(&edit.text),_=>None},"pointer":[mouse_position().0,mouse_position().1],"pointerDown":is_mouse_button_down(MouseButton::Left),"selectedSquare":self.selected.map(|s|[s.file(),s.rank()]),"sceneStable":!self.redraw,"modal":self.modal.is_some(),"fen":self.game.board.fen(),"plies":self.game.history.len(),"pending":self.pending.is_some(),"pauseSerial":self.pause_serial,"pendingSaves":self.saves.pending,"failedSaves":self.saves.failed.len(),"saved":self.saves.pending==0&&self.saves.failed.is_empty(),"reviewPly":self.review.as_ref().map(|r|r.ply),"controls":controls,"squares":squares,"keyboardFocus":self.focus_index,"keyboardNavigation":self.keyboard_nav,"focusedControl":self.accessible.iter().find(|e|Some(e.id)==self.accessibility_focus).map(|e|e.label.clone()),"deviceScale":screen_dpi_scale(),"viewOrigin":crate::platform::view_origin(),"screenWidth":screen_width(),"screenHeight":screen_height()});
+        let value = serde_json::json!({"nativeTouchDelivery":crate::platform::touch_delivery(),"observedTime":get_time(),"screen":screen,"pointerEvents":self.observed_pointer,"lastRelease":self.observed_release,"backSerial":crate::platform::back_serial(),"nameEdit":match &self.modal {Some(Modal::Rename(_,edit) | Modal::Search(edit))=>Some(&edit.text),_=>None},"pointer":[mouse_position().0,mouse_position().1],"pointerDown":is_mouse_button_down(MouseButton::Left),"selectedSquare":self.selected.map(|s|[s.file(),s.rank()]),"sceneStable":!self.redraw,"modal":self.modal.is_some(),"fen":self.game.board.fen(),"plies":self.game.history.len(),"pending":self.pending.is_some(),"pauseSerial":self.pause_serial,"pendingSaves":self.saves.pending,"failedSaves":self.saves.failed.len(),"saved":self.saves.pending==0&&self.saves.failed.is_empty(),"reviewPly":self.review.as_ref().map(|r|r.ply),"reviewAnalysisComplete":self.review_ready(),"modalScroll":self.modal_scroll,"controls":controls,"squares":squares,"keyboardFocus":self.focus_index,"keyboardNavigation":self.keyboard_nav,"focusedControl":self.accessible.iter().find(|e|Some(e.id)==self.accessibility_focus).map(|e|e.label.clone()),"deviceScale":screen_dpi_scale(),"viewOrigin":crate::platform::view_origin(),"screenWidth":screen_width(),"screenHeight":screen_height()});
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(bytes) = serde_json::to_vec(&value) {
-            let _ = std::fs::write(path, bytes);
+            // Readers must see either the previous snapshot or the complete new one.
+            let _ = Storage::atomic_write(&path, &bytes);
         }
     }
     pub(super) fn enqueue(&mut self, command: Command) {
@@ -358,13 +359,6 @@ impl App {
         while let Ok(event) = self.io.rx.try_recv() {
             self.redraw = true;
             match event.result {
-                Ok(Response::Backups(paths)) => self.open_modal(Modal::Backups(paths)),
-                Ok(Response::Exported(path)) => {
-                    self.saves.completed(event.seq);
-                    self.notice = "备份已导出".into();
-                    crate::diagnostics::record("backup-export", &path.display().to_string());
-                    self.enqueue(Command::Backups);
-                }
                 Ok(Response::Settings(settings)) => {
                     self.data.settings = settings;
                     self.saves.succeeded(event.seq, &self.data);
@@ -436,6 +430,8 @@ impl App {
                         Some(crate::diagnostics::FailureKind::RestartRequired)
                     ) {
                         format!("引擎已停止：{e}。请保存对局后重启应用")
+                    } else if matches!(pending.job, Job::Review(_)) {
+                        format!("复盘分析失败：{e}。请返回后重新打开复盘")
                     } else {
                         format!("引擎不可用：{e}（可重试或认输）")
                     };

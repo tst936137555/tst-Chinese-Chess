@@ -387,7 +387,10 @@ pub async fn run() {
             };
         }
         app.focus_index %= app.focus_count.max(1);
-        if app.modal.is_none() && is_key_pressed(KeyCode::M) {
+        if app.modal.is_none()
+            && (app.screen != Screen::Review || app.review_ready())
+            && is_key_pressed(KeyCode::M)
+        {
             app.settings.sound = !app.settings.sound;
             app.save_preferences();
         }

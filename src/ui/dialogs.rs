@@ -41,8 +41,7 @@ impl App {
             matches!(modal, Modal::Rename(..) | Modal::Search(..)) && self.viewport.h < 380.;
         let required_height: f32 = match &modal {
             Modal::Drafts(_)
-            | Modal::Backups(_)
-            | Modal::ReviewMoves(_)
+            | Modal::ReviewMoves
             | Modal::Help
             | Modal::About
             | Modal::License(_)
@@ -51,7 +50,7 @@ impl App {
             {
                 360.
             }
-            Modal::Side(_) | Modal::ImportBackup(_) => 460.,
+            Modal::Side(_) => 460.,
             Modal::End(_) => 540.,
             Modal::SaveFailed => 500.,
             Modal::StorageRecovery => 500.,
@@ -86,8 +85,7 @@ impl App {
         let x = (self.width - w) / 2.;
         let modal_height = match &modal {
             Modal::Drafts(_)
-            | Modal::Backups(_)
-            | Modal::ReviewMoves(_)
+            | Modal::ReviewMoves
             | Modal::Help
             | Modal::About
             | Modal::License(_)
@@ -96,7 +94,7 @@ impl App {
             {
                 self.height - 32.
             }
-            Modal::Side(_) | Modal::ImportBackup(_) => 380.,
+            Modal::Side(_) => 380.,
             Modal::End(_) => 460.,
             Modal::SaveFailed => 420.,
             Modal::StorageRecovery => 420.,
@@ -108,6 +106,7 @@ impl App {
                 }
             }
             Modal::Delete(_) | Modal::Clear | Modal::ClearDrafts => 300.,
+            Modal::ReviewMoves => (self.height - 32.).min(605.),
             Modal::Drafts(_) => {
                 let count = self.data.active.iter().count() + self.data.drafts.len();
                 if count == 0 { 300. } else { 605. }
@@ -117,12 +116,10 @@ impl App {
         let y = (self.height - modal_height) / 2.;
         self.card(Rect::new(x, y, w, modal_height));
         match modal {
-            Modal::Backups(paths) => self.modal_backups(paths, x, y, w),
-            Modal::ImportBackup(path) => self.modal_import_backup(path, x, y, w),
             Modal::ClearDrafts => self.modal_clear_drafts(x, y, w),
             Modal::Rename(id, edit) => self.modal_rename(Some(id), edit, compact_name, x, y, w),
             Modal::Search(edit) => self.modal_rename(None, edit, compact_name, x, y, w),
-            Modal::ReviewMoves(page) => self.modal_review_moves(page, x, y, w),
+            Modal::ReviewMoves => self.modal_review_moves(x, y, w),
             Modal::Audio => self.modal_audio(x, y, w),
             Modal::Variation(text) => self.modal_variation(text, x, y, w),
             Modal::SaveFailed => self.modal_save_failed(x, y, w),

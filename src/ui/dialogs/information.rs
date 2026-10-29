@@ -1,64 +1,114 @@
 use super::*;
 impl App {
-    pub(super) fn modal_review_moves(&mut self, page: usize, x: f32, y: f32, w: f32) {
+    pub(super) fn modal_review_moves(&mut self, x: f32, y: f32, w: f32) {
         let Some(review) = &self.review else {
             self.modal = None;
             return;
         };
-        let compact = self.height < 500.;
-        let count = if compact { 2 } else { 8 };
-        let pages = review.game.history.len().max(1).div_ceil(count);
-        let page = page.min(pages - 1);
-        let rows: Vec<_> = review
+        let count = review.game.history.len();
+        let cursor = review.ply;
+        let mistakes = review.mistake_plies();
+        let height = (self.height - 32.).min(605.);
+        let row_height = 48.;
+        let list = Rect::new(x + 24., y + 68., w - 48., height - 196.);
+        self.modal = Some(Modal::ReviewMoves);
+        self.center("本局棋谱", self.width / 2., y + 34., 26., INK);
+        self.modal_scroll_area(list, count as f32 * row_height, row_height);
+        let content = Rect::new(list.x, list.y, list.w - 22., list.h);
+        let first = (self.modal_scroll / row_height).floor() as usize;
+        let rows: Vec<_> = self
+            .review
+            .as_ref()
+            .unwrap()
             .game
             .history
             .iter()
             .enumerate()
-            .skip(page * count)
-            .take(count)
-            .map(|(i, e)| {
+            .skip(first)
+            .take((list.h / row_height).ceil() as usize + 1)
+            .map(|(i, entry)| {
+                let quality = self
+                    .review
+                    .as_ref()
+                    .unwrap()
+                    .assessment(i + 1)
+                    .map_or("待分析", |a| a.badge());
                 (
                     i + 1,
-                    format!("{}. {} · {}", i + 1, e.mover.label(), e.notation),
+                    entry.mover,
+                    entry.notation.clone(),
+                    quality,
+                    format!(
+                        "{}. {} · {} · {quality}",
+                        i + 1,
+                        entry.mover.label(),
+                        entry.notation
+                    ),
                 )
             })
             .collect();
-        let cursor = review.ply;
-        let mistakes = review.mistake_plies();
-        self.modal = Some(Modal::ReviewMoves(page));
-        let wheel = self.wheel().1;
-        if wheel != 0. && Rect::new(x, y, w, self.height).contains(self.pointer()) {
-            let target = page
-                .saturating_add_signed(if wheel < 0. { 1 } else { -1 })
-                .min(pages - 1);
-            self.modal = Some(Modal::ReviewMoves(target));
-        }
-        self.center("本局棋谱", self.width / 2., y + 38., 26., INK);
-        if self.button(
-            "翻转",
-            Rect::new(x + w - 84., y + 12., 60., 38.),
-            false,
-            true,
-        ) {
-            let r = self.review.as_mut().unwrap();
-            r.flipped = !r.flipped;
-            self.modal = None;
-        }
-        for (row, (ply, label)) in rows.into_iter().enumerate() {
-            if self.button(
-                &label,
-                Rect::new(
-                    x + 24.,
-                    y + 68. + row as f32 * if compact { 60. } else { 48. },
-                    w - 48.,
-                    40.,
-                ),
-                ply == cursor,
-                true,
-            ) {
-                self.review.as_mut().unwrap().ply = ply;
-                self.modal = None;
+        self.clip(content);
+        for (ply, mover, notation, quality, label) in rows {
+            let row = Rect::new(
+                content.x,
+                content.y + (ply - 1) as f32 * row_height - self.modal_scroll,
+                content.w,
+                44.,
+            );
+            // Only fully visible rows participate in focus and hit testing.
+            // Partially clipped rows remain visual scroll context.
+            if row.y >= content.y && row.y + row.h <= content.y + content.h {
+                if self.button_row_frame(&format!("review-move-{ply}"), &label, row, ply == cursor)
+                {
+                    self.review.as_mut().unwrap().ply = ply;
+                    self.modal = None;
+                }
+            } else {
+                self.panel(row, if ply == cursor { RED_INK } else { SURFACE });
             }
+            let selected = ply == cursor;
+            let baseline = row.y + row.h / 2.;
+            let number = ply.to_string();
+            self.text(
+                &number,
+                row.x + 38. - self.font.measure(&number, 15.).width,
+                baseline + 5.,
+                15.,
+                if selected { SURFACE } else { MUTED },
+            );
+            self.center(
+                mover.label(),
+                row.x + 65.,
+                baseline,
+                14.,
+                if selected {
+                    SURFACE
+                } else if mover == Side::Red {
+                    RED_INK
+                } else {
+                    INK
+                },
+            );
+            self.fit_text(
+                &notation,
+                row.x + 96.,
+                baseline + 6.,
+                row.w - 152.,
+                19.,
+                if selected { SURFACE } else { INK },
+            );
+            let (ink, fill) = match quality {
+                "优" | "良" => (JADE, Color::new(0.90, 0.95, 0.89, 1.)),
+                "差" => (GOLD, Color::new(0.97, 0.93, 0.85, 1.)),
+                "错" => (RED_INK, Color::new(0.98, 0.91, 0.88, 1.)),
+                _ => (MUTED, PAPER),
+            };
+            self.panel(Rect::new(row.x + row.w - 42., row.y + 8., 32., 28.), fill);
+            self.center(quality, row.x + row.w - 26., baseline, 16., ink);
+        }
+        self.camera();
+        if count == 0 {
+            self.center("暂无着法", x + w / 2., list.y + list.h / 2., 18., MUTED);
         }
         for (i, label, target) in [
             (
@@ -76,7 +126,7 @@ impl App {
                 label,
                 Rect::new(
                     x + 24. + i as f32 * (w - 48.) / 2.,
-                    y + if compact { 192. } else { 460. },
+                    y + height - 110.,
                     (w - 56.) / 2.,
                     40.,
                 ),
@@ -87,27 +137,9 @@ impl App {
                 self.modal = None;
             }
         }
-        for (i, label, target, enabled) in [
-            (0, "上一页", page.saturating_sub(1), page > 0),
-            (1, "下一页", page + 1, page + 1 < pages),
-        ] {
-            if self.button(
-                label,
-                Rect::new(
-                    x + 24. + i as f32 * (w - 48.) / 2.,
-                    y + if compact { 242. } else { 510. },
-                    (w - 56.) / 2.,
-                    36.,
-                ),
-                false,
-                enabled,
-            ) {
-                self.modal = Some(Modal::ReviewMoves(target));
-            }
-        }
         if self.button(
             "返回复盘",
-            Rect::new(x + 24., y + if compact { 286. } else { 557. }, w - 48., 36.),
+            Rect::new(x + 24., y + height - 60., w - 48., 40.),
             false,
             true,
         ) {
@@ -304,6 +336,29 @@ impl App {
         }
         let line_height = size * 1.5;
         let content_height = self.text_cache[&cache_key].len() as f32 * line_height;
+        self.modal_scroll_area(Rect::new(x, y, w, h), content_height, line_height);
+        let content = Rect::new(x, y, text_width, h);
+        self.clip(content);
+        let first = (self.modal_scroll / line_height).floor() as usize;
+        for (i, line) in self.text_cache[&cache_key]
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take((h / line_height).ceil() as usize + 1)
+        {
+            self.text(
+                line,
+                x,
+                y + size + i as f32 * line_height - self.modal_scroll,
+                size,
+                INK,
+            );
+        }
+        self.camera();
+    }
+    fn modal_scroll_area(&mut self, area: Rect, content_height: f32, line_height: f32) {
+        let Rect { x, y, w, h } = area;
+        let text_width = (w - 22.).max(1.);
         let bar = crate::interaction::Scrollbar::new(h, content_height, self.modal_scroll);
         let content = Rect::new(x, y, text_width, h);
         let track = Rect::new(x + w - 10., y, 8., h);
@@ -343,23 +398,6 @@ impl App {
             self.modal_scroll_grab = None;
         }
         self.modal_scroll = self.modal_scroll.clamp(0., bar.max_offset);
-        self.clip(content);
-        let first = (self.modal_scroll / line_height).floor() as usize;
-        for (i, line) in self.text_cache[&cache_key]
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take((h / line_height).ceil() as usize + 1)
-        {
-            self.text(
-                line,
-                x,
-                y + size + i as f32 * line_height - self.modal_scroll,
-                size,
-                INK,
-            );
-        }
-        self.camera();
         if bar.max_offset > 0. {
             let bar = crate::interaction::Scrollbar::new(h, content_height, self.modal_scroll);
             self.panel(track, Color::new(0.88, 0.89, 0.85, 1.));

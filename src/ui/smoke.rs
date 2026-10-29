@@ -98,6 +98,7 @@ impl Smoke {
                 let game = app.game.clone();
                 app.open_review(game, Screen::Game);
                 let r = app.review.as_mut().unwrap();
+                r.ply = 1;
                 r.analyzing = false;
                 r.cache_loading = false;
                 app.pending = Some(Pending {
@@ -313,7 +314,17 @@ impl Smoke {
             app.click = Some(vec2(x + 108. + (w - 216.) * 0.75, y + 275.) / scale);
         }
         if stage == 4 && phase == 6 {
-            app.review.as_mut().unwrap().ply = 1;
+            let (x, w) = app.content();
+            app.click = Some(vec2(x + w * 0.9, app.height - 55.));
+        }
+        if stage == 4 && phase == 7 {
+            assert_eq!(
+                app.review.as_ref().unwrap().ply,
+                1,
+                "step controls stay locked"
+            );
+            let (x, w) = app.content();
+            app.click = Some(vec2(x + w * 0.9, app.height - 185.));
         }
         if stage == 4 && phase == 8 {
             let board = &app.review.as_ref().unwrap().game.start;
@@ -383,7 +394,7 @@ impl Smoke {
         if self.frame / 24 == 6 && self.frame % 24 == 23 {
             let scale = app.height.min(app.viewport.h.max(540.)) / app.height;
             let y = (app.height * scale - 460.) / 2.;
-            app.click = Some(vec2(app.width * scale / 2., y + 224.) / scale);
+            app.click = Some(vec2(app.width * scale / 2., y + 290.) / scale);
         }
         if self.frame / 24 == 3 {
             let phase = self.frame % 24;
@@ -426,6 +437,13 @@ impl Smoke {
                 );
             }
             if stage == 4 {
+                assert!(
+                    app.accessible
+                        .iter()
+                        .filter(|e| e.actionable)
+                        .all(|e| e.label == "返回"),
+                    "only back is actionable during analysis"
+                );
                 assert_eq!(
                     app.review.as_ref().unwrap().ply,
                     1,
@@ -453,6 +471,22 @@ impl Smoke {
                         .iter()
                         .any(|r| r.id == app.game.id && r.title == "残局练习"),
                     "archive rename is durable"
+                );
+            }
+            if stage == 6 {
+                let settle = app
+                    .accessible
+                    .iter()
+                    .find(|e| e.label == "按当前局势结算")
+                    .unwrap();
+                let resign = app
+                    .accessible
+                    .iter()
+                    .find(|e| e.label == "认输并归档")
+                    .unwrap();
+                assert!(
+                    settle.rect[1] < resign.rect[1],
+                    "settlement appears above resignation"
                 );
             }
             if stage == 9 {

@@ -40,15 +40,6 @@ impl App {
                 }
             }
             Screen::Game => {
-                let busy = self.pending.is_some() || self.game.outcome != Outcome::Playing;
-                if self.button(
-                    "-",
-                    Rect::new(right - 162., 18., 40., 42.),
-                    false,
-                    !busy && self.settings.level > 0,
-                ) {
-                    self.change_level(-1);
-                }
                 self.center(
                     LEVELS[self.settings.level].name,
                     right - 90.,
@@ -56,21 +47,10 @@ impl App {
                     18.,
                     JADE,
                 );
-                if self.button(
-                    "+",
-                    Rect::new(right - 56., 18., 40., 42.),
-                    false,
-                    !busy && self.settings.level < 4,
-                ) {
-                    self.change_level(1);
-                }
             }
-            Screen::Archives => {
-                if self.button("备份", Rect::new(right - 80., 18., 64., 42.), false, true) {
-                    self.enqueue(Command::Backups);
-                }
-            }
+            Screen::Archives => {}
             Screen::Review => {
+                let ready = self.review_ready();
                 let action_width = ((hw - 178.) / 2.).clamp(88., 112.);
                 let action_right = right - 16.;
                 let can_continue = self
@@ -86,7 +66,7 @@ impl App {
                         46.,
                     ),
                     false,
-                    can_continue,
+                    ready && can_continue,
                 ) {
                     let r = self.review.as_ref().unwrap();
                     let record = r.game.snapshot(r.user_red, self.settings.level, true);
@@ -102,12 +82,9 @@ impl App {
                     "棋谱",
                     Rect::new(action_right - action_width, 16., action_width, 46.),
                     false,
-                    true,
+                    ready,
                 ) {
-                    let page = self.review.as_ref().map_or(0, |r| {
-                        r.ply.saturating_sub(1) / if self.viewport.h < 500. { 2 } else { 8 }
-                    });
-                    self.open_modal(Modal::ReviewMoves(page));
+                    self.open_modal(Modal::ReviewMoves);
                 }
             }
         }

@@ -1,6 +1,17 @@
 use super::*;
 impl App {
+    pub(super) fn review_ready(&self) -> bool {
+        !self.engine_failed
+            && self.review.as_ref().is_some_and(Review::analysis_complete)
+            && !self
+                .pending
+                .as_ref()
+                .is_some_and(|p| matches!(p.job, Job::Review(_)))
+    }
     pub(super) fn open_modal(&mut self, m: Modal) {
+        if self.screen == Screen::Review && !self.review_ready() {
+            return;
+        }
         self.delete_targets = match &m {
             Modal::Delete(id) => self
                 .data
@@ -53,7 +64,13 @@ impl App {
             macroquad::miniquad::window::show_keyboard(true);
         }
         self.modal = Some(m);
-        self.modal_scroll = 0.;
+        self.modal_scroll = if matches!(self.modal, Some(Modal::ReviewMoves)) {
+            self.review
+                .as_ref()
+                .map_or(0., |r| r.ply.saturating_sub(1) as f32 * 48.)
+        } else {
+            0.
+        };
         self.modal_scroll_grab = None;
     }
     pub(super) fn finish_rename(&mut self) {
@@ -215,10 +232,5 @@ impl App {
         self.screen = Screen::Review;
         self.load_review_cache();
         self.ended_at = None;
-    }
-    pub(super) fn change_level(&mut self, delta: isize) {
-        self.settings.level = self.settings.level.saturating_add_signed(delta).min(4);
-        self.save_preferences();
-        self.persist();
     }
 }

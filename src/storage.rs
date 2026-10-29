@@ -504,7 +504,6 @@ impl Storage {
         };
         if previous.as_deref() != Some(bytes.as_slice()) {
             if let Some(previous) = previous {
-                self.checkpoint(&previous)?;
                 Self::atomic_write(&self.path.with_extension("bak"), &previous)?;
             }
             Self::atomic_write(&self.path, &bytes)?;
@@ -516,58 +515,6 @@ impl Storage {
             self.write_settings(&data.settings)?;
         }
         Ok(data)
-    }
-    fn checkpoint(&self, bytes: &[u8]) -> Result<(), String> {
-        let directory = self.path.parent().ok_or("存档目录无效")?.join("backups");
-        fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-        let hour = crate::game::now_ms() / 3_600_000;
-        let path = directory.join(format!("checkpoint-{hour:016}.json"));
-        if !path.exists() {
-            Self::atomic_write(&path, bytes)?;
-        }
-        let mut entries: Vec<_> = fs::read_dir(&directory)
-            .map_err(|e| e.to_string())?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("checkpoint-") && n.ends_with(".json"))
-            })
-            .collect();
-        entries.sort();
-        let remove = entries.len().saturating_sub(8);
-        for entry in entries.into_iter().take(remove) {
-            fs::remove_file(entry).map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-    pub fn export_backup(&self) -> Result<PathBuf, String> {
-        let _lock = self.lock()?;
-        let data = self.load()?;
-        let directory = self.path.parent().ok_or("存档目录无效")?.join("backups");
-        fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-        let path = directory.join(format!("export-{}.json", crate::game::new_id()));
-        Self::atomic_write(
-            &path,
-            &serde_json::to_vec(&data).map_err(|e| e.to_string())?,
-        )?;
-        Ok(path)
-    }
-    pub fn backups(&self) -> Result<Vec<PathBuf>, String> {
-        let directory = self.path.parent().ok_or("存档目录无效")?.join("backups");
-        if !directory.exists() {
-            return Ok(Vec::new());
-        }
-        let mut paths: Vec<_> = fs::read_dir(directory)
-            .map_err(|e| e.to_string())?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "json"))
-            .collect();
-        paths.sort_by_key(|p| std::cmp::Reverse(fs::metadata(p).and_then(|m| m.modified()).ok()));
-        paths.truncate(20);
-        Ok(paths)
     }
     pub fn import_backup(&self, path: &Path) -> Result<Data, String> {
         let data = Self::decode(&Self::read(path)?)?;

@@ -224,16 +224,8 @@ impl App {
         );
         self.modal = Some(Modal::End(score.clone()));
         if self.button(
-            "认输并归档",
-            Rect::new(x + 24., y + 200., w - 48., 48.),
-            false,
-            true,
-        ) {
-            self.finish_resign();
-        }
-        if self.button(
             "按当前局势结算",
-            Rect::new(x + 24., y + 266., w - 48., 52.),
+            Rect::new(x + 24., y + 200., w - 48., 52.),
             true,
             score.is_some(),
         ) {
@@ -247,6 +239,14 @@ impl App {
                 4
             });
             self.persist();
+        }
+        if self.button(
+            "认输并归档",
+            Rect::new(x + 24., y + 266., w - 48., 48.),
+            false,
+            true,
+        ) {
+            self.finish_resign();
         }
         if score.is_none()
             && self.engine_failed

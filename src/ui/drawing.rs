@@ -177,7 +177,7 @@ impl App {
         self.text(text, x - m.width / 2., y + size * 0.32, size, color);
     }
     pub(super) fn button(&mut self, label: &str, r: Rect, primary: bool, enabled: bool) -> bool {
-        self.button_identity(None, label, r, primary, enabled)
+        self.button_identity(None, label, r, primary, enabled, true)
     }
     pub(super) fn button_named(
         &mut self,
@@ -187,7 +187,16 @@ impl App {
         primary: bool,
         enabled: bool,
     ) -> bool {
-        self.button_identity(Some(key), label, r, primary, enabled)
+        self.button_identity(Some(key), label, r, primary, enabled, true)
+    }
+    pub(super) fn button_row_frame(
+        &mut self,
+        key: &str,
+        label: &str,
+        r: Rect,
+        selected: bool,
+    ) -> bool {
+        self.button_identity(Some(key), label, r, selected, true, false)
     }
     fn button_identity(
         &mut self,
@@ -196,8 +205,11 @@ impl App {
         r: Rect,
         primary: bool,
         enabled: bool,
+        draw_label: bool,
     ) -> bool {
         // Hit areas use viewport units; keep short-screen controls reachable without shrinking text.
+        let enabled =
+            enabled && (self.screen != Screen::Review || self.review_ready() || label == "返回");
         let unit = self.width / self.viewport.w;
         let area = crate::interaction::touch_area([r.x, r.y, r.w, r.h], unit);
         let hit_rect = Rect::new(area[0], area[1], area[2], area[3]);
@@ -276,7 +288,7 @@ impl App {
         } else {
             Color::new(0.62, 0.64, 0.59, 1.)
         };
-        if label == "\u{2605}" || label == "\u{2606}" {
+        if draw_label && (label == "\u{2605}" || label == "\u{2606}") {
             let center = vec2(r.x + r.w / 2., r.y + r.h / 2.);
             let radius = 10.;
             let points: Vec<_> = (0..10)
@@ -296,12 +308,12 @@ impl App {
                     draw_line(a.x, a.y, b.x, b.y, 1.5, ink);
                 }
             }
-        } else if label == "-" {
+        } else if draw_label && label == "-" {
             // The bundled subset has no U+2212 glyph. Geometry stays correct in every font.
             let cx = r.x + r.w / 2.;
             let cy = r.y + r.h / 2.;
             draw_line(cx - 6., cy, cx + 6., cy, 2., ink);
-        } else {
+        } else if draw_label {
             let padding = if r.w < 80. { 8. } else { 20. };
             let mut size = 20_f32;
             while size > 16. && self.font.measure(label, size).width > r.w - padding {

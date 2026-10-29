@@ -30,9 +30,6 @@ pub enum Command {
     Remove(String),
     RemoveChecked(Vec<(String, String)>),
     Repair,
-    Export,
-    Backups,
-    ImportBackup(std::path::PathBuf),
     Clear,
     ClearDrafts,
     Activate(String),
@@ -70,8 +67,6 @@ impl Command {
                 | Self::Remove(..)
                 | Self::RemoveChecked(..)
                 | Self::Repair
-                | Self::Export
-                | Self::ImportBackup(..)
                 | Self::Clear
                 | Self::ClearDrafts
                 | Self::Activate(..)
@@ -92,8 +87,6 @@ impl Command {
     }
 }
 pub enum Response {
-    Backups(Vec<std::path::PathBuf>),
-    Exported(std::path::PathBuf),
     Data(Box<Data>),
     Settings(Settings),
     Cache {
@@ -221,11 +214,6 @@ impl Worker {
                         Command::Remove(id) => store.remove_by_id(id)?,
                         Command::RemoveChecked(targets) => store.remove_checked(targets)?,
                         Command::Repair => store.repair()?,
-                        Command::Backups => return store.backups().map(Response::Backups),
-                        Command::ImportBackup(path) => store.import_backup(path)?,
-                        Command::Export => {
-                            return store.export_backup().map(Response::Exported);
-                        }
                         Command::Clear => store.update(|d| {
                             d.clear_archives();
                             Ok(())

@@ -1,12 +1,12 @@
 use super::*;
 impl App {
     pub(in crate::ui) fn review_screen(&mut self) {
+        let ready = self.review_ready();
         let Some(r) = &self.review else {
             return;
         };
         let ply = r.ply;
         let n = r.game.history.len();
-        let busy = r.analyzing;
         let board = r.game.at_ply(ply).unwrap().clone();
         let last = ply.checked_sub(1).map(|i| r.game.history[i].mv);
         self.board(&board, last, false);
@@ -30,17 +30,19 @@ impl App {
             )
         };
         self.fit_text(&title, x + 16., card_y + 31., w - 118., 22., INK);
-        if self.engine_failed {
-            if self.button(
-                "重试分析",
-                Rect::new(x + w - 99., card_y + 10., 86., 37.),
-                false,
-                true,
-            ) {
-                self.engine_failed = false;
-                self.notice.clear();
-                self.review.as_mut().unwrap().analyzing = true;
-            }
+        if !ready {
+            self.fit_text(
+                if self.engine_failed {
+                    "分析失败"
+                } else {
+                    "分析中…"
+                },
+                x + w - 95.,
+                card_y + 29.,
+                80.,
+                15.,
+                MUTED,
+            );
         } else if self
             .review
             .as_ref()
@@ -100,7 +102,14 @@ impl App {
             );
         }
         let r = self.review.as_ref().unwrap();
-        let mut detail = "点击走势可跳转到任意一步".to_owned();
+        let mut detail = if ready {
+            "点击走势可跳转到任意一步"
+        } else if self.engine_failed {
+            "分析失败，请返回后重新打开复盘"
+        } else {
+            "正在分析全局，完成后可查看棋谱与逐步评价"
+        }
+        .to_owned();
         if ply > 0 {
             let e = &r.game.history[ply - 1];
             let assessment = r.assessment(ply);
@@ -124,7 +133,11 @@ impl App {
         self.fit_text(&detail, x + 16., card_y + 64., w - 32., 16., JADE);
         if split && self.height >= 560. {
             self.fit_text(
-                "随时翻页，后台分析不影响当前局面",
+                if ready {
+                    "滚动棋谱查看逐步评价，点击着法定位"
+                } else {
+                    "分析完成前仅可返回"
+                },
                 x + 16.,
                 card_y + 99.,
                 w - 32.,
@@ -151,12 +164,10 @@ impl App {
         }
         let analysis_state = if self.engine_failed {
             "分析失败"
-        } else if done == n + 1 {
+        } else if ready {
             "分析完成"
-        } else if busy {
-            "正在分析"
         } else {
-            "已暂停"
+            "正在分析"
         };
         self.fit_text(
             &format!("{analysis_state} · {done}/{}", n + 1),
@@ -193,28 +204,19 @@ impl App {
         };
         self.draw_review_chart(Rect::new(x, chart_y, w, chart_bottom - chart_y));
         let mode_y = if split { self.height - 156. } else { 96. };
-        if self.button(
-            if done == n + 1 {
+        self.center(
+            if ready {
                 "分析完成"
-            } else if busy {
-                "暂停分析"
+            } else if self.engine_failed {
+                "请返回后重新分析"
             } else {
-                "继续分析"
+                "分析完成后可操作"
             },
-            Rect::new(x, mode_y, w, 40.),
-            false,
-            done < n + 1,
-        ) {
-            if busy {
-                self.save_review_cache();
-                self.engine.cancel();
-                self.pending = None;
-                self.review.as_mut().unwrap().analyzing = false;
-            } else {
-                self.engine_failed = false;
-                self.review.as_mut().unwrap().analyzing = true;
-            }
-        }
+            x + w / 2.,
+            mode_y + 20.,
+            16.,
+            MUTED,
+        );
         let controls_y = self.height - 82.;
         let bw = (w - 24.) / 4.;
         let mut target = ply;
@@ -228,12 +230,12 @@ impl App {
                 label,
                 Rect::new(x + i as f32 * (bw + 8.), controls_y, bw, 54.),
                 false,
-                enabled,
+                ready && enabled,
             ) {
                 target = dest;
             }
         }
-        if self.modal.is_none() {
+        if ready && self.modal.is_none() {
             if is_key_pressed(KeyCode::Left) {
                 target = ply.saturating_sub(1);
             }
@@ -253,6 +255,7 @@ impl App {
         }
     }
     pub(in crate::ui) fn draw_review_chart(&mut self, chart: Rect) {
+        let ready = self.review_ready();
         self.card(chart);
         self.text("局势走势", chart.x + 12., chart.y + 23., 15., INK);
         for (offset, label, color) in [(108., "红优", RED_INK), (54., "黑优", BLACK)] {
@@ -364,7 +367,7 @@ impl App {
         } else {
             None
         });
-        if let Some(p) = selected {
+        if ready && let Some(p) = selected {
             self.review.as_mut().unwrap().ply =
                 (((p.x - plot.x) / plot.w).clamp(0., 1.) * n as f32).round() as usize;
             self.click = None;

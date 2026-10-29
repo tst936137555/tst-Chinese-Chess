@@ -125,7 +125,7 @@ fn repair_quarantines_invalid_games_and_never_downgrades_future_data() {
 }
 
 #[test]
-fn exports_round_trip_and_hourly_checkpoints_survive_later_saves() {
+fn legacy_backups_remain_importable_without_creating_new_backups() {
     let dir = tempfile::tempdir().unwrap();
     let store = Storage::new(dir.path().join("state.json"));
     let mut game = Game::default();
@@ -133,12 +133,13 @@ fn exports_round_trip_and_hourly_checkpoints_survive_later_saves() {
     store
         .save_game(game.snapshot(true, 0, false), None)
         .unwrap();
-    let export = store.export_backup().unwrap();
+    let export = dir.path().join("legacy-export.json");
+    std::fs::copy(&store.path, &export).unwrap();
     game.play("h9g7".parse().unwrap()).unwrap();
     store
         .save_game(game.snapshot(true, 0, false), None)
         .unwrap();
-    assert!(store.backups().unwrap().len() >= 2);
+    assert!(!dir.path().join("backups").exists());
     let target_dir = tempfile::tempdir().unwrap();
     let target = Storage::new(target_dir.path().join("state.json"));
     let restored = target.import_backup(&export).unwrap();
@@ -177,7 +178,8 @@ fn explicit_restore_recovers_deleted_games_without_duplicate_retries() {
     game.resign(Side::Red);
     let record = game.snapshot(true, 0, false);
     store.save_game(record.clone(), None).unwrap();
-    let export = store.export_backup().unwrap();
+    let export = dir.path().join("legacy-export.json");
+    std::fs::copy(&store.path, &export).unwrap();
     store
         .remove_checked(&[(record.id.clone(), record.version_token)])
         .unwrap();

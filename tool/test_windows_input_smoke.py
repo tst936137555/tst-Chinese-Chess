@@ -3,9 +3,28 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import Mock, patch
+
+from windows_input_smoke import read_observation
 
 
 class WindowsInputSmokeTests(unittest.TestCase):
+    def test_observation_retries_empty_partial_missing_and_locked_files(self):
+        path = Mock()
+        path.read_text.side_effect = [FileNotFoundError(), "", '{"screen":',
+                                      PermissionError(), '{"screen":"review"}']
+        with patch("windows_input_smoke.time.sleep"):
+            self.assertEqual(read_observation(path), {"screen": "review"})
+        self.assertEqual(path.read_text.call_count, 5)
+
+    def test_observation_timeout_still_reports_persistent_invalid_json(self):
+        path = Mock()
+        path.read_text.return_value = ""
+        with patch("windows_input_smoke.time.monotonic", side_effect=[0, 0, 6]), \
+             patch("windows_input_smoke.time.sleep"):
+            with self.assertRaisesRegex(AssertionError, "timed out"):
+                read_observation(path)
+
     def test_redirected_logs_preserve_chinese_on_legacy_windows_encoding(self):
         # Reproduce the hosted Windows runner's pipe encoding, even on Linux.
         # Stop at the first native API so this regression needs no desktop.

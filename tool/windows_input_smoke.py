@@ -20,6 +20,13 @@ def wait(read, predicate, timeout=30):
     detail={k:v for k,v in value.items() if k!="squares"} if isinstance(value,dict) else value
     raise AssertionError(f"Windows input smoke timed out: {detail}")
 
+
+def read_observation(path, timeout=5):
+    # The app may be between truncate and write, or Windows may briefly deny
+    # access during replacement. Every caller needs the same bounded retry.
+    return wait(lambda: json.loads(path.read_text(encoding="utf-8")),
+                lambda value: isinstance(value, dict), timeout)
+
 def main():
     # GitHub's redirected Windows streams default to cp1252, which cannot log
     # the Chinese UIA labels. Keep both progress and diagnostics lossless.
@@ -58,7 +65,7 @@ def main():
         units=text.encode("utf-16-le")
         for i in range(0,len(units),2):
             scan=int.from_bytes(units[i:i+2],"little");key(0,scan=scan,unicode=True);key(0,True,scan,True)
-    def read():return json.loads(observed.read_text(encoding="utf-8"))
+    def read():return read_observation(observed)
     kernel=ctypes.WinDLL("kernel32",use_last_error=True)
     kernel.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
     kernel.CreateFileW.restype=wintypes.HANDLE;kernel.CloseHandle.argtypes=[wintypes.HANDLE]
@@ -112,6 +119,7 @@ def main():
             focus("开始新对局");time.sleep(.4);assert not read()["modal"],"UIA Focus invoked new game"
             tap("开始新对局");tap("执红开始")
             state=wait(read,lambda s:s["screen"]=="game" and not s["modal"] and s.get("sceneStable") and any(c["label"]=="结束对局" for c in s.get("controls",[])))
+            assert not any(c["label"] in {"-", "+"} for c in state["controls"])
             for file,rank in [(7,7),(4,7)]:
                 square=next(q for q in state["squares"] if (q["file"],q["rank"])==(file,rank));click(square["x"],square["y"],state);time.sleep(.2)
             saved=wait(read,lambda s:s.get("plies",0)>=2 and s.get("saved") and not s.get("pending"),45)
@@ -147,10 +155,18 @@ def main():
             wait(read,lambda s:s["screen"]=="game" and s.get("saved") and not s.get("modal"))
         tap("结束对局");tap("认输并归档")
         wait(read,lambda s:s.get("saved") and any(c["label"]=="复盘此局" for c in s.get("controls",[])))
-        tap("复盘此局");tap("棋谱");tap("翻转")
-        wait(read,lambda s:s["screen"]=="review" and not s["modal"])
+        tap("复盘此局")
+        wait(read,lambda s:s.get("screen")=="review" and s.get("sceneStable"))
+        def review_finished(state):
+            if state.get("reviewAnalysisComplete") is True:return True
+            assert all(c["label"]=="返回" for c in state.get("controls",[])),state.get("controls")
+            return False
+        wait(read,review_finished,120)
         tap("棋谱")
         rows=wait(read,lambda s:any(c["label"].startswith("1. ") for c in s["controls"]))
+        assert not any(c["label"] in {"翻转", "上一页", "下一页"} for c in rows["controls"])
+        assert all(c["label"].rsplit(" · ",1)[-1] in {"优","良","平","差","错","待分析"}
+                   for c in rows["controls"] if c["label"][:1].isdigit())
         first=next(c["label"] for c in rows["controls"] if c["label"].startswith("1. "))
         tap(first);wait(read,lambda s:s.get("reviewPly")==1 and not s["modal"])
         tap("返回");tap("返回首页");tap("浏览与复盘棋谱")
@@ -165,11 +181,11 @@ def main():
         wait(read,lambda s:not s["modal"] and any(c["label"]=="筛选中" for c in s["controls"]))
         tap("筛选中");edit_query("")
         wait(read,lambda s:not s["modal"] and any(c["label"]=="查找" for c in s["controls"]))
-        tap("备份");tap("导出当前棋谱备份")
-        wait(lambda:list((data_dir/"backups").glob("export-*.json")),lambda paths:len(paths)==1)
+        assert not any(c["label"]=="备份" for c in read()["controls"])
+        assert not (data_dir/"backups").exists()
         wait(read,lambda s:s.get("saved"))
         user.PostMessageW(window,0x0010,0,0);child.wait(timeout=20)
-        (dest/"result.json").write_text(json.dumps({"mouseMoves":"not run (UIA only)" if uia_only else "passed","uiaFocusDoesNotInvoke":"not run (UIA only)" if uia_only else "passed","keyboardInvokeEscape":"not run (UIA only)" if uia_only else "passed","windowCloseSave":"passed","ctrlQIgnored":"not run (UIA only)" if uia_only else "passed","unicodeCommit":"UIA value passed" if uia_only else "passed","saveFailureRetry":"not run (UIA only)" if uia_only else "passed","coldResume":"not run (UIA only)" if uia_only else "passed","reviewMoveListAndFlip":"passed","archiveSearch":"passed","backupExport":"passed","imeComposition":"requires real IME/device acceptance"},indent=2),encoding="utf-8")
+        (dest/"result.json").write_text(json.dumps({"mouseMoves":"not run (UIA only)" if uia_only else "passed","uiaFocusDoesNotInvoke":"not run (UIA only)" if uia_only else "passed","keyboardInvokeEscape":"not run (UIA only)" if uia_only else "passed","windowCloseSave":"passed","ctrlQIgnored":"not run (UIA only)" if uia_only else "passed","unicodeCommit":"UIA value passed" if uia_only else "passed","saveFailureRetry":"not run (UIA only)" if uia_only else "passed","coldResume":"not run (UIA only)" if uia_only else "passed","reviewMoveListAndGrades":"passed","archiveSearch":"passed","backupFeatureRemoved":"passed","imeComposition":"requires real IME/device acceptance"},indent=2),encoding="utf-8")
     finally:
         if locked not in (None,ctypes.c_void_p(-1).value):kernel.CloseHandle(locked)
         if child and child.poll() is None:

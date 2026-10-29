@@ -104,13 +104,17 @@ impl MoveAssessment {
         }
     }
     pub fn badge(self) -> &'static str {
-        match self.label() {
-            "优秀" => "优",
-            "良好" => "良",
-            "平庸" => "平",
-            "较差" => "差",
-            "错招" | "错失杀棋" | "陷入杀棋" => "错",
-            _ => "杀",
+        match self {
+            Self::Centipawns(loss) => match crate::game::move_quality(loss, false) {
+                "优秀" => "优",
+                "良好" => "良",
+                "平庸" => "平",
+                "较差" => "差",
+                _ => "错",
+            },
+            Self::MissedMate | Self::AllowsMate => "错",
+            Self::EscapedMate | Self::FoundMate => "优",
+            Self::MateContinuation => "平",
         }
     }
     pub fn is_mistake(self) -> bool {

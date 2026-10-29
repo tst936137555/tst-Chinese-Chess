@@ -61,10 +61,8 @@ enum PageState {
     Review(Box<Review>),
 }
 enum Modal {
-    ReviewMoves(usize),
+    ReviewMoves,
     Search(crate::text_input::NameEdit),
-    Backups(Vec<std::path::PathBuf>),
-    ImportBackup(std::path::PathBuf),
     Difficulty,
     Side(Option<Box<Game>>),
     Drafts(usize),

@@ -40,6 +40,53 @@ impl Profile {
             return;
         }
         match self.scene.as_str() {
+            "review-moves" | "review-moves-portrait" | "review-moves-bottom" | "compact-review" => {
+                let portrait = self.scene.ends_with("portrait");
+                let compact = self.scene == "compact-review";
+                request_new_screen_size(
+                    if portrait {
+                        390.
+                    } else if compact {
+                        844.
+                    } else {
+                        1100.
+                    },
+                    if portrait {
+                        844.
+                    } else if compact {
+                        320.
+                    } else {
+                        800.
+                    },
+                );
+                let mut game = Game::default();
+                for i in 0..64 {
+                    let moves = game.board.legal_moves();
+                    if game.outcome != Outcome::Playing || moves.is_empty() {
+                        break;
+                    }
+                    game.play(moves[(i * 17 + 9) % moves.len()]).unwrap();
+                }
+                let mut review = Review::new(game, true);
+                review.scores = (0..review.scores.len())
+                    .map(|i| {
+                        Some(Score::Cp(if i % 2 == 0 {
+                            0
+                        } else {
+                            -[0, 50, 150, 350, 700][i / 2 % 5]
+                        }))
+                    })
+                    .collect();
+                review.analyzing = false;
+                review.cache_loading = false;
+                review.attempted.fill(true);
+                app.review = Some(review);
+                app.screen = Screen::Review;
+                app.open_modal(Modal::ReviewMoves);
+                if self.scene.ends_with("bottom") {
+                    app.modal_scroll = f32::MAX;
+                }
+            }
             "review-tactics" | "review-tactics-portrait" => {
                 let portrait = self.scene.ends_with("portrait");
                 request_new_screen_size(
@@ -69,8 +116,7 @@ impl Profile {
                 app.review = Some(review);
                 app.screen = Screen::Review;
             }
-            "compact-drafts" | "compact-review" | "compact-help" | "wide-setup" | "wide-audio"
-            | "long-title" => {
+            "compact-drafts" | "compact-help" | "wide-setup" | "wide-audio" | "long-title" => {
                 request_new_screen_size(
                     if self.scene == "long-title" {
                         390.
@@ -91,18 +137,6 @@ impl Profile {
                             app.data.drafts.push(r);
                         }
                         app.open_modal(Modal::Drafts(0));
-                    }
-                    "compact-review" => {
-                        let mut game = Game::default();
-                        for mv in ["h2e2", "h9g7", "h0g2", "b9c7"] {
-                            game.play(mv.parse().unwrap()).unwrap();
-                        }
-                        let mut review = Review::new(game, true);
-                        review.analyzing = false;
-                        review.cache_loading = false;
-                        app.review = Some(review);
-                        app.screen = Screen::Review;
-                        app.open_modal(Modal::ReviewMoves(0));
                     }
                     "compact-help" => app.open_modal(Modal::Help),
                     "wide-setup" => app.open_modal(Modal::Difficulty),

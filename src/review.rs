@@ -19,7 +19,6 @@ pub struct ReviewSession {
     pub bests: Vec<Option<crate::rules::Move>>,
     pub analyzing: bool,
     pub user_red: bool,
-    pub flipped: bool,
     pub score_version: u64,
     pub chart_cache: ChartCache,
     pub dirty: std::collections::BTreeSet<usize>,
@@ -39,7 +38,6 @@ impl ReviewSession {
             bests: vec![None; n],
             analyzing: true,
             user_red,
-            flipped: !user_red,
             score_version: 0,
             chart_cache: ChartCache {
                 version: u64::MAX,
@@ -102,6 +100,10 @@ impl ReviewSession {
             || self.details[ply]
                 .as_ref()
                 .is_some_and(AnalysisDetails::current)
+    }
+    pub fn analysis_complete(&self) -> bool {
+        !self.cache_loading
+            && (0..self.scores.len()).all(|ply| self.complete(ply) && self.scores[ply].is_some())
     }
     /// One assessment for the board badge, detail text, chart and mistake navigation.
     pub fn assessment(&self, ply: usize) -> Option<crate::engine::MoveAssessment> {

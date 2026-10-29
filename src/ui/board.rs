@@ -38,7 +38,7 @@ impl App {
     pub(super) fn board(&mut self, board: &Board, last: Option<Move>, interactive: bool) {
         let (origin, cell) = self.board_rect();
         let flip = if self.screen == Screen::Review {
-            self.review.as_ref().is_some_and(|r| r.flipped)
+            self.review.as_ref().is_some_and(|r| !r.user_red)
         } else {
             !self.settings.user_red
         };
