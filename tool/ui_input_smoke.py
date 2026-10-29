@@ -20,9 +20,13 @@ def wait(read,predicate,timeout=30):
 
 def main():
     binary=Path(sys.argv[1] if len(sys.argv)>1 else "target/release/tst-xiangqi").resolve()
+    without_engine="--without-engine" in sys.argv
     with tempfile.TemporaryDirectory(prefix="xiangqi-input-") as tmp:
         root=Path(tmp);state=root/"interaction.json"
         env={**os.environ,"XIANGQI_DATA_DIR":str(root/"data"),"XIANGQI_OBSERVE_PATH":str(state)}
+        if without_engine:
+            # This scenario deliberately tests unavailable-engine behavior.
+            env["PIKAFISH_PATH"]=str(root/"missing-engine")
         app=subprocess.Popen([str(binary)],env=env)
         try:
             read=lambda:json.loads(state.read_text(encoding="utf-8"))
@@ -60,11 +64,21 @@ def main():
             wait(read,lambda s:s["plies"]>=1 and s["saved"])
             click("结束对局");wait(read,lambda s:s["modal"]);click("认输并归档")
             wait(read,lambda s:any(c["label"]=="复盘此局" for c in s["controls"]))
-            click("复盘此局");wait(read,lambda s:s["screen"]=="review")
-            click("末步");wait(read,lambda s:s["reviewPly"]>=1)
-            click("首步");wait(read,lambda s:s["reviewPly"]==0)
+            click("复盘此局");wait(read,lambda s:s["screen"]=="review" and s.get("sceneStable"))
+            if without_engine:
+                locked=wait(read,lambda s:not s.get("pending") and [c["label"] for c in s["controls"]]==["返回"])
+                assert locked["reviewPly"]==0 and not locked["reviewAnalysisComplete"]
+                before=locked["observedTime"]
+                command("key","--window",window,"Right","End")
+                after=wait(read,lambda s:s.get("observedTime",0)>before)
+                assert after["reviewPly"]==0 and [c["label"] for c in after["controls"]]==["返回"]
+                click("返回");wait(read,lambda s:s["screen"]=="game")
+            else:
+                wait(read,lambda s:s.get("reviewAnalysisComplete") is True,120)
+                click("末步");wait(read,lambda s:s["reviewPly"]>=1)
+                click("首步");wait(read,lambda s:s["reviewPly"]==0)
             command("key","--window",window,"Tab");command("key","--window",window,"Escape")
-            print(json.dumps({"osInput":"X11 mouse down/up + keyboard","move":"saved","reviewNavigation":"passed","modalEscape":"passed"}))
+            print(json.dumps({"osInput":"X11 mouse down/up + keyboard","move":"saved","reviewNavigation":"locked without engine" if without_engine else "passed after analysis","modalEscape":"passed"}))
             command("key","--window",window,"ctrl+q");time.sleep(.2)
             assert app.poll() is None,"Ctrl+Q must not close the game"
             # Send WM_DELETE_WINDOW through the normal window-manager close action.

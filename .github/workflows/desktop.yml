@@ -120,7 +120,7 @@ jobs:
       - name: Viewports, semantics and visual baselines
         run: cargo run --release --locked --example check_ui -- target/ui-smoke
       - name: Real X11 mouse, keyboard and window close
-        run: timeout 120s xvfb-run -a sh -c 'openbox > /tmp/xiangqi-openbox.log 2>&1 & python tool/ui_input_smoke.py target/release/tst-xiangqi'
+        run: timeout 120s xvfb-run -a sh -c 'openbox > /tmp/xiangqi-openbox.log 2>&1 & python tool/ui_input_smoke.py target/release/tst-xiangqi --without-engine'
       - name: First-frame Chinese font atlas
         run: timeout 60s xvfb-run -a ./target/release/examples/font_regression target/font-regression --density-cycle
       - name: Preserve rendering diagnostics
