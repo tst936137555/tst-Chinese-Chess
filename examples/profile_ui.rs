@@ -42,6 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("game", 0),
         ("review", 150),
         ("4k", 0),
+        ("animation", 0),
+        ("animation-4k", 0),
     ] {
         let directory = root.join(scene);
         std::fs::create_dir_all(directory.join("data"))?;

@@ -94,7 +94,7 @@ impl AudioBank {
                 self.loading_complete = true;
                 self.music = sound;
                 crate::diagnostics::measure(
-                    "audio_ready_ms",
+                    "audio_queued_ms",
                     self.loading_started.elapsed().as_secs_f64() * 1000.,
                 );
             }

@@ -219,6 +219,11 @@ pub async fn run() {
                     && !app.end_ready));
         previous_mouse = mouse_position();
         previous_blink = blink;
+        app.scene.begin_timing(
+            smoke.is_none()
+                && paint
+                && (app.animation.is_some() || is_mouse_button_down(MouseButton::Left)),
+        );
         let mut scene_cpu_ms = 0.;
         if paint {
             let draw_started = std::time::Instant::now();
@@ -322,13 +327,7 @@ pub async fn run() {
         }
         let present_started = std::time::Instant::now();
         app.scene.present();
-        let gpu_ms = if smoke.is_none() {
-            app.scene.completion_ms(
-                paint && (app.animation.is_some() || is_mouse_button_down(MouseButton::Left)),
-            )
-        } else {
-            None
-        };
+        let gpu_ms = app.scene.end_timing();
         crate::diagnostics::measure(
             "present_submit_ms",
             present_started.elapsed().as_secs_f64() * 1000.,
@@ -359,7 +358,7 @@ pub async fn run() {
         };
         crate::accessibility::publish(
             format!("{summary}。{}", app.notice),
-            app.accessible.clone(),
+            &app.accessible,
             screen_dpi_scale(),
             app.accessibility_focus,
         );
@@ -406,20 +405,27 @@ pub async fn run() {
         if crate::platform::smoke_output().is_none() && smoke.is_none() {
             app.write_test_state();
         }
+        let continuous = !crate::platform::suspended()
+            && (smoke.is_some()
+                || app.redraw
+                || app.animation.is_some()
+                || is_mouse_button_down(MouseButton::Left)
+                || !get_keys_down().is_empty());
         wake.active(
             !crate::platform::suspended()
-                && (smoke.is_some()
-                    || app.redraw
-                    || app.animation.is_some()
-                    || app.pending.is_some()
+                && !continuous
+                && (app.pending.is_some()
                     || app.loading_record.is_some()
                     || app.saves.pending > 0
                     || app.close.waiting()
-                    || is_mouse_button_down(MouseButton::Left)
-                    || !get_keys_down().is_empty()
                     || app.name_keyboard
                     || app.audio.needs_tick(&app.settings, get_time())),
         );
+        if continuous {
+            // Queue the next visual frame now. The swapchain paces animation;
+            // a separate 16ms timer can otherwise miss a refresh and add a frame.
+            macroquad::miniquad::window::schedule_update();
+        }
         let wait_started = std::time::Instant::now();
         next_frame().await;
         crate::diagnostics::measure(
@@ -429,6 +435,7 @@ pub async fn run() {
         // Keep input and async workers polling while reducing static-screen GPU wakeups.
         if !cfg!(any(target_os = "windows", target_os = "android"))
             && smoke.is_none()
+            && !continuous
             && crate::platform::observation_path().is_none()
             && app.animation.is_none()
             && app.pending.is_none()

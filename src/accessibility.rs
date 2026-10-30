@@ -96,18 +96,21 @@ pub fn take_action() -> Option<ControlAction> {
         .ok()?
         .pop_front()
 }
-pub fn publish(summary: String, elements: Vec<Element>, dpi: f32, focus: Option<u32>) {
-    let snapshot = Snapshot {
-        summary,
-        elements,
-        dpi,
-        focus,
-    };
+pub fn publish(summary: String, elements: &[Element], dpi: f32, focus: Option<u32>) {
     let changed = if let Ok(mut previous) = SNAPSHOT.get_or_init(Default::default).lock() {
-        if *previous == snapshot {
+        if previous.summary == summary
+            && previous.elements == elements
+            && previous.dpi == dpi
+            && previous.focus == focus
+        {
             false
         } else {
-            *previous = snapshot.clone();
+            *previous = Snapshot {
+                summary,
+                elements: elements.to_vec(),
+                dpi,
+                focus,
+            };
             true
         }
     } else {
@@ -118,6 +121,8 @@ pub fn publish(summary: String, elements: Vec<Element>, dpi: f32, focus: Option<
         desktop::update();
     }
     if changed {
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let snapshot = SNAPSHOT.get().unwrap().lock().unwrap().clone();
         #[cfg(target_os = "android")]
         crate::platform::publish_accessibility(
             &serde_json::to_string(&snapshot).unwrap_or_default(),

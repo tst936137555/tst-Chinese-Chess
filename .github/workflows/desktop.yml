@@ -123,6 +123,19 @@ jobs:
         run: timeout 120s xvfb-run -a sh -c 'openbox > /tmp/xiangqi-openbox.log 2>&1 & python tool/ui_input_smoke.py target/release/tst-xiangqi --without-engine'
       - name: First-frame Chinese font atlas
         run: timeout 60s xvfb-run -a ./target/release/examples/font_regression target/font-regression --density-cycle
+      - name: Continuous animation and asynchronous GPU timer
+        run: |
+          timeout 60s xvfb-run -a ./target/release/tst-xiangqi --profile-ui target/ui-profile-animation --profile-scene animation --profile-seconds 4
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path('target/ui-profile-animation/result.json').read_text())
+          assert result['animationFrameMsAfterWarmup'], 'Missing animation samples'
+          version = result['graphicsVersion'].split(' ', 1)[0]
+          if result['graphicsBackend'] == 'OpenGl' and version[:1].isdigit():
+              if tuple(map(int, version.split('.')[:2])) >= (3, 3):
+                  assert 'gpu_elapsed_ms:' in result['diagnostics'], 'GPU query never completed'
+          PY
       - name: Preserve rendering diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -131,3 +144,4 @@ jobs:
           path: |
             target/ui-smoke/
             target/font-regression/
+            target/ui-profile-animation/

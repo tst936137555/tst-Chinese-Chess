@@ -23,6 +23,8 @@
 
 桌面以 1080p 为初始清晰度基准，按 DPI 自动提高；移动端将额外超采样限制在原生像素量的 2.25 倍内。持续帧耗时过高时自动降低内部画布，稳定恢复后再提高，保留设备与显存余量，不增加分辨率选项。棋盘和棋子按密度缓存，静止页面降低绘制频率，长复盘曲线按像素保留极值并缓存；后台任务与输入仍持续处理。
 
+动画与拖动直接请求下一呈现帧，避免独立定时器与垂直同步叠加；空闲页面仍保留低频后台轮询。桌面 OpenGL 3.3+ 通过异步查询采样 GPU 耗时，其他后端保留 CPU 反馈，绘制路径不再调用 `glFinish` 等待 GPU。音频解码、重采样和共享采样内存准备移入独立 FIFO 工作线程，加载期间的播放、停止和删除保持顺序。上述优化不修改五档难度的深度、步时、MultiPV、容错或选招逻辑。
+
 棋谱页提供查找、收藏、改名与删除。已取消棋谱备份入口、导出与合并恢复界面，以及自动小时快照。对局继续自动保存；损坏棋谱库可显式隔离坏局并保留原始文件及恢复报告，内部恢复文件继续用于保存故障恢复。旧版导出文件仍兼容 `--import <旧文件路径>`。复盘分析完成后可打开带滚动条的连续着法列表，每步显示“优、良、平、差、错”评价；支持滚轮和触摸滑动、点击定位与失误跳转，不再提供分页或翻转。
 
 ## Windows
@@ -42,10 +44,10 @@ cargo +1.99.1-x86_64-pc-windows-gnu run --release --locked
 ./tool/package_windows_rust.ps1 -Toolchain 1.99.1-x86_64-pc-windows-gnu
 ```
 
-完整便携包输出 `dist/tst-xiangqi-2.1.2-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
+完整便携包输出 `dist/tst-xiangqi-2.1.3-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
 
 ```text
-tst-xiangqi-2.1.2-windows/
+tst-xiangqi-2.1.3-windows/
 ├── tst-xiangqi.exe
 ├── assets/
 │   ├── engine/       # 皮卡鱼引擎与 NNUE 权重
@@ -109,7 +111,7 @@ cargo run --release -- --import "C:/path/to/game_archive.json"
 
 导入旧 JSON 棋谱时逐步重放验证走法，重建局面和记谱，去重并保留原文件。旧 SharedPreferences 的偏好和未结束对局尚不自动迁移；不会跨移动端沙盒读取旧应用数据。
 
-项目当前版本为 Rust 2.1.2。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
+项目当前版本为 Rust 2.1.3。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
 
 ## 验证
 
@@ -153,7 +155,7 @@ cargo run --release --locked --example profile_ui -- target/ui-profile
 cargo run --release --locked --example fuzz_inputs -- 10000
 ```
 
-`check_ui` 比较固定逻辑视口的整体及局部区域，兼容 DPI；冒烟另检查语义节点身份、边界、禁用状态。`font_regression --density-cycle` 检查 1/1.25/1.5/2/1 倍字体缓存切换的首帧与预热画面；这模拟缓存密度，不代表系统缩放验收。`benchmark` 测量 150 局档案、独立设置与整库事务的分布和原始样本，以及五档搜索，可用 `XIANGQI_BENCH_DEVICE` 标记设备。`profile_ui` 依次启动五个独立进程，测量空库首页、150 局首页、普通对局、长复盘和 4K；记录启动阶段、实际画面重绘次数与呈现提交耗时，不并行跑性能样本。`calibrate` 使用 16 个固定局面；`--matches` 将相邻档位交换执子，运行到规则终局或 `--max-plies` 上限，`--pairs` 控制每组重复次数。未结束样本单列；胜率区间只统计分出胜负的棋局，和棋另列，不推断 ELO。移动设备显存、耗电和热稳定性仍需实机测量。
+`check_ui` 比较固定逻辑视口的整体及局部区域，兼容 DPI；冒烟另检查语义节点身份、边界、禁用状态。`font_regression --density-cycle` 检查 1/1.25/1.5/2/1 倍字体缓存切换的首帧与预热画面；这模拟缓存密度，不代表系统缩放验收。`benchmark` 测量 150 局档案、独立设置与整库事务的分布和原始样本，以及五档搜索，可用 `XIANGQI_BENCH_DEVICE` 标记设备。`profile_ui` 依次启动七个独立进程，测量空库首页、150 局首页、普通对局、长复盘、4K，以及普通/4K 连续棋子动画；记录启动阶段、实际画面重绘次数与呈现提交耗时，动画另外保留预热 3 秒后的逐帧间隔，不并行跑性能样本。`calibrate` 使用 16 个固定局面；`--matches` 将相邻档位交换执子，运行到规则终局或 `--max-plies` 上限，`--pairs` 控制每组重复次数。未结束样本单列；胜率区间只统计分出胜负的棋局，和棋另列，不推断 ELO。移动设备显存、耗电和热稳定性仍需实机测量。
 
 音频与布局检查包括左右声道定位、无削波、循环接点连续、混音缓冲跨界和棋盘适配。可用 `cargo test --manifest-path vendor/quad-snd/Cargo.toml --lib` 单独验证音频库修复；`cargo run --release --example render_audio` 输出离线 WAV 试听文件到 `dist/audio-preview/`。音乐与音效由 `src/audio.rs` 原创合成，无外部录音素材或额外运行时依赖。
 

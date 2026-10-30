@@ -5,7 +5,7 @@
 | 组件 | 项目需要的行为 | 验证入口 |
 | --- | --- | --- |
 | miniquad | 字体图集及渲染目标释放后维持正确 GL 绑定；EGL 无多重采样配置时降级单采样；Android 无 Surface 时清除更新标记并等待事件；Activity 重建沿用单个原生运行线程并按消息顺序更换 JNI 引用；阻塞循环绘制前处理待投递事件，合并定时唤醒，避免慢帧积压导致输入饥饿 | 字体密度循环、29 场景视觉回归、Windows/Android/iOS 输入、Activity 重建与启动工作流 |
-| quad-snd | 双声道循环跨混音缓冲边界连续；空循环不会挂住；重叠提示限幅 | `cargo test --manifest-path vendor/quad-snd/Cargo.toml --lib`、应用音频单元测试 |
+| quad-snd | 双声道循环跨混音缓冲边界连续；空循环不会挂住；重叠提示限幅；独立 FIFO 线程解码与准备共享采样，保持加载/播放/停止/删除顺序，避免阻塞界面与实时混音回调 | `cargo test --manifest-path vendor/quad-snd/Cargo.toml --lib`、应用音频单元测试 |
 
 升级时记录上游版本/提交、保留或删除的本地改动及理由。重新生成 Android Java 桥接后必须对实际生成代码执行编译检查，模板插入点变化应令检查失败。目标平台的链接与设备运行需要分别验收。
 

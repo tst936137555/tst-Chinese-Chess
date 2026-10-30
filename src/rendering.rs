@@ -178,8 +178,87 @@ pub struct AdaptiveScene {
     present_material: Option<Material>,
     resize_candidate: Option<((u32, u32), std::time::Instant)>,
     pub budget: RenderBudget,
-    completion_sample: u16,
-    gpu_ms: Option<f32>,
+    timer: GpuTimer,
+}
+
+// Desktop GL 3.3 guarantees time-elapsed queries. GLES2 and Metal keep CPU
+// feedback; do not call optional extension entry points on those backends.
+fn supports_gpu_timer(version: &str) -> bool {
+    let mut parts = version.split_whitespace().next().unwrap_or("").split('.');
+    let major = parts.next().and_then(|n| n.parse::<u32>().ok());
+    let minor = parts.next().and_then(|n| n.parse::<u32>().ok());
+    matches!((major, minor), (Some(major), Some(minor)) if (major, minor) >= (3, 3))
+}
+
+#[derive(Default)]
+struct GpuTimer {
+    supported: bool,
+    query: u32,
+    pending: bool,
+    active: bool,
+    sample: u16,
+    last_ms: Option<f32>,
+}
+impl GpuTimer {
+    fn begin(&mut self, continuous: bool) {
+        use macroquad::miniquad::gl;
+        if !self.supported {
+            return;
+        }
+        if self.pending {
+            let mut available = 0;
+            unsafe {
+                gl::glGetQueryObjectiv(self.query, gl::GL_QUERY_RESULT_AVAILABLE, &mut available);
+            }
+            if available != 0 {
+                let mut nanos = 0;
+                unsafe {
+                    gl::glGetQueryObjectui64v(self.query, gl::GL_QUERY_RESULT, &mut nanos);
+                }
+                self.pending = false;
+                self.last_ms = Some(nanos as f32 / 1_000_000.);
+                crate::diagnostics::measure("gpu_elapsed_ms", nanos as f64 / 1_000_000.);
+            }
+        }
+        if !continuous {
+            self.last_ms = None;
+            self.sample = 0;
+            return;
+        }
+        self.sample = self.sample.wrapping_add(1);
+        if !self.pending && self.sample.is_multiple_of(30) {
+            unsafe {
+                // Exclude any commands queued before this scene. flush submits
+                // Macroquad's batch but never waits for GPU completion.
+                macroquad::window::get_internal_gl().flush();
+                if self.query == 0 {
+                    gl::glGenQueries(1, &mut self.query);
+                }
+                gl::glBeginQuery(gl::GL_TIME_ELAPSED, self.query);
+            }
+            self.active = true;
+        }
+    }
+    fn end(&mut self) -> Option<f32> {
+        if self.active {
+            unsafe {
+                macroquad::window::get_internal_gl().flush();
+                macroquad::miniquad::gl::glEndQuery(macroquad::miniquad::gl::GL_TIME_ELAPSED);
+            }
+            self.active = false;
+            self.pending = true;
+        }
+        self.last_ms
+    }
+}
+impl Drop for GpuTimer {
+    fn drop(&mut self) {
+        if self.query != 0 {
+            unsafe {
+                macroquad::miniquad::gl::glDeleteQueries(1, &self.query);
+            }
+        }
+    }
 }
 impl Default for AdaptiveScene {
     fn default() -> Self {
@@ -188,7 +267,7 @@ impl Default for AdaptiveScene {
 }
 impl AdaptiveScene {
     pub fn new() -> Self {
-        let (max_texture, resolve) = unsafe {
+        let (max_texture, resolve, timer_supported) = unsafe {
             let gl = macroquad::window::get_internal_gl();
             let info = gl.quad_context.info();
             let mut max = 8192;
@@ -198,7 +277,12 @@ impl AdaptiveScene {
                     &mut max,
                 );
             }
-            (max.max(1) as u32, info.features.resolve_attachments)
+            (
+                max.max(1) as u32,
+                info.features.resolve_attachments,
+                info.backend == macroquad::miniquad::Backend::OpenGl
+                    && supports_gpu_timer(&info.gl_version_string),
+            )
         };
         let budget = RenderBudget::default();
         let size = budget.size(
@@ -219,8 +303,10 @@ impl AdaptiveScene {
             present_material,
             resize_candidate: None,
             budget,
-            completion_sample: 0,
-            gpu_ms: None,
+            timer: GpuTimer {
+                supported: timer_supported,
+                ..Default::default()
+            },
         }
     }
     fn allocate((w, h): (u32, u32), _resolve: bool) -> RenderTarget {
@@ -269,6 +355,7 @@ impl AdaptiveScene {
             }
             set_default_camera();
             self.target = Self::allocate(size, self.resolve);
+            self.timer.last_ms = None;
             changed = true;
         }
         self.resize_candidate = None;
@@ -321,34 +408,26 @@ impl AdaptiveScene {
         );
         gl_use_default_material();
     }
-    /// Sparse completion samples include queued GPU work, rather than treating
-    /// fast CPU submission as proof that the GPU kept up. No timestamp support
-    /// is assumed on GLES2; unsupported backends retain CPU-based feedback.
-    pub fn completion_ms(&mut self, continuous: bool) -> Option<f32> {
-        if !continuous {
-            self.gpu_ms = None;
-            return None;
-        }
-        self.completion_sample = self.completion_sample.wrapping_add(1);
-        if self.completion_sample.is_multiple_of(30) {
-            unsafe {
-                let mut gl = macroquad::window::get_internal_gl();
-                if gl.quad_context.info().backend == macroquad::miniquad::Backend::OpenGl {
-                    let started = std::time::Instant::now();
-                    gl.flush();
-                    macroquad::miniquad::gl::glFinish();
-                    let elapsed = started.elapsed().as_secs_f32() * 1000.;
-                    self.gpu_ms = Some(elapsed);
-                    crate::diagnostics::measure("gpu_completion_ms", f64::from(elapsed));
-                }
-            }
-        }
-        self.gpu_ms
+    /// Sample complete scene GPU time without synchronizing the rendering thread.
+    pub fn begin_timing(&mut self, continuous: bool) {
+        self.timer.begin(continuous);
+    }
+    pub fn end_timing(&mut self) -> Option<f32> {
+        self.timer.end()
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gpu_timer_requires_desktop_core_support() {
+        for version in ["3.3.0 NVIDIA", "4.6.0 NVIDIA", "4.1 ATI"] {
+            assert!(supports_gpu_timer(version));
+        }
+        for version in ["", "2.1 Mesa", "3.2.0", "OpenGL ES 3.2", "OpenGL ES 2.0"] {
+            assert!(!supports_gpu_timer(version));
+        }
+    }
     #[test]
     fn density_has_full_hd_floor_and_preserves_higher_native_resolution() {
         for (w, h, dpi) in [

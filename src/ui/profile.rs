@@ -7,6 +7,7 @@ pub(super) struct Profile {
     started: Option<f64>,
     frames: u64,
     draws: u64,
+    animation_frames: Vec<f64>,
 }
 impl Profile {
     pub(super) fn from_args() -> Option<Self> {
@@ -30,12 +31,32 @@ impl Profile {
             started: None,
             frames: 0,
             draws: 0,
+            animation_frames: Vec::new(),
         })
     }
     pub(super) fn state_path(&self) -> std::path::PathBuf {
         self.root.join("data/state.json")
     }
     pub(super) fn setup(&mut self, app: &mut App) {
+        if self.scene == "animation" || self.scene == "animation-4k" {
+            if self.started.is_none() {
+                app.screen = Screen::Game;
+                if self.scene == "animation-4k" {
+                    app.scene.smoke_resolution(3840, 2160);
+                }
+                self.started = Some(get_time());
+            }
+            // Repeat the actual piece animation without searching or touching saves.
+            let elapsed = get_time() - self.started.unwrap();
+            let mv: Move = "b0c2".parse().unwrap();
+            app.animation = Some(Animation {
+                mv,
+                piece: app.game.board.at(mv.from).unwrap(),
+                captured: None,
+                started: get_time() - elapsed % 0.26,
+            });
+            return;
+        }
         if self.started.is_some() {
             return;
         }
@@ -180,10 +201,17 @@ impl Profile {
         self.frames += 1;
         self.draws += u64::from(painted);
         let elapsed = get_time() - self.started.unwrap_or_else(get_time);
+        if self.scene.starts_with("animation") && elapsed > 3. {
+            self.animation_frames
+                .push(f64::from(get_frame_time()) * 1000.);
+        }
         if elapsed < self.duration {
             return false;
         }
+        let graphics = unsafe { macroquad::window::get_internal_gl().quad_context.info() };
         let result = serde_json::json!({ "scene":self.scene,"seconds":elapsed,"frames":self.frames,"sceneDraws":self.draws,
+            "graphicsBackend":format!("{:?}",graphics.backend),"graphicsVersion":graphics.gl_version_string,
+            "animationFrameMsAfterWarmup":self.animation_frames,
             "archives":app.data.archives.len(),"dpi":screen_dpi_scale(),"viewport":[screen_width(),screen_height()],
             "renderTarget":[app.scene.target.texture.width(),app.scene.target.texture.height()],"diagnostics":crate::diagnostics::snapshot(),
             "scope":"one isolated process; fixed viewport; CPU submit timings, not GPU timestamps or battery measurements" });
