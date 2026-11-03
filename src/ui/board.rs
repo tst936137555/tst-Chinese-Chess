@@ -89,7 +89,7 @@ impl App {
         let mut hints = self.hints.clone();
         if self.screen == Screen::Review
             && let Some(r) = &self.review
-            && let Some(m) = r.bests[r.ply]
+            && let Some(m) = r.current_step().recommended
         {
             hints.push(m);
         }

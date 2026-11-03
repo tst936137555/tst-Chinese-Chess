@@ -24,7 +24,30 @@ pub struct ReviewSession {
     pub dirty: std::collections::BTreeSet<usize>,
     pub attempted: Vec<bool>,
 }
+/// Display the recorded result, but compare alternatives from before that move.
+pub struct ReviewStep<'a> {
+    pub analysis_ply: usize,
+    pub before: &'a crate::rules::Board,
+    pub board: &'a crate::rules::Board,
+    pub played: Option<&'a crate::game::Entry>,
+    pub recommended: Option<crate::rules::Move>,
+    pub details: Option<&'a AnalysisDetails>,
+}
 impl ReviewSession {
+    pub fn current_step(&self) -> ReviewStep<'_> {
+        let analysis_ply = self.ply.saturating_sub(1);
+        ReviewStep {
+            analysis_ply,
+            before: self.game.at_ply(analysis_ply).unwrap(),
+            board: self.game.at_ply(self.ply).unwrap(),
+            played: self
+                .ply
+                .checked_sub(1)
+                .and_then(|i| self.game.history.get(i)),
+            recommended: self.bests[analysis_ply],
+            details: self.details[analysis_ply].as_ref(),
+        }
+    }
     pub fn new(game: Game, user_red: bool) -> Self {
         let n = game.history.len() + 1;
         Self {

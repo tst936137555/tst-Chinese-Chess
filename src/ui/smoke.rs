@@ -184,6 +184,8 @@ impl Smoke {
                 for (i, entry) in r.game.history.iter().enumerate() {
                     r.bests[i] = Some(entry.mv);
                 }
+                // Compare two different red moves on the same pre-move board.
+                r.bests[4] = Some("c3c4".parse().unwrap());
             }
             18 => {
                 self.request_size(1280., 800.);
@@ -508,6 +510,20 @@ impl Smoke {
             }
             if stage == 17 {
                 assert_eq!(app.review.as_ref().unwrap().ply, 5, "chart selection");
+            }
+            if stage == 17 || stage == 18 {
+                assert!(
+                    app.accessible
+                        .iter()
+                        .any(|node| node.label == "第1列第6行，红方兵"),
+                    "review shows the selected move's piece on the highlighted destination"
+                );
+                assert!(
+                    app.accessible
+                        .iter()
+                        .any(|node| node.label == "第1列第7行，空位"),
+                    "the piece has left the selected move's starting square"
+                );
             }
             if stage == 20 {
                 assert!(app.archive_order.is_empty(), "favorites filter");

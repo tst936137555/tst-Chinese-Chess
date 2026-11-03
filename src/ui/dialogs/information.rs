@@ -163,7 +163,7 @@ impl App {
             Rect::new(x + 24., y + if compact { 214. } else { 455. }, w - 48., 44.),
             false,
             self.pending.is_none(),
-        ) && let Some(ply) = self.review.as_ref().map(|r| r.ply)
+        ) && let Some(ply) = self.review.as_ref().map(|r| r.current_step().analysis_ply)
         {
             self.modal = None;
             self.engine_failed = false;

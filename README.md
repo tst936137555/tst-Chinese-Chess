@@ -44,10 +44,10 @@ cargo +1.99.1-x86_64-pc-windows-gnu run --release --locked
 ./tool/package_windows_rust.ps1 -Toolchain 1.99.1-x86_64-pc-windows-gnu
 ```
 
-完整便携包输出 `dist/tst-xiangqi-2.1.3-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
+完整便携包输出 `dist/tst-xiangqi-2.1.4-windows.zip`，解压后是同名文件夹，根目录只放游戏运行程序。引擎、权重、许可证、说明、源码与构建清单各归对应目录，运行无需 Flutter。请完整解压后双击游戏 EXE，不要只移动 EXE。
 
 ```text
-tst-xiangqi-2.1.3-windows/
+tst-xiangqi-2.1.4-windows/
 ├── tst-xiangqi.exe
 ├── assets/
 │   ├── engine/       # 皮卡鱼引擎与 NNUE 权重
@@ -111,7 +111,7 @@ cargo run --release -- --import "C:/path/to/game_archive.json"
 
 导入旧 JSON 棋谱时逐步重放验证走法，重建局面和记谱，去重并保留原文件。旧 SharedPreferences 的偏好和未结束对局尚不自动迁移；不会跨移动端沙盒读取旧应用数据。
 
-项目当前版本为 Rust 2.1.3。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
+项目当前版本为 Rust 2.1.4。应用源码位于 `src/`，测试位于 `tests/`，移动端 C ABI 适配层位于 `native/pikafish/`，各平台图标集中在 `assets/icons/`，构建脚本位于 `tool/`。旧版源码可通过 Git 历史查阅。第三方组件与字体说明合并在本文末尾。
 
 ## 验证
 

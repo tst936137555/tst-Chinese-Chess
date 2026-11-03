@@ -7,8 +7,10 @@ impl App {
         };
         let ply = r.ply;
         let n = r.game.history.len();
-        let board = r.game.at_ply(ply).unwrap().clone();
-        let last = ply.checked_sub(1).map(|i| r.game.history[i].mv);
+        let step = r.current_step();
+        let analysis_ply = step.analysis_ply;
+        let board = step.board.clone();
+        let last = step.played.map(|entry| entry.mv);
         self.board(&board, last, false);
         let (x, w) = self.content();
         let split = self.landscape();
@@ -46,7 +48,7 @@ impl App {
         } else if self
             .review
             .as_ref()
-            .is_some_and(|r| r.details[ply].as_ref().is_some_and(|d| !d.line.is_empty()))
+            .is_some_and(|r| r.current_step().details.is_some_and(|d| !d.line.is_empty()))
         {
             if self.button(
                 "参考变化",
@@ -55,8 +57,8 @@ impl App {
                 true,
             ) {
                 let r = self.review.as_ref().unwrap();
-                let details = r.details[ply].as_ref().unwrap();
-                let mut position = board.clone();
+                let details = r.current_step().details.unwrap();
+                let mut position = r.current_step().before.clone();
                 let mut words = Vec::new();
                 for (index, word) in details.line.iter().take(16).enumerate() {
                     let Ok(m) = word.parse() else { break };
@@ -75,12 +77,16 @@ impl App {
                 }
                 let text = format!(
                     "{}\n\n{}",
-                    r.scores[ply].map_or_else(|| "待分析".into(), Score::label),
+                    r.scores[analysis_ply].map_or_else(|| "待分析".into(), Score::label),
                     words.join("\n")
                 );
                 self.open_modal(Modal::Variation(text));
             }
-        } else if self.review.as_ref().is_some_and(|r| r.bests[ply].is_some()) {
+        } else if self
+            .review
+            .as_ref()
+            .is_some_and(|r| r.current_step().recommended.is_some())
+        {
             // Older caches retain useful scores but have no principal variation.
             // Refresh only this position on demand, preserving its current score.
             if self.button(
@@ -89,7 +95,7 @@ impl App {
                 false,
                 self.pending.is_none(),
             ) {
-                self.search(Job::Review(ply));
+                self.search(Job::Review(analysis_ply));
             }
         } else {
             self.fit_text(
@@ -118,13 +124,13 @@ impl App {
                 || "着法评价将在分析后显示".into(),
                 |q| format!("按当前分析：{q}"),
             );
-            if let Some(m) = r.bests[ply - 1] {
+            if let Some(m) = r.current_step().recommended {
                 if m == e.mv && assessment != Some(crate::engine::MoveAssessment::AllowsMate) {
                     detail.push_str(" · 最佳走法");
                 } else if m != e.mv {
                     detail.push_str(&format!(
                         " · 建议 {}",
-                        crate::notation::chinese(r.game.at_ply(ply - 1).unwrap(), m)
+                        crate::notation::chinese(r.current_step().before, m)
                             .unwrap_or_else(|_| m.to_string())
                     ));
                 }
@@ -147,6 +153,7 @@ impl App {
         }
         let r = self.review.as_ref().unwrap();
         let done = (0..r.scores.len()).filter(|&i| r.complete(i)).count();
+        // The trend and score describe the result of the selected recorded move.
         let score = r.scores[ply].map_or_else(|| "局势待分析".into(), Score::label);
         let progress_y = if split && self.height < 560. {
             220.
