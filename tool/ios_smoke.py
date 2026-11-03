@@ -73,24 +73,40 @@ def collect_diagnostics(uid,container,dest):
         try:subprocess.run(["xcrun","simctl","terminate",uid,PACKAGE],check=False,timeout=15)
         except (OSError,subprocess.TimeoutExpired) as error:print("Simulator cleanup failed:",error,flush=True)
 
+def prepare_simulator(app,dest,attempts=1):
+    for attempt in range(1,attempts+1):
+        uid=None
+        try:
+            print(f"iOS: waiting for CoreSimulator device inventory ({attempt}/{attempts})",flush=True)
+            devices=json.loads(sim("list","devices","available","--json",timeout=180))["devices"]
+            candidates=[d for runtime,ds in devices.items() if "iOS" in runtime for d in ds if d.get("isAvailable") and "iPhone" in d["name"]]
+            if not candidates:raise SystemExit("No available iOS simulator")
+            device=next((d for d in candidates if d["state"]=="Booted"),candidates[0]);uid=device["udid"]
+            print("iOS: boot simulator",uid,flush=True)
+            if device["state"]!="Booted":sim("boot",uid)
+            sim("bootstatus",uid,"-b",timeout=180)
+            subprocess.run(["open","-a","Simulator","--args","-CurrentDeviceUDID",uid],check=True,timeout=60)
+            print("iOS: install built app",flush=True)
+            sim("install",uid,str(app),timeout=180)
+            return uid,Path(sim("get_app_container",uid,PACKAGE,"data"))
+        except subprocess.TimeoutExpired as error:
+            (dest/f"setup-{attempt}-timeout.txt").write_text(str(error)+"\n",encoding="utf-8")
+            if uid is not None:collect_diagnostics(uid,None,dest)
+            if attempt==attempts:raise
+            # A cold hosted runner can leave CoreSimulator unresponsive before
+            # any app runs. Only CI opts into one service restart and setup retry.
+            print("iOS: restarting stalled CoreSimulator service before retrying setup",flush=True)
+            subprocess.run(["killall","-TERM","com.apple.CoreSimulator.CoreSimulatorService"],check=False,timeout=30)
+            time.sleep(5)
+        except Exception:
+            if uid is not None:collect_diagnostics(uid,None,dest)
+            raise
+
 def main():
     app=Path(sys.argv[1]).resolve()
     dest=Path("target/ios-smoke").resolve();dest.mkdir(parents=True,exist_ok=True)
-    print("iOS: waiting for CoreSimulator device inventory",flush=True)
-    devices=json.loads(sim("list","devices","available","--json",timeout=180))["devices"]
-    candidates=[d for runtime,ds in devices.items() if "iOS" in runtime for d in ds if d.get("isAvailable") and "iPhone" in d["name"]]
-    if not candidates:raise SystemExit("No available iOS simulator")
-    device=next((d for d in candidates if d["state"]=="Booted"),candidates[0]);uid=device["udid"]
-    container=None
-    try:
-        print("iOS: boot simulator",uid,flush=True)
-        if device["state"]!="Booted":sim("boot",uid)
-        sim("bootstatus",uid,"-b",timeout=180)
-        subprocess.run(["open","-a","Simulator","--args","-CurrentDeviceUDID",uid],check=True,timeout=60)
-        print("iOS: install built app",flush=True)
-        sim("install",uid,str(app),timeout=180)
-        container=Path(sim("get_app_container",uid,PACKAGE,"data"))
-        run_checks(uid,container,dest)
+    uid,container=prepare_simulator(app,dest,attempts=2 if os.environ.get("GITHUB_ACTIONS")=="true" else 1)
+    try:run_checks(uid,container,dest)
     finally:collect_diagnostics(uid,container,dest)
 if __name__=="__main__":main()
 

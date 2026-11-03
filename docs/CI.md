@@ -14,6 +14,8 @@
 
 桌面、Android、iOS 冒烟均报告启动阶段并检测停止推进；桌面同时捕获进程退出和日志，Android 保留完整 logcat，避免最后几千行系统噪声覆盖启动错误。结果文件要求全部 29 个场景完成；移动端还必须通过真实引擎校验。Linux 不携带桌面引擎，真实引擎检查由 Windows/macOS 和移动端承担。
 
+Android 固定 SDK/NDK 安装失败时清理下载暂存并有限重试三次，持续失败仍退出。iOS 仅在 GitHub Actions 中对应用启动前的 CoreSimulator 超时执行一次服务重启与重新准备，保留 `setup-*-timeout.txt`；本地手动运行不重启服务，应用场景、真实引擎、冷启动和 XCTest 失败均不会通过重试被忽略。
+
 ```powershell
 ./tool/check.ps1 -WithEngine -Python <Python 3.11+ 路径>
 cargo build --release --locked --examples --bin tst-xiangqi

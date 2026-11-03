@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +12,73 @@ import ios_smoke
 
 
 class SimulatorSmokeTest(unittest.TestCase):
+    def test_ci_setup_recovers_once_from_inventory_or_install_timeout(self):
+        inventory=json.dumps({"devices":{"iOS":[{"name":"iPhone","isAvailable":True,"state":"Booted","udid":"test-device"}]}})
+        for failed_command in ["list","install"]:
+            with self.subTest(command=failed_command), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);failed=[False]
+                def sim(*args,**kwargs):
+                    if args[0]==failed_command and not failed[0]:
+                        failed[0]=True
+                        raise subprocess.TimeoutExpired(["xcrun","simctl",*args],180)
+                    return inventory if args[0]=="list" else str(root/"container")
+                with patch.object(ios_smoke,"sim",side_effect=sim) as command, \
+                     patch.object(ios_smoke.subprocess,"run") as run, \
+                     patch.object(ios_smoke,"collect_diagnostics") as diagnostics, \
+                     patch.object(ios_smoke.time,"sleep") as sleep:
+                    self.assertEqual(ios_smoke.prepare_simulator(root/"test.app",root,attempts=2),("test-device",root/"container"))
+                    resets=[call for call in run.call_args_list if call.args[0][0]=="killall"]
+                    self.assertEqual(len(resets),1)
+                    self.assertEqual(resets[0].args[0],["killall","-TERM","com.apple.CoreSimulator.CoreSimulatorService"])
+                    self.assertEqual(sum(call.args[0]=="list" for call in command.call_args_list),2)
+                    self.assertEqual(diagnostics.call_count,failed_command=="install")
+                    sleep.assert_called_once_with(5)
+                self.assertIn(failed_command,(root/"setup-1-timeout.txt").read_text())
+
+    def test_setup_continuous_timeouts_remain_failures_and_preserve_evidence(self):
+        for attempts in [1,2]:
+            with self.subTest(attempts=attempts), tempfile.TemporaryDirectory() as tmp, \
+                 patch.object(ios_smoke,"sim",side_effect=subprocess.TimeoutExpired(["xcrun","simctl","list"],180)) as command, \
+                 patch.object(ios_smoke.subprocess,"run") as run, \
+                 patch.object(ios_smoke.time,"sleep"):
+                root=Path(tmp)
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    ios_smoke.prepare_simulator(root/"test.app",root,attempts=attempts)
+                self.assertEqual(command.call_count,attempts)
+                self.assertEqual(run.call_count,attempts-1)
+                self.assertTrue((root/f"setup-{attempts}-timeout.txt").exists())
+
+    def test_setup_does_not_retry_rejected_app_installs(self):
+        inventory=json.dumps({"devices":{"iOS":[{"name":"iPhone","isAvailable":True,"state":"Booted","udid":"test-device"}]}})
+        def sim(*args,**kwargs):
+            if args[0]=="install":raise subprocess.CalledProcessError(1,["xcrun","simctl",*args])
+            return inventory if args[0]=="list" else ""
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(ios_smoke,"sim",side_effect=sim) as command, \
+             patch.object(ios_smoke,"collect_diagnostics") as diagnostics, \
+             patch.object(ios_smoke.subprocess,"run") as run:
+            root=Path(tmp)
+            with self.assertRaises(subprocess.CalledProcessError):
+                ios_smoke.prepare_simulator(root/"test.app",root,attempts=2)
+            self.assertEqual(sum(call.args[0]=="install" for call in command.call_args_list),1)
+            self.assertFalse(any(call.args[0][0]=="killall" for call in run.call_args_list))
+            diagnostics.assert_called_once_with("test-device",None,root)
+
+    def test_service_restart_is_enabled_only_on_github_actions(self):
+        for github_actions,attempts in [("true",2),("false",1)]:
+            with tempfile.TemporaryDirectory() as tmp, \
+                 patch.dict(os.environ,{"GITHUB_ACTIONS":github_actions}), \
+                 patch.object(ios_smoke,"prepare_simulator",return_value=("test-device",Path(tmp))) as prepare, \
+                 patch.object(ios_smoke,"run_checks"), \
+                 patch.object(ios_smoke,"collect_diagnostics"), \
+                 patch.object(ios_smoke.sys,"argv",["ios_smoke.py","test.app"]):
+                previous=Path.cwd()
+                try:
+                    os.chdir(tmp)
+                    ios_smoke.main()
+                finally:os.chdir(previous)
+                self.assertEqual(prepare.call_args.kwargs["attempts"],attempts)
+
     def exercise(self, fail, cold_fail=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
